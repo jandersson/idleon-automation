@@ -19,11 +19,30 @@ from common.capture import grab_region
 from common.window import get_bounds
 
 
-def pick_region(window_title: str, region_name: str = "region", max_display_dim: int = 900) -> dict | None:
-    left, top, width, height = get_bounds(window_title)
-    print(f"Captured {window_title!r}: ({left}, {top}) {width}x{height}")
-    frame = grab_region(left, top, width, height)
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+def pick_region(
+    window_title: str | None = None,
+    region_name: str = "region",
+    max_display_dim: int = 900,
+    image_path: Path | None = None,
+) -> dict | None:
+    """Open a popup to click two corners of a region.
+
+    Source is either a live screenshot of `window_title`, or a file at `image_path`.
+    Returns the picked region coords in the source image's pixel space.
+    """
+    if image_path is not None:
+        bgr = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+        if bgr is None:
+            print(f"Could not read image: {image_path}")
+            return None
+        print(f"Loaded {image_path.name}: {bgr.shape[1]}x{bgr.shape[0]}")
+    else:
+        if window_title is None:
+            raise ValueError("must pass either window_title or image_path")
+        left, top, width, height = get_bounds(window_title)
+        print(f"Captured {window_title!r}: ({left}, {top}) {width}x{height}")
+        frame = grab_region(left, top, width, height)
+        bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
     # Downscale for display only — return coords in original space.
     scale = min(1.0, max_display_dim / max(bgr.shape[:2]))
