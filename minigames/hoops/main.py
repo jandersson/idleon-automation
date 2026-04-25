@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.input import click, random_delay
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform
+from minigames.hoops.detector import find_hoop, find_platform, find_ball
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
@@ -16,16 +16,54 @@ POLL_INTERVAL = 0.02
 # Vertical offset added to hoop rim Y to get the ideal platform-launch Y.
 # Rolls rim-vs-platform geometry AND ball-travel lead into one number.
 # Positive = launch below rim, negative = above. Tune empirically.
-VERTICAL_OFFSET = 0
+VERTICAL_OFFSET = 18
 
 # Accepted window around target_y (pixels) when deciding to fire.
-Y_TOLERANCE = 6
+Y_TOLERANCE = 2
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 REQUIRED_DIRECTION = "up"
 
 # Wait after clicking so the ball can travel and the hoop can reposition.
 POST_SHOT_COOLDOWN = 2.0
+
+# At score >=10 the platform also moves horizontally. We sample the platform's X
+# during the early stationary phase, lock in the median as our anchor, and from
+# then on require px to be within X_TOLERANCE of the anchor before firing.
+HOME_X_SAMPLES = 10
+X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 4) for score 10+
+
+# Mid-flight rescue: after the launch click, watch for the ball. When it crosses
+# over the hoop's X (still above the rim), click on it — the wiki trick that
+# makes the ball drop straight down. Saves shots that would otherwise overshoot.
+RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
+BALL_X_TOLERANCE = 20  # how close ball X must be to hoop X to trigger drop
+RESCUE_POLL = 0.01  # tight loop — ball moves fast
+
+
+def _try_rescue(left: int, top: int, width: int, height: int,
+                hoop_x: int, hoop_y: int, platform_x: int) -> bool:
+    """After a launch click, track the ball; click on it when it's over the hoop.
+
+    Returns True if a rescue click was fired.
+    """
+    deadline = time.time() + RESCUE_WINDOW
+    # Search airspace: between platform x and hoop x, above the hoop rim.
+    sx0 = min(platform_x, hoop_x) - 20
+    sx1 = max(platform_x, hoop_x) + 40
+    sy0 = 0
+    sy1 = hoop_y + 5  # don't let the rim itself confuse the mask
+    while time.time() < deadline:
+        frame = grab_region(left, top, width, height)
+        ball = find_ball(frame, sx0, sy0, sx1, sy1)
+        if ball is not None:
+            bx, by = ball
+            if abs(bx - hoop_x) <= BALL_X_TOLERANCE and by < hoop_y:
+                print(f"  [rescue] ball at ({bx},{by}), over hoop_x={hoop_x} — dropping")
+                click(left + bx, top + by)
+                return True
+        time.sleep(RESCUE_POLL)
+    return False
 
 
 def _direction(history: deque) -> str:
@@ -45,6 +83,13 @@ def run():
 
     platform_history: deque[int] = deque(maxlen=5)
     target_y: int | None = None
+    hoop_x: int | None = None
+    hoop_y: int | None = None
+    x_samples: list[int] = []
+    home_x: int | None = None
+    range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
+    last_range_log = time.time()
+    prev_py: int | None = None
 
     while True:
         try:
@@ -62,27 +107,81 @@ def run():
                 print(f"Hoop not found (best confidence={hoop_conf:.2f})")
                 time.sleep(0.2)
                 continue
-            target_y = hoop_pos[1] + VERTICAL_OFFSET
-            print(f"Hoop rim at y={hoop_pos[1]} (conf={hoop_conf:.2f}), target launch y={target_y}")
+            hoop_x, hoop_y = hoop_pos
+            target_y = hoop_y + VERTICAL_OFFSET
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
             time.sleep(POLL_INTERVAL)
             continue
 
-        py = platform_pos[1]
+        px, py = platform_pos
         platform_history.append(py)
+        range_samples.append((px, py))
 
-        if abs(py - target_y) <= Y_TOLERANCE:
-            direction = _direction(platform_history)
-            if REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION:
-                print(f"Platform at y={py} (target={target_y}, dir={direction}) — shooting")
+        if time.time() - last_range_log > 3.0 and range_samples:
+            xs = [p[0] for p in range_samples]
+            ys = [p[1] for p in range_samples]
+            print(f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, y={min(ys)}..{max(ys)}, target_y={target_y}")
+            last_range_log = time.time()
+
+        if home_x is None:
+            x_samples.append(px)
+            if len(x_samples) >= HOME_X_SAMPLES:
+                spread = max(x_samples) - min(x_samples)
+                home_x = sorted(x_samples)[len(x_samples) // 2]
+                if spread > X_TOLERANCE * 3:
+                    print(f"Platform X varied by {spread}px during sampling — bot likely started at score >=10. Anchor home_x={home_x} may be inaccurate.")
+                else:
+                    print(f"Locked platform home_x={home_x} (spread {spread}px over {HOME_X_SAMPLES} samples)")
+
+        # Clamp target_y to platform's observed reachable range. If the hoop
+        # repositions outside the platform's bob, we still want to fire — even
+        # a miss forces the hoop to reposition, breaking the deadlock.
+        effective_target_y = target_y
+        clamped = False
+        if len(range_samples) >= 100:
+            ys = [p[1] for p in range_samples]
+            ymin, ymax = min(ys), max(ys)
+            if target_y > ymax:
+                effective_target_y = ymax
+                clamped = True
+            elif target_y < ymin:
+                effective_target_y = ymin
+                clamped = True
+
+        # Either py is inside the tolerance window, OR the platform crossed the
+        # target between this sample and the previous one (catches the fast
+        # mid-bob region where ±tolerance is narrower than per-sample movement).
+        in_window = abs(py - effective_target_y) <= Y_TOLERANCE
+        crossed = prev_py is not None and (
+            (prev_py - effective_target_y) * (py - effective_target_y) < 0
+        )
+        if in_window or crossed:
+            x_ok = home_x is None or abs(px - home_x) <= X_TOLERANCE
+            # Direction from the actual crossing if available, else from history.
+            if crossed and prev_py is not None:
+                direction = "up" if py < prev_py else "down"
+            else:
+                direction = _direction(platform_history)
+            # When clamped, the platform only crosses the target at a bob extreme,
+            # where direction is whatever-it-just-was → never matches. Bypass.
+            direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
+            if x_ok and direction_ok:
+                tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
+                print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
                 random_delay(10, 40)
                 click(left + width // 2, top + height // 2)
+                # Try to rescue an overshoot by clicking the ball mid-flight.
+                _try_rescue(left, top, width, height, hoop_x, hoop_y, px)
                 time.sleep(POST_SHOT_COOLDOWN)
                 platform_history.clear()
+                prev_py = None
                 target_y = None  # re-detect hoop after it repositions
                 continue
+
+        prev_py = py
 
         time.sleep(POLL_INTERVAL)
 

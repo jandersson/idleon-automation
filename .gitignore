@@ -8,6 +8,8 @@ dist/
 
 # Local debug output (regenerable)
 minigames/*/assets/captures/
+minigames/*/assets/ball_calibration/
+minigames/*/assets/debug_match.png
 minigames/*/calibration/
 
 # Editor / OS

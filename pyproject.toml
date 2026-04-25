@@ -13,5 +13,16 @@ dependencies = [
 [project.scripts]
 hoops = "minigames.hoops.main:run"
 hoops-capture = "minigames.hoops.capture:run"
+hoops-debug = "minigames.hoops.debug_match:run"
+hoops-ball-calibrate = "minigames.hoops.ball_calibrate:run"
 chopping = "minigames.chopping.main:run"
 chopping-calibrate = "minigames.chopping.calibrate:run"
+darts = "minigames.darts.main:run"
+darts-capture = "minigames.darts.capture:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["common", "minigames"]

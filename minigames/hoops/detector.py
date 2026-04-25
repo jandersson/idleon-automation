@@ -43,7 +43,7 @@ def _match_in_region(
 
 
 def find_hoop(
-    frame: np.ndarray, threshold: float = 0.7
+    frame: np.ndarray, threshold: float = 0.35
 ) -> tuple[tuple[int, int] | None, float]:
     """Find the basketball hoop — searched in the right half of the frame."""
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
@@ -60,3 +60,54 @@ def find_platform(
     h, w = bgr.shape[:2]
     template = _load("platform.png")
     return _match_in_region(bgr, template, 0, 0, w // 2, h, threshold)
+
+
+# Orange basketball — defaults are a guess; tune via hoops-ball-calibrate.
+BALL_HSV_LOWER = np.array([5, 120, 120])
+BALL_HSV_UPPER = np.array([20, 255, 255])
+BALL_MIN_AREA = 30
+BALL_MAX_AREA = 800
+
+
+def find_ball(
+    frame: np.ndarray,
+    search_x0: int,
+    search_y0: int,
+    search_x1: int,
+    search_y1: int,
+) -> tuple[int, int] | None:
+    """HSV-mask for orange in the given window-relative airspace.
+
+    Returns ball center (x, y) in the full frame, or None.
+    """
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    h, w = bgr.shape[:2]
+    x0 = max(0, search_x0)
+    y0 = max(0, search_y0)
+    x1 = min(w, search_x1)
+    y1 = min(h, search_y1)
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    crop = bgr[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, BALL_HSV_LOWER, BALL_HSV_UPPER)
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_area = 0
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < BALL_MIN_AREA or area > BALL_MAX_AREA:
+            continue
+        if area > best_area:
+            best_area = area
+            best = c
+    if best is None:
+        return None
+    M = cv2.moments(best)
+    if M["m00"] == 0:
+        return None
+    cx = int(M["m10"] / M["m00"]) + x0
+    cy = int(M["m01"] / M["m00"]) + y0
+    return (cx, cy)

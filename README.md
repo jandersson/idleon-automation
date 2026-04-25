@@ -1,6 +1,16 @@
 # idleon-automation
 
+> 100% vibe coded.
+
 Screen-reading bots for Idleon minigames. Captures a region of the screen, detects the game state with OpenCV, and fires synthetic clicks via `pyautogui`.
+
+## Status
+
+| Module   | Working | Notes |
+|----------|---------|-------|
+| hoops    | ~60%    | Reliable score 0-9 (~7/10 makes). Force-fires unreachable hoops to break deadlocks. Mid-flight ball-drop rescue scaffolded, HSV not yet calibrated. Score 10+ horizontal-platform handling fragile; score 20+ (moving hoop) not handled. |
+| chopping | Untested| Code in place; user hasn't calibrated HSV ranges or run yet. |
+| darts    | Scaffold| Folder + entry points (`darts`, `darts-capture`) exist. Mechanics unknown; awaiting capture frames before writing the detector. |
 
 ## Setup
 
