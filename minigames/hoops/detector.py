@@ -69,6 +69,28 @@ BALL_MIN_AREA = 30
 BALL_MAX_AREA = 800
 
 
+def find_game_over(
+    frame: np.ndarray, threshold: float = 0.7
+) -> tuple[bool, float]:
+    """Detect the end-of-trial 'Game over!' screen via template match.
+
+    Returns (detected, confidence). If the template file doesn't exist yet,
+    returns (False, 0.0) silently so the bot runs even before calibration.
+    """
+    path = ASSETS / "game_over.png"
+    if not path.exists():
+        return False, 0.0
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        return False, 0.0
+    if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
+        return False, 0.0
+    result = cv2.matchTemplate(bgr, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(result)
+    return max_val >= threshold, max_val
+
+
 def score_region(
     frame: np.ndarray,
     region_left: int,

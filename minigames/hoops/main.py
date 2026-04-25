@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.input import click, random_delay
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform, find_ball, score_region, score_changed
+from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
@@ -174,6 +174,12 @@ def run():
             continue
 
         frame = grab_region(left, top, width, height)
+
+        # Stop cleanly when the trial ends.
+        is_over, go_conf = find_game_over(frame)
+        if is_over:
+            print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
+            return
 
         if target_y is None:
             hoop_pos, hoop_conf = find_hoop(frame)
