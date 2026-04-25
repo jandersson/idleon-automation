@@ -28,7 +28,7 @@ SCORE_REGION_REL: dict | None = None
 # Wind indicator region (set via darts-pick-wind-region). Crop tight around
 # just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
 # state, not the static label.
-WIND_REGION_REL: dict | None = None
+WIND_REGION_REL: dict | None = {"left": 747, "top": 357, "width": 57, "height": 51}
 
 
 def _capture_score(left: int, top: int, width: int, height: int):
