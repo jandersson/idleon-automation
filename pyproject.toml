@@ -1,0 +1,17 @@
+[project]
+name = "idleon-automation"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "pyautogui==0.9.54",
+    "mss==9.0.2",
+    "opencv-python==4.9.0.80",
+    "Pillow==10.3.0",
+    "numpy==1.26.4",
+]
+
+[project.scripts]
+hoops = "minigames.hoops.main:run"
+hoops-capture = "minigames.hoops.capture:run"
+chopping = "minigames.chopping.main:run"
+chopping-calibrate = "minigames.chopping.calibrate:run"
