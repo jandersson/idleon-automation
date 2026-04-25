@@ -24,8 +24,8 @@ POLL_INTERVAL = 0.02
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
     (700, 35),   # high hoops — initial guess, tune from observation
-    (900, 8),    # mid-range — 14 still overshot; reducing further. Make zone
-                 # likely between 0 (back-of-rim misses) and 18 (was 6/7 once).
+    (900, 11),   # mid-range — bisect: 8 was back-of-rim (under), 14 still
+                 # overshot. Make zone is between 8 and 14; trying 11.
 ]
 
 
@@ -103,9 +103,10 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     if so, why it never crossed the drop window.
     """
     deadline = time.time() + RESCUE_WINDOW
-    # Search airspace: starts well to the right of the platform so we don't
-    # match the character's orange costume, ends past the hoop, above the rim.
-    sx0 = platform_x + 60
+    # Search airspace: starts WELL to the right of the platform so we skip the
+    # character's orange costume entirely (a +60 offset still picked up static
+    # orange around x=platform_x+70). Ends past the hoop, above the rim.
+    sx0 = platform_x + 120
     sx1 = max(platform_x, hoop_x) + 40
     sy0 = 0
     sy1 = hoop_y + 5  # don't let the rim itself confuse the mask
