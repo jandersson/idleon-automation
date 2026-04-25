@@ -23,6 +23,7 @@ darts = "minigames.darts.main:run"
 darts-capture = "minigames.darts.capture:run"
 darts-pick-release = "minigames.darts.pick_release:run"
 darts-auto-crop-release = "minigames.darts.auto_crop_release:run"
+darts-pick-wind-region = "minigames.darts.pick_wind_region:run"
 
 [build-system]
 requires = ["hatchling"]

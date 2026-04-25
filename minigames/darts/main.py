@@ -25,6 +25,11 @@ POST_THROW_COOLDOWN = 1.5
 # or set to None to skip score logging.
 SCORE_REGION_REL: dict | None = None
 
+# Wind indicator region (set via darts-pick-wind-region). Crop tight around
+# just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
+# state, not the static label.
+WIND_REGION_REL: dict | None = None
+
 
 def _capture_score(left: int, top: int, width: int, height: int):
     if SCORE_REGION_REL is None:
