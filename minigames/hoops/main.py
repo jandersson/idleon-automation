@@ -24,7 +24,8 @@ POLL_INTERVAL = 0.02
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
     (700, 35),   # high hoops — initial guess, tune from observation
-    (900, 22),   # mid-range — bumped from 18 after "overshoots a tad" run
+    (900, 14),   # mid-range — reduced after 22 caused massive overshoot;
+                 # higher offset = lower launch point = more arc = more overshoot.
 ]
 
 
