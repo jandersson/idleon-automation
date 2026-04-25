@@ -1,5 +1,7 @@
 # idleon-automation
 
+> ⚠️ **Work in progress.** Nothing here is finished. Bots half-work, configs are in flux, expect breakage. See the Status table below.
+
 > 100% vibe coded.
 
 Screen-reading bots for Idleon minigames. Captures a region of the screen, detects the game state with OpenCV, and fires synthetic clicks via `pyautogui`.
@@ -20,7 +22,9 @@ Requires Python 3.11+.
 pip install -e .
 ```
 
-Failsafe: slam the mouse into a screen corner to abort any running bot (pyautogui default).
+## Aborting a bot
+
+Slam the mouse into any screen corner — pyautogui's default failsafe kills the running bot. Useful when it's spam-clicking and you've lost the keyboard.
 
 ## Minigames
 
@@ -53,10 +57,19 @@ uv run hoops-capture
 Frames land in `minigames/hoops/assets/captures/`. Crop `hoop.png` and `platform.png` from whichever frames show each most clearly.
 
 **Tuning knobs** in `minigames/hoops/main.py`:
-- `VERTICAL_OFFSET` — pixels added to the rim Y to get the ideal platform launch Y. Rolls rim-vs-platform geometry *and* ball-travel lead into one number. Start at 0, adjust based on whether shots land short or long.
-- `Y_TOLERANCE` — how close platform has to be to target before firing.
-- `REQUIRED_DIRECTION` — `"up"`, `"down"`, or `"any"`. Whether to only shoot on the rising half of the oscillation, falling half, or both.
+- `OFFSET_ANCHORS` — list of `(hoop_y, offset)` anchor points; the launch offset for any hoop position is linearly interpolated between them. Add a new anchor when shots consistently miss in a particular hoop-Y range. Positive offset fires later (platform lower); negative fires earlier (platform higher).
+- `Y_TOLERANCE` — how close platform Y has to be to target before firing.
+- `REQUIRED_DIRECTION` — `"up"`, `"down"`, or `"any"`. Restricts firing to the rising or falling half of the oscillation.
 - `POST_SHOT_COOLDOWN` — seconds to wait after firing before re-detecting the hoop.
+- `X_TOLERANCE` — at score ≥10 the platform also moves horizontally; the bot anchors a `home_x` from early frames and only fires when within this tolerance. Set huge (e.g. `9999`) to disable.
+- `RESCUE_WINDOW`, `BALL_X_TOLERANCE` — controls the mid-flight ball-drop rescue. After the launch click, the bot tracks the ball for `RESCUE_WINDOW` seconds and clicks it (drops it straight down) when it's within `BALL_X_TOLERANCE` of the hoop X.
+- `SCORE_REGION_REL` — window-relative crop of the score readout. Diffed before/after each shot to detect makes. Set to `None` to disable shot-result logging. Verify the crop with `uv run hoops-score-calibrate`.
+
+Helper scripts (all registered as `[project.scripts]`):
+- `hoops-capture` — burst-capture frames for cropping `hoop.png` / `platform.png` templates.
+- `hoops-debug` — annotate one frame with the best hoop and platform matches and their confidences.
+- `hoops-ball-calibrate` — fire a shot, burst-capture the flight, overlay the HSV mask so you can tune `BALL_HSV_LOWER`/`UPPER` in `detector.py`.
+- `hoops-score-calibrate` — save the score-region crop for visual verification.
 
 ```bash
 hoops
@@ -88,6 +101,7 @@ chopping
 ```
 common/          shared screen-capture + input helpers
 minigames/
-  hoops/         template-matching bot
+  hoops/         template-matching bot + ball-rescue + score diff
   chopping/      HSV-zone bot + calibration script
+  darts/         scaffold only — mechanics not yet implemented
 ```
