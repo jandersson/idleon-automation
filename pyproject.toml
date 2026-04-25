@@ -22,6 +22,7 @@ chopping-calibrate = "minigames.chopping.calibrate:run"
 darts = "minigames.darts.main:run"
 darts-capture = "minigames.darts.capture:run"
 darts-pick-release = "minigames.darts.pick_release:run"
+darts-auto-crop-release = "minigames.darts.auto_crop_release:run"
 
 [build-system]
 requires = ["hatchling"]
