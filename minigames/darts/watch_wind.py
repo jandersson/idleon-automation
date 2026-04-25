@@ -5,9 +5,10 @@ crop differs from every previously-saved sample by more than a similarity
 threshold. Result: a directory of distinct wind states the user can rename to
 labels like none.png, left1.png, right2.png, etc., for later classification.
 
+Runs indefinitely — Ctrl-C to stop. While running, just play darts normally.
+
 Usage:
-  uv run darts-watch-wind                  # 5 min, default thresholds
-  uv run darts-watch-wind --minutes 10
+  uv run darts-watch-wind
   uv run darts-watch-wind --threshold 8    # higher = stricter (more dedup)
 """
 import sys
@@ -59,13 +60,11 @@ def run():
         return
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    minutes = _arg("--minutes", 5)
     threshold = _arg("--threshold", 5.0)
-    print(f"Watching wind region for {minutes} min, dedup threshold={threshold}.")
+    print(f"Watching wind region (Ctrl-C to stop). Dedup threshold={threshold}.")
     print(f"Saving distinct samples to {OUT_DIR}")
     print("Play normally — every distinct-looking wind state will be captured once.")
 
-    deadline = time.time() + minutes * 60
     seen: list[tuple[str, np.ndarray]] = []
 
     # Seed with any previously-saved samples so reruns build on prior state.
@@ -76,7 +75,7 @@ def run():
     if seen:
         print(f"Loaded {len(seen)} existing samples.")
 
-    while time.time() < deadline:
+    while True:
         try:
             left, top, width, height = get_bounds(WINDOW_TITLE)
         except WindowNotFoundError as e:
@@ -104,10 +103,6 @@ def run():
             print(f"  + new wind state: {name} (closest existing was {closest_diff:.1f} away). Total samples: {len(seen)}")
 
         time.sleep(POLL_SECONDS)
-
-    print()
-    print(f"Done. Captured {len(seen)} distinct wind states in {OUT_DIR}")
-    print("Next: rename each PNG to a label (none.png, left1.png, right2.png, etc.) so I can wire up classification.")
 
 
 if __name__ == "__main__":
