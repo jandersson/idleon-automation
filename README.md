@@ -26,7 +26,9 @@ pip install -e .
 
 ## Aborting a bot
 
-Slam the mouse into any screen corner — pyautogui's default failsafe kills the running bot. Useful when it's spam-clicking and you've lost the keyboard.
+Two ways to stop a running bot:
+- **`Ctrl-C`** in the terminal — the normal interrupt.
+- **Slam the mouse into any screen corner** — pyautogui's built-in failsafe. Useful when the terminal isn't focused.
 
 ## Minigames
 
