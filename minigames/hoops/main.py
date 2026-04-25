@@ -103,8 +103,9 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     if so, why it never crossed the drop window.
     """
     deadline = time.time() + RESCUE_WINDOW
-    # Search airspace: between platform x and hoop x, above the hoop rim.
-    sx0 = min(platform_x, hoop_x) - 20
+    # Search airspace: starts well to the right of the platform so we don't
+    # match the character's orange costume, ends past the hoop, above the rim.
+    sx0 = platform_x + 60
     sx1 = max(platform_x, hoop_x) + 40
     sy0 = 0
     sy1 = hoop_y + 5  # don't let the rim itself confuse the mask
