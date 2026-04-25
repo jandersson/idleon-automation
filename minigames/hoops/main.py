@@ -8,15 +8,37 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.input import click, random_delay
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform, find_ball
+from minigames.hoops.detector import find_hoop, find_platform, find_ball, score_region, score_changed
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
 
-# Vertical offset added to hoop rim Y to get the ideal platform-launch Y.
-# Rolls rim-vs-platform geometry AND ball-travel lead into one number.
-# Positive = launch below rim, negative = above. Tune empirically.
-VERTICAL_OFFSET = 18
+# Position-dependent vertical offset added to hoop rim Y to get the ideal
+# platform-launch Y. Rolls rim-vs-platform geometry AND ball-travel lead into
+# one number per hoop position. Linearly interpolated between anchor points;
+# extrapolation is clamped to the nearest anchor's value.
+#
+# To tune: watch where shots miss for a given hoop_y and add/move an anchor:
+#   - Ball clears top of backboard → offset is too small → bump it up
+#   - Ball hits front of rim       → offset is too large → bump it down
+#   - Ball hits back of rim        → offset is too small → bump it up
+OFFSET_ANCHORS: list[tuple[int, int]] = [
+    (700, 35),   # high hoops — initial guess, tune from observation
+    (900, 18),   # mid-range — confirmed makes at this point
+]
+
+
+def _compute_offset(hoop_y: int) -> int:
+    pts = sorted(OFFSET_ANCHORS)
+    if hoop_y <= pts[0][0]:
+        return pts[0][1]
+    if hoop_y >= pts[-1][0]:
+        return pts[-1][1]
+    for (y1, o1), (y2, o2) in zip(pts, pts[1:]):
+        if y1 <= hoop_y <= y2:
+            t = (hoop_y - y1) / (y2 - y1)
+            return int(round(o1 + t * (o2 - o1)))
+    return pts[-1][1]
 
 # Accepted window around target_y (pixels) when deciding to fire.
 Y_TOLERANCE = 2
@@ -39,6 +61,36 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
 BALL_X_TOLERANCE = 20  # how close ball X must be to hoop X to trigger drop
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
+
+# Window-relative crop for the "Score: N" readout in the upper-left of the
+# minigame UI. Tune via hoops-score-calibrate; defaults are an initial guess
+# based on a 1280x1392 window. Disable score detection by setting to None.
+SCORE_REGION_REL: dict | None = {"left": 130, "top": 270, "width": 130, "height": 35}
+
+
+def _capture_score_region(left: int, top: int, width: int, height: int):
+    if SCORE_REGION_REL is None:
+        return None
+    frame = grab_region(left, top, width, height)
+    return score_region(
+        frame,
+        SCORE_REGION_REL["left"],
+        SCORE_REGION_REL["top"],
+        SCORE_REGION_REL["width"],
+        SCORE_REGION_REL["height"],
+    )
+
+
+def _log_shot_result(stats: dict, before, after) -> None:
+    if before is None or after is None:
+        return
+    changed, diff = score_changed(before, after)
+    stats["attempts"] += 1
+    if changed:
+        stats["makes"] += 1
+        print(f"  [score] MAKE (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
+    else:
+        print(f"  [score] miss (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
 
 
 def _try_rescue(left: int, top: int, width: int, height: int,
@@ -90,6 +142,7 @@ def run():
     range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
     last_range_log = time.time()
     prev_py: int | None = None
+    shot_stats: dict = {"makes": 0, "attempts": 0}
 
     while True:
         try:
@@ -108,8 +161,9 @@ def run():
                 time.sleep(0.2)
                 continue
             hoop_x, hoop_y = hoop_pos
-            target_y = hoop_y + VERTICAL_OFFSET
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), target launch y={target_y}")
+            offset = _compute_offset(hoop_y)
+            target_y = hoop_y + offset
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}, target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
@@ -171,11 +225,15 @@ def run():
             if x_ok and direction_ok:
                 tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
                 print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
+                # Snapshot score region before launch so we can diff later.
+                score_before = _capture_score_region(left, top, width, height)
                 random_delay(10, 40)
                 click(left + width // 2, top + height // 2)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 _try_rescue(left, top, width, height, hoop_x, hoop_y, px)
                 time.sleep(POST_SHOT_COOLDOWN)
+                score_after = _capture_score_region(left, top, width, height)
+                _log_shot_result(shot_stats, score_before, score_after)
                 platform_history.clear()
                 prev_py = None
                 target_y = None  # re-detect hoop after it repositions

@@ -69,6 +69,37 @@ BALL_MIN_AREA = 30
 BALL_MAX_AREA = 800
 
 
+def score_region(
+    frame: np.ndarray,
+    region_left: int,
+    region_top: int,
+    region_width: int,
+    region_height: int,
+) -> np.ndarray:
+    """Return a grayscale crop of the score readout, for diff-based change detection."""
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    h, w = bgr.shape[:2]
+    x0 = max(0, region_left)
+    y0 = max(0, region_top)
+    x1 = min(w, region_left + region_width)
+    y1 = min(h, region_top + region_height)
+    crop = bgr[y0:y1, x0:x1]
+    return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+
+
+def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 5.0) -> tuple[bool, float]:
+    """Mean absolute pixel difference between two crops; True if above threshold.
+
+    Returns (changed, mean_diff). The mean_diff is in 0-255 grayscale units;
+    threshold ~5 reliably distinguishes a digit changing from background noise.
+    """
+    if before.shape != after.shape:
+        return True, 255.0
+    diff = cv2.absdiff(before, after).astype(np.float32)
+    mean_diff = float(diff.mean())
+    return mean_diff > threshold, mean_diff
+
+
 def find_ball(
     frame: np.ndarray,
     search_x0: int,
