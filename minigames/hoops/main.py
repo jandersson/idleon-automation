@@ -24,7 +24,7 @@ POLL_INTERVAL = 0.02
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
     (700, 35),   # high hoops — initial guess, tune from observation
-    (900, 18),   # mid-range — confirmed makes at this point
+    (900, 22),   # mid-range — bumped from 18 after "overshoots a tad" run
 ]
 
 
@@ -97,7 +97,9 @@ def _try_rescue(left: int, top: int, width: int, height: int,
                 hoop_x: int, hoop_y: int, platform_x: int) -> bool:
     """After a launch click, track the ball; click on it when it's over the hoop.
 
-    Returns True if a rescue click was fired.
+    Returns True if a rescue click was fired. Logs a one-line diagnostic when
+    it doesn't fire so we can see whether the ball is being detected at all and,
+    if so, why it never crossed the drop window.
     """
     deadline = time.time() + RESCUE_WINDOW
     # Search airspace: between platform x and hoop x, above the hoop rim.
@@ -105,16 +107,32 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     sx1 = max(platform_x, hoop_x) + 40
     sy0 = 0
     sy1 = hoop_y + 5  # don't let the rim itself confuse the mask
+
+    detected = 0
+    iters = 0
+    last_ball: tuple[int, int] | None = None
+    closest_dx: int | None = None
     while time.time() < deadline:
+        iters += 1
         frame = grab_region(left, top, width, height)
         ball = find_ball(frame, sx0, sy0, sx1, sy1)
         if ball is not None:
+            detected += 1
+            last_ball = ball
             bx, by = ball
-            if abs(bx - hoop_x) <= BALL_X_TOLERANCE and by < hoop_y:
+            dx = abs(bx - hoop_x)
+            if closest_dx is None or dx < closest_dx:
+                closest_dx = dx
+            if dx <= BALL_X_TOLERANCE and by < hoop_y:
                 print(f"  [rescue] ball at ({bx},{by}), over hoop_x={hoop_x} — dropping")
                 click(left + bx, top + by)
                 return True
         time.sleep(RESCUE_POLL)
+
+    if detected == 0:
+        print(f"  [rescue] no ball detected in {iters} frames — HSV bounds may be off")
+    else:
+        print(f"  [rescue] ball seen {detected}/{iters} frames; closest to hoop_x={hoop_x} was {closest_dx}px (last at {last_ball})")
     return False
 
 
