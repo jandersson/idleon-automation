@@ -65,7 +65,7 @@ RESCUE_POLL = 0.01  # tight loop — ball moves fast
 # Window-relative crop for the "Score: N" readout in the upper-left of the
 # minigame UI. Tune via hoops-score-calibrate; defaults are an initial guess
 # based on a 1280x1392 window. Disable score detection by setting to None.
-SCORE_REGION_REL: dict | None = {"left": 130, "top": 270, "width": 130, "height": 35}
+SCORE_REGION_REL: dict | None = {"left": 6, "top": 384, "width": 78, "height": 18}
 
 
 def _capture_score_region(left: int, top: int, width: int, height: int):
