@@ -2,6 +2,8 @@
 
 > ⚠️ **Work in progress.** Nothing here is finished. Bots half-work, configs are in flux, expect breakage. See the Status table below.
 
+[Legends of Idleon](https://www.legendsofidleon.com/) is a free 2D idle MMO with a pile of click-the-right-moment minigames gating its rewards. This repo automates them.
+
 An experiment: **how much of a working game-bot suite can I get just by prompting Claude Code?** Every line of code in this repo was written by Claude. My role is the eyeballs and hands — running the bot, describing what's happening on screen, cropping templates in Photoshop, telling Claude which direction the shots miss. Claude does the rest: reading the game, picking detection strategies, tuning offsets, breaking deadlocks, scaffolding new minigames.
 
 Below: bots for Idleon minigames. Each one captures a region of the screen, detects game state with OpenCV, and fires synthetic clicks via `pyautogui`. The Status table tracks how far the experiment has gotten on each.
