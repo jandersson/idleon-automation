@@ -12,9 +12,9 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 
 | Module   | Working | Notes |
 |----------|---------|-------|
-| hoops    | ~60%    | Reliable score 0-9 (~7/10 makes). Force-fires unreachable hoops to break deadlocks. Mid-flight ball-drop rescue scaffolded, HSV not yet calibrated. Score 10+ horizontal-platform handling fragile; score 20+ (moving hoop) not handled. |
-| chopping | Untested| Code in place; user hasn't calibrated HSV ranges or run yet. |
-| darts    | Scaffold| Folder + entry points (`darts`, `darts-capture`) exist. Mechanics unknown; awaiting capture frames before writing the detector. |
+| hoops    | ~50%    | Resolution-agnostic (multi-scale templates + fraction-based regions). Real per-shot make detection via score-region diff (binarized), game-over detection, game-start prompt detection. Tuning is layout-dependent: known good in portrait window, current widescreen tuning still missing shots (peak too short of hoop). Two switchable strategies (`SHOT_STRATEGY = "direct"` or `"overshoot"`); overshoot relies on the click-on-ball drop trick which we have no proof works in this game version. |
+| darts    | ~30%    | Release-pose template matching fires consistently. Wind region is captured, dedup-saving distinct states builds the wind library as you play. Score-region diff per throw. Multi-template per spawn-height (the dominant accuracy variable) not yet built. |
+| chopping | ~40%    | Region picking + dual-region (bar zones + leaf track above) + leaf HSV all working. Button click is suspect — first test closed the minigame. Needs verification of the button region and a single careful re-test. |
 | catching | Scaffold| Folder + entry points (`catching`, `catching-capture`, `catching-pick-play-region`). Flappy-Bird-style: click for altitude, navigate hoops. Need fly + hoop-gap detectors before this runs — currently the detectors return None. |
 
 ## Setup
@@ -44,80 +44,105 @@ Two ways to stop a running bot:
 
 ## Minigames
 
+### Conventions across all minigames
+
+- **Region coordinates live in `minigames/<game>/assets/regions.json`** as fractions of the window size, so a window resize doesn't break them. You don't edit this file directly — `*-pick-*-region` scripts open a popup, you click two corners around the target, and the script writes the fractions for you. See the strategy notes in `minigames/hoops/STRATEGY.md` for the bottom-of-rim-aim rationale and other deep details.
+- **Per-session logs** under `minigames/<game>/assets/logs/` capture the bot's full stdout for review.
+- **Per-shot monitor folders** (where applicable) under `minigames/<game>/assets/monitor/` save pre/post screenshots, mid-flight frames, and metadata for offline tuning.
+
 ### hoops
 
-Basketball minigame — the character stands on a platform that oscillates vertically, and the hoop randomly repositions on the right side after each shot. The bot detects both, and left-clicks when the platform crosses a target height (derived from the hoop's rim).
+Basketball minigame. Platform oscillates vertically (and horizontally at score ≥10); hoop repositions randomly between shots (and moves continuously at score ≥20). Bot detects both, fires a click when the platform crosses a target Y derived from `OFFSET_ANCHORS`. Resolution-agnostic via multi-scale `matchTemplate`. Game-start prompt detection skips counting the wake-up click; game-over detection exits cleanly with final session stats.
 
-**Game mechanics** (per [IdleOn wiki](https://idleon.wiki/wiki/Hoops_Minigame)):
-- Difficulty ramps with score *within a single trial*:
-  - Score ≥10: the player's platform starts moving **horizontally** in addition to vertically.
-  - Score ≥20: the hoop also starts moving horizontally.
-  - Score ≥30: the hoop moves both horizontally and vertically.
-- Clicking the **ball mid-flight** makes it drop straight down — a manual rescue for shots overshooting the rim. The bot doesn't use this yet.
-- Scored across 3 trials; combined score of 66 unlocks the Hoops pet.
-
-The current bot only handles the score-0–9 regime (vertical platform, static hoop position between shots). Beyond score 10 it will start missing — the platform's horizontal motion isn't tracked, and beyond score 20 the hoop position needs re-detection per frame, not just after each shot.
-
-Before running:
-- Drop two cropped screenshots in `minigames/hoops/assets/`:
-  - `hoop.png` — just the rim
-  - `platform.png` — the platform the character stands on
-- If the game's window title isn't "Idleon", update `WINDOW_TITLE` in `minigames/hoops/main.py`
-
-Grab frames for cropping via burst capture (30 frames over ~3s through the same capture path the bot uses, so templates are pixel-identical to what gets matched):
+**First-run setup:**
 
 ```bash
+# Capture frames during a live game
 uv run hoops-capture
+# In assets/captures/, crop tight templates and save as:
+#   minigames/hoops/assets/hoop.png       (rim + backboard)
+#   minigames/hoops/assets/platform.png   (the wooden platform only)
+# Pick the score-region (the digits, no "Score:" label):
+uv run hoops-pick-score-region
+# After your first game-over screen appears, capture its template:
+uv run hoops-pick-game-over
 ```
 
-Frames land in `minigames/hoops/assets/captures/`. Crop `hoop.png` and `platform.png` from whichever frames show each most clearly.
+**Then run:** `uv run hoops`
 
 **Tuning knobs** in `minigames/hoops/main.py`:
-- `OFFSET_ANCHORS` — list of `(hoop_y, offset)` anchor points; the launch offset for any hoop position is linearly interpolated between them. Add a new anchor when shots consistently miss in a particular hoop-Y range. Positive offset fires later (platform lower); negative fires earlier (platform higher).
-- `Y_TOLERANCE` — how close platform Y has to be to target before firing.
-- `REQUIRED_DIRECTION` — `"up"`, `"down"`, or `"any"`. Restricts firing to the rising or falling half of the oscillation.
-- `POST_SHOT_COOLDOWN` — seconds to wait after firing before re-detecting the hoop.
-- `X_TOLERANCE` — at score ≥10 the platform also moves horizontally; the bot anchors a `home_x` from early frames and only fires when within this tolerance. Set huge (e.g. `9999`) to disable.
-- `RESCUE_WINDOW`, `BALL_X_TOLERANCE` — controls the mid-flight ball-drop rescue. After the launch click, the bot tracks the ball for `RESCUE_WINDOW` seconds and clicks it (drops it straight down) when it's within `BALL_X_TOLERANCE` of the hoop X.
-- `SCORE_REGION_REL` — window-relative crop of the score readout. Diffed before/after each shot to detect makes. Set to `None` to disable shot-result logging. Verify the crop with `uv run hoops-score-calibrate`.
+- `SHOT_STRATEGY` — `"direct"` (default; tune offsets so the ball arc passes through the rim) or `"overshoot"` (aim past the rim and rely on `_try_rescue` clicking the ball mid-flight to drop it through). Each has its own `OFFSET_ANCHORS` and `BALL_X_TOLERANCE`.
+- `OFFSET_ANCHORS_DIRECT` / `OFFSET_ANCHORS_OVERSHOOT` — list of `(hoop_y, offset)` anchor points; offset for any hoop_y is linearly interpolated between them. Higher offset = fire when platform is lower = more arc.
+- `Y_TOLERANCE`, `REQUIRED_DIRECTION`, `POST_SHOT_COOLDOWN` — firing-window controls.
+- `X_TOLERANCE` — at score ≥10 the platform moves horizontally; the bot anchors a `home_x` and only fires when within tolerance. Set huge (default `9999`) to disable.
+- `RESCUE_WINDOW`, `BALL_X_TOLERANCE` — mid-flight ball drop. Ball detection uses motion masking (frame-to-frame diff ANDed with the orange HSV mask) so it doesn't lock onto the static rim.
+- `MONITOR_MODE` — set False to skip per-shot screenshot dumps.
 
-Helper scripts (all registered as `[project.scripts]`):
-- `hoops-capture` — burst-capture frames for cropping `hoop.png` / `platform.png` templates.
-- `hoops-debug` — annotate one frame with the best hoop and platform matches and their confidences.
-- `hoops-ball-calibrate` — fire a shot, burst-capture the flight, overlay the HSV mask so you can tune `BALL_HSV_LOWER`/`UPPER` in `detector.py`.
+**Helper scripts:**
+- `hoops-capture` — burst-capture for templates.
+- `hoops-debug` — annotates one frame with the best hoop+platform matches.
+- `hoops-ball-calibrate` — fire one shot, burst-capture the flight, overlay HSV mask for ball tuning.
 - `hoops-score-calibrate` — save the score-region crop for visual verification.
+- `hoops-pick-score-region`, `hoops-pick-game-over` — one-time region/template picks.
+
+### darts
+
+Throwy Darts. Player teleports to a new platform position per throw; arm sweeps in a `)` arc; wind affects trajectory. Bot template-matches a `release.png` (player+arm at the captured release angle); when matchTemplate confidence peaks, fires a click. Score region diff and a wind-state library accumulate as you play.
+
+**First-run setup:**
 
 ```bash
-hoops
+uv run darts-pick-score-region
+uv run darts-pick-wind-region
+uv run darts-capture          # burst-capture frames showing the arm at various angles
+uv run darts-auto-crop-release # default frame 8 (slightly elevated arm)
 ```
+
+**Then run:** `uv run darts`
+
+Each throw saves a folder under `minigames/darts/assets/monitor/` with pre/post screenshots, the wind-region snapshot, and metadata.
+
+**Helper scripts:** `darts-capture`, `darts-pick-release` (manual click-corners crop), `darts-auto-crop-release` (motion-detection crop), `darts-watch-wind` (standalone wind-sample collector).
 
 ### chopping
 
-Clicks the chop button when a sliding pointer is over the green (safe) or gold (bonus) zone. Color-based, not template-based.
+Click "Chop" when the sliding leaf is over the green (1pt) or gold (2pt) zone. The leaf scrolls in a strip *above* the colored bar, so the bot uses two regions: a `leaf` strip (for X position) and a `bar` strip (for zone color at that X). Per community wisdom, the hitbox is the **left edge of the leaf**, not its center.
 
-Before running:
-- Set `BAR_REGION_REL` and `CHOP_BUTTON_REL` in `minigames/chopping/main.py` — both are **relative to the game window's top-left**, not the full screen
-- Tune HSV ranges in `minigames/chopping/detector.py` if the defaults don't match
-- If the game's window title isn't "Idleon", update `WINDOW_TITLE`
-
-Calibrate first — dumps masks and overlays to `minigames/chopping/calibration/` so you can see which pixels each HSV range is catching:
+**First-run setup:**
 
 ```bash
-chopping-calibrate
+uv run chopping-pick-leaf-region   # the leaf's track above the bar
+uv run chopping-pick-bar-region    # the colored zone strip
+uv run chopping-pick-button-region # the "Chop" button
+uv run chopping-calibrate          # dumps masks/overlays to assets/calibration/
 ```
 
-Then run:
+**Then run:** `uv run chopping`
 
-```bash
-chopping
-```
+Tune `LEAF_HSV` / `GREEN_HSV` / `GOLD_HSV` / `RED_HSV_LOW` / `RED_HSV_HIGH` in `minigames/chopping/detector.py` if calibration shows a mask catching the wrong things.
+
+### catching
+
+Flappy-Bird-style: click to gain altitude, navigate the fly through a series of hoops. 5 tries per day. **Currently scaffold only** — needs a fly template and a working `find_next_gap` implementation before it runs.
+
+**Setup so far:** `catching-pick-play-region`, `catching-capture`. Real detector code is the next step.
 
 ## Layout
 
 ```
-common/          shared screen-capture + input helpers
+common/
+  capture.py       mss-based screen grab
+  input.py         pyautogui clicks with jitter + delay
+  window.py        find game window by title substring
+  region_picker.py click-two-corners popup helper
+  regions.py       load/save per-minigame regions.json
+  templates.py     multi-scale matchTemplate helpers
+  session_log.py   tee stdout to per-session log files
 minigames/
-  hoops/         template-matching bot + ball-rescue + score diff
-  chopping/      HSV-zone bot + calibration script
-  darts/         scaffold only — mechanics not yet implemented
+  hoops/           basketball — multi-scale templates, score diff,
+                   game-over/start detection, ball-drop rescue
+  darts/           throwy darts — release-pose template, wind capture,
+                   per-throw monitor screenshots
+  chopping/        leaf+zones HSV bot, separate leaf/bar regions
+  catching/        scaffold — flappy-bird-style, detectors not built
 ```
