@@ -378,10 +378,17 @@ def _run_inner():
                 lives_after = _capture_lives_region(left, top, width, height)
                 if not is_game_start_click:
                     _log_shot_result(shot_stats, score_before, score_after)
+                # Lives counter cross-check: every real shot should consume a
+                # life. If lives didn't change, our click never registered with
+                # the game (lost focus, popup blocked it, click landed on dead
+                # pixels, etc.). Log loudly so we don't silently chase a tuning
+                # ghost when the real bug is unregistered clicks.
                 if lives_before is not None and lives_after is not None:
                     lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
                     if lives_changed_flag:
-                        print(f"  [lives] counter changed (diff={lives_diff:.1f})")
+                        print(f"  [lives] counter ticked down (diff={lives_diff:.1f})")
+                    elif not is_game_start_click:
+                        print(f"  [lives] WARNING: counter unchanged (diff={lives_diff:.1f}) — click likely didn't register")
                 last_clamped_hoop_pos = (hoop_x, hoop_y) if clamped else None
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
