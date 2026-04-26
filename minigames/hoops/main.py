@@ -81,10 +81,9 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
 RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
-BALL_X_TOLERANCE = 12  # tight: with overshoot strategy we WANT precise drop
-                       # placement so the ball goes through the rim cleanly
-                       # (a swish = 2 pts). Wider tolerance produces backboard
-                       # hits instead.
+BALL_X_TOLERANCE = 6   # tight rim-opening match: empirically, 4px-off shots
+                       # made and 8px+ off shots missed. The rim is narrower
+                       # than the previous 12px window suggested.
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
 
 # Monitor mode: per-shot subfolder under assets/monitor/ with pre/post-shot
