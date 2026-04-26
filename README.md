@@ -18,11 +18,22 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 
 ## Setup
 
-Requires Python 3.11+.
+Windows-only in practice (depends on `pygetwindow`). Tested on Python 3.11.
 
-```bash
-pip install -e .
-```
+1. Install [Python 3.11+](https://www.python.org/downloads/).
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) — Astral's fast Python package manager. On Windows:
+   ```powershell
+   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+3. Clone and install dependencies:
+   ```bash
+   git clone https://github.com/jandersson/idleon-automation.git
+   cd idleon-automation
+   uv sync
+   ```
+4. Open Idleon, navigate to the minigame you want to bot, then in the repo directory run e.g. `uv run hoops`. The bot waits 2 seconds before clicking — switch focus to the game window in that time.
+
+(Alternative without `uv`: `pip install -e .`, then call commands directly: `hoops`, `darts`, etc.)
 
 ## Aborting a bot
 
