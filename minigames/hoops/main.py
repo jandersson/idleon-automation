@@ -234,6 +234,11 @@ def _run_inner():
     last_range_log = time.time()
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0}
+    # Hoops only respawn on MAKES (per user observation). If we fire a clamped
+    # shot (target unreachable) at a hoop position and the hoop is still there
+    # next iteration, we'd waste another life on a guaranteed miss. Track the
+    # last clamped position; if we'd clamp at the same place again, exit.
+    last_clamped_hoop_pos: tuple[int, int] | None = None
 
     while True:
         try:
@@ -325,6 +330,13 @@ def _run_inner():
             # where direction is whatever-it-just-was → never matches. Bypass.
             direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
             if x_ok and direction_ok:
+                # Hoop only respawns on a make. If we've already fired a clamped
+                # (unreachable) shot at this exact hoop position, firing again
+                # is a guaranteed miss + wasted life. Exit cleanly instead.
+                if clamped and last_clamped_hoop_pos == (hoop_x, hoop_y):
+                    print(f"Hoop at {(hoop_x, hoop_y)} is unreachable and already missed once — "
+                          f"firing again would waste a life. Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
+                    return
                 tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
                 # Detect the "Make a shot to start the game!" prompt. While it's
                 # visible, the next click just dismisses the prompt (game-start)
@@ -350,6 +362,7 @@ def _run_inner():
                 score_after = _capture_score_region(left, top, width, height)
                 if not is_game_start_click:
                     _log_shot_result(shot_stats, score_before, score_after)
+                last_clamped_hoop_pos = (hoop_x, hoop_y) if clamped else None
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
                     save_frame(shot_dir / "post_shot.png", post_frame)
