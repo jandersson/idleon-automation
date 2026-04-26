@@ -8,10 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.input import click, random_delay
 from common.regions import get_region
+from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
+LOGS_DIR = _HERE / "assets" / "logs"
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
@@ -162,6 +164,12 @@ def _direction(history: deque) -> str:
 
 
 def run():
+    with session_log(LOGS_DIR) as log_path:
+        print(f"Session log: {log_path}")
+        _run_inner()
+
+
+def _run_inner():
     print(f"Hoops bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
