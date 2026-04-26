@@ -32,7 +32,9 @@ SCORE_REGION_REL: dict | None = None
 # Wind indicator region (set via darts-pick-wind-region). Crop tight around
 # just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
 # state, not the static label.
-WIND_REGION_REL: dict | None = {"left": 747, "top": 357, "width": 57, "height": 51}
+# Generous bounds so we catch both the arrow and adjacent mph text wherever
+# they end up rendering (we picked tight on the arrow alone before seeing mph).
+WIND_REGION_REL: dict | None = {"left": 720, "top": 350, "width": 130, "height": 90}
 WIND_SAMPLES_DIR = Path(__file__).parent / "assets" / "wind_samples"
 WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
 
