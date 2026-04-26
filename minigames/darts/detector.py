@@ -41,31 +41,10 @@ def find_release_pose(
     return center, val
 
 
-def score_region(
-    frame: np.ndarray,
-    region_left: int,
-    region_top: int,
-    region_width: int,
-    region_height: int,
-) -> np.ndarray:
-    """Grayscale crop of the score readout, for diff-based change detection.
-
-    Same approach as hoops/detector.py — kept here as a per-minigame copy so
-    the darts bot can have its own score region without coupling to hoops.
-    """
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    h, w = bgr.shape[:2]
-    x0 = max(0, region_left)
-    y0 = max(0, region_top)
-    x1 = min(w, region_left + region_width)
-    y1 = min(h, region_top + region_height)
-    crop = bgr[y0:y1, x0:x1]
-    return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-
-
-def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 5.0) -> tuple[bool, float]:
-    if before.shape != after.shape:
-        return True, 255.0
-    diff = cv2.absdiff(before, after).astype(np.float32)
-    mean_diff = float(diff.mean())
-    return mean_diff > threshold, mean_diff
+# score_region / score_changed live in common.score_diff. Re-exported here so
+# `from minigames.darts.detector import score_region, score_changed` keeps
+# working unchanged. Darts previously used a non-binarized diff with threshold
+# 5.0; the common version is binarized with threshold 3.0 (same as hoops post-
+# noise-fix). Keeping the same behavior is preferable since both bots crop the
+# same kind of in-game UI text.
+from common.score_diff import score_region, score_changed  # noqa: F401

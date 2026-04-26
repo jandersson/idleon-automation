@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay
+from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
@@ -202,12 +203,7 @@ def _try_rescue(left: int, top: int, width: int, height: int,
 
 
 def _make_monitor_dir(throw_idx: int) -> Path:
-    """Create per-shot monitor folder under MONITOR_DIR."""
-    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%H%M%S")
-    sub = MONITOR_DIR / f"shot_{throw_idx:03d}_{stamp}"
-    sub.mkdir(parents=True, exist_ok=True)
-    return sub
+    return make_shot_dir(MONITOR_DIR, throw_idx, prefix="shot")
 
 
 def _direction(history: deque) -> str:
@@ -346,8 +342,7 @@ def _run_inner():
                 # plus all flight frames captured during _try_rescue.
                 shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE and not is_game_start_click else None
                 if shot_dir is not None:
-                    pre_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-                    cv2.imwrite(str(shot_dir / "pre_shot.png"), pre_bgr)
+                    save_frame(shot_dir / "pre_shot.png", frame)
                 # Snapshot score region before launch so we can diff later.
                 score_before = _capture_score_region(left, top, width, height)
                 random_delay(10, 40)
@@ -360,18 +355,17 @@ def _run_inner():
                     _log_shot_result(shot_stats, score_before, score_after)
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
-                    post_bgr = cv2.cvtColor(post_frame, cv2.COLOR_BGRA2BGR)
-                    cv2.imwrite(str(shot_dir / "post_shot.png"), post_bgr)
-                    meta = [
-                        f"hoop=({hoop_x},{hoop_y})",
-                        f"platform=({px},{py})",
-                        f"offset={offset}",
-                        f"target_y={target_y}",
-                        f"eff_target_y={effective_target_y}",
-                        f"clamped={clamped}",
-                        f"direction={direction}",
-                    ]
-                    (shot_dir / "meta.txt").write_text("\n".join(meta), encoding="utf-8")
+                    save_frame(shot_dir / "post_shot.png", post_frame)
+                    save_meta(
+                        shot_dir / "meta.txt",
+                        hoop=f"({hoop_x},{hoop_y})",
+                        platform=f"({px},{py})",
+                        offset=offset,
+                        target_y=target_y,
+                        eff_target_y=effective_target_y,
+                        clamped=clamped,
+                        direction=direction,
+                    )
                 platform_history.clear()
                 prev_py = None
                 target_y = None  # re-detect hoop after it repositions

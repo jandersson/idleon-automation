@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay
+from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
@@ -102,26 +103,19 @@ def _save_monitor_throw(
     score_diff: float | None,
     score_changed_flag: bool | None,
 ) -> Path:
-    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%H%M%S")
-    sub = MONITOR_DIR / f"throw_{throw_idx:03d}_{stamp}"
-    sub.mkdir(parents=True, exist_ok=True)
-
-    pre_bgr = cv2.cvtColor(pre_frame_bgra, cv2.COLOR_BGRA2BGR)
-    post_bgr = cv2.cvtColor(post_frame_bgra, cv2.COLOR_BGRA2BGR)
-    cv2.imwrite(str(sub / "pre_throw.png"), pre_bgr)
-    cv2.imwrite(str(sub / "post_throw.png"), post_bgr)
+    sub = make_shot_dir(MONITOR_DIR, throw_idx, prefix="throw")
+    save_frame(sub / "pre_throw.png", pre_frame_bgra)
+    save_frame(sub / "post_throw.png", post_frame_bgra)
     if wind_crop is not None and wind_crop.size > 0:
         cv2.imwrite(str(sub / "wind.png"), wind_crop)
-
-    meta = [
-        f"timestamp={datetime.now().isoformat()}",
-        f"release_pose=({pose[0]},{pose[1]})",
-        f"release_conf={conf:.3f}",
-        f"score_diff={score_diff if score_diff is not None else 'n/a'}",
-        f"score_changed={score_changed_flag if score_changed_flag is not None else 'n/a'}",
-    ]
-    (sub / "meta.txt").write_text("\n".join(meta), encoding="utf-8")
+    save_meta(
+        sub / "meta.txt",
+        timestamp=datetime.now().isoformat(),
+        release_pose=f"({pose[0]},{pose[1]})",
+        release_conf=f"{conf:.3f}",
+        score_diff=score_diff if score_diff is not None else "n/a",
+        score_changed=score_changed_flag if score_changed_flag is not None else "n/a",
+    )
     return sub
 
 

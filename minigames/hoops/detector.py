@@ -122,40 +122,10 @@ def _find_top_text(frame: np.ndarray, template_name: str, threshold: float) -> t
     return val >= threshold, val
 
 
-def score_region(
-    frame: np.ndarray,
-    region_left: int,
-    region_top: int,
-    region_width: int,
-    region_height: int,
-) -> np.ndarray:
-    """Return a grayscale crop of the score readout, for diff-based change detection."""
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    h, w = bgr.shape[:2]
-    x0 = max(0, region_left)
-    y0 = max(0, region_top)
-    x1 = min(w, region_left + region_width)
-    y1 = min(h, region_top + region_height)
-    crop = bgr[y0:y1, x0:x1]
-    return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-
-
-def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 3.0) -> tuple[bool, float]:
-    """Detect if the score-region crop's DIGITS changed.
-
-    Both crops are binarized via Otsu before comparing. This collapses the
-    animated background (twinkling stars, parallax) to a single value, so
-    only high-contrast digit pixels contribute to the diff. Result: real
-    score changes give large diffs (~10-50) while background motion gives
-    near zero, distinguishing them cleanly.
-    """
-    if before.shape != after.shape:
-        return True, 255.0
-    _, b_bin = cv2.threshold(before, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    _, a_bin = cv2.threshold(after, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    diff = cv2.absdiff(b_bin, a_bin).astype(np.float32)
-    mean_diff = float(diff.mean())
-    return mean_diff > threshold, mean_diff
+# score_region / score_changed live in common.score_diff. Re-exported here so
+# `from minigames.hoops.detector import score_region, score_changed` keeps
+# working unchanged.
+from common.score_diff import score_region, score_changed  # noqa: E402, F401
 
 
 def find_ball(
