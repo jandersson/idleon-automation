@@ -54,15 +54,12 @@ POLL_INTERVAL = 0.02
 SHOT_STRATEGY = "direct"
 
 OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    # In widescreen layout, hoops sit at y=380-450 — well above the (700)
-    # anchor and clamping to 45 gives too-flat trajectories (ball hits top
-    # of rim and bounces). Add a top anchor so widescreen hoops get more arc.
-    (400, 90),   # widescreen — bumped from 55 (same flat-top-of-rim issue);
-                 # math says ~90 to replicate the portrait-good-session
-                 # platform-Y vs hoop-Y geometry in this smaller bob range.
-    (700, 45),   # high hoops in portrait layout
-    (835, 14),   # upper-mid (portrait)
-    (900, 11),   # mid-range (portrait); known good (6/7 in one session).
+    (400, 90),   # widescreen high hoops
+    (700, 50),   # portrait high hoops — last session missed at y=722 with
+                 # interpolated offset 40; extrapolating the make trend from
+                 # (835,14) and (900,11) suggests ~50 here, not 40.
+    (835, 14),   # upper-mid (portrait); makes at y=832, 866 confirmed
+    (900, 11),   # mid-range (portrait); makes at y=905 confirmed
 ]
 
 OFFSET_ANCHORS_OVERSHOOT: list[tuple[int, int]] = [
