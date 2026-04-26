@@ -1,6 +1,10 @@
 import time
 import sys
+from datetime import datetime
 from pathlib import Path
+
+import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -29,6 +33,52 @@ SCORE_REGION_REL: dict | None = None
 # just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
 # state, not the static label.
 WIND_REGION_REL: dict | None = {"left": 747, "top": 357, "width": 57, "height": 51}
+WIND_SAMPLES_DIR = Path(__file__).parent / "assets" / "wind_samples"
+WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
+
+
+def _crop_wind(frame_bgra) -> np.ndarray | None:
+    if WIND_REGION_REL is None:
+        return None
+    bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+    r = WIND_REGION_REL
+    h_img, w_img = bgr.shape[:2]
+    x0 = max(0, r["left"])
+    y0 = max(0, r["top"])
+    x1 = min(w_img, r["left"] + r["width"])
+    y1 = min(h_img, r["top"] + r["height"])
+    return bgr[y0:y1, x0:x1]
+
+
+def _maybe_save_wind_sample(wind_crop: np.ndarray, seen: list) -> bool:
+    """Save wind_crop to wind_samples dir if it differs from every prior sample.
+
+    Mutates `seen` in place. Returns True if saved.
+    """
+    if wind_crop is None or wind_crop.size == 0:
+        return False
+    for ref in seen:
+        if ref.shape != wind_crop.shape:
+            continue
+        diff = float(cv2.absdiff(wind_crop, ref).astype(np.float32).mean())
+        if diff < WIND_DEDUP_THRESHOLD:
+            return False
+    WIND_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%H%M%S")
+    cv2.imwrite(str(WIND_SAMPLES_DIR / f"sample_{stamp}.png"), wind_crop)
+    seen.append(wind_crop)
+    return True
+
+
+def _load_existing_wind_samples() -> list:
+    if not WIND_SAMPLES_DIR.exists():
+        return []
+    samples = []
+    for p in sorted(WIND_SAMPLES_DIR.glob("*.png")):
+        img = cv2.imread(str(p), cv2.IMREAD_COLOR)
+        if img is not None:
+            samples.append(img)
+    return samples
 
 
 def _capture_score(left: int, top: int, width: int, height: int):
@@ -62,6 +112,9 @@ def run():
 
     shot_stats: dict = {"makes": 0, "attempts": 0}
     best_recent_conf = 0.0  # for visibility into how close the matcher is getting between shots
+    wind_seen = _load_existing_wind_samples()
+    if wind_seen:
+        print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
 
     while True:
         try:
@@ -82,6 +135,11 @@ def run():
         px, py = pose
         print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}) — throwing")
         score_before = _capture_score(left, top, width, height)
+        # Snapshot wind state right before this throw — useful even now (so the
+        # library accumulates) and later (so we can pick the right release angle).
+        wind_crop = _crop_wind(frame)
+        if _maybe_save_wind_sample(wind_crop, wind_seen):
+            print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
         random_delay(20, 60)
         click(left + width // 2, top + height // 2)
         time.sleep(POST_THROW_COOLDOWN)
