@@ -15,6 +15,7 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 | hoops    | ~60%    | Reliable score 0-9 (~7/10 makes). Force-fires unreachable hoops to break deadlocks. Mid-flight ball-drop rescue scaffolded, HSV not yet calibrated. Score 10+ horizontal-platform handling fragile; score 20+ (moving hoop) not handled. |
 | chopping | Untested| Code in place; user hasn't calibrated HSV ranges or run yet. |
 | darts    | Scaffold| Folder + entry points (`darts`, `darts-capture`) exist. Mechanics unknown; awaiting capture frames before writing the detector. |
+| catching | Scaffold| Folder + entry points (`catching`, `catching-capture`, `catching-pick-play-region`). Flappy-Bird-style: click for altitude, navigate hoops. Need fly + hoop-gap detectors before this runs — currently the detectors return None. |
 
 ## Setup
 
