@@ -6,8 +6,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay
+from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from minigames.chopping.detector import analyze_bar
+
+LOGS_DIR = Path(__file__).parent / "assets" / "logs"
 
 WINDOW_TITLE = "Idleon"
 
@@ -20,6 +23,12 @@ COOLDOWN_AFTER_CLICK = 0.25
 
 
 def run():
+    with session_log(LOGS_DIR) as log_path:
+        print(f"Session log: {log_path}")
+        _run_inner()
+
+
+def _run_inner():
     print(f"Chopping bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 

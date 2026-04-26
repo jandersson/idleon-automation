@@ -30,6 +30,32 @@ Every minigame folder follows the same quartet:
 
 When adding a new minigame, mirror this structure and register entry points in `pyproject.toml`'s `[project.scripts]`.
 
+### Required conventions for any new minigame's `main.py`
+
+- **Wrap `run()` in a `session_log` context.** The pattern is:
+  ```python
+  from common.session_log import session_log
+  LOGS_DIR = Path(__file__).parent / "assets" / "logs"
+
+  def run():
+      with session_log(LOGS_DIR) as log_path:
+          print(f"Session log: {log_path}")
+          _run_inner()
+
+  def _run_inner():
+      # actual main loop
+  ```
+  This tees stdout to `assets/logs/session_<timestamp>.log` so a maintainer can review the bot's output without copy-paste from the terminal.
+
+- **Load region coordinates from `assets/regions.json`, not hardcoded constants.** Pickers (`*-pick-<name>-region`) write to that file via `common.regions.save_region`; `main.py` reads via `common.regions.get_region(_HERE, "<name>")`. Hardcoded values are only acceptable as fallback defaults:
+  ```python
+  from common.regions import get_region
+  _HERE = Path(__file__).parent
+  SCORE_REGION_REL = get_region(_HERE, "score") or {"left": ..., "top": ..., ...}
+  ```
+
+- **Don't ask the user to copy-paste anything into source.** Any setup script (region picker, template cropper, calibration) must persist its result to a file the bot reads on next run.
+
 ### Coordinate convention
 
 All region constants in source are **window-relative**, not screen-absolute. The window's screen position is resolved at runtime via `common.window.get_bounds(WINDOW_TITLE)`, which matches by case-insensitive title substring. Capture and click coordinates are computed by adding the window's `(left, top)` each tick — so the bot survives the user moving the game window mid-run.
