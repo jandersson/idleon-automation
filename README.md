@@ -17,9 +17,19 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 | chopping | ~40%    | Region picking + dual-region (bar zones + leaf track above) + leaf HSV all working. Button click is suspect — first test closed the minigame. Needs verification of the button region and a single careful re-test. |
 | catching | Scaffold| Folder + entry points (`catching`, `catching-capture`, `catching-pick-play-region`). Flappy-Bird-style: click for altitude, navigate hoops. Need fly + hoop-gap detectors before this runs — currently the detectors return None. |
 
+## Supported platforms
+
+| Platform | Status      | Notes |
+|----------|-------------|-------|
+| Windows  | ✅ Supported | Developed on Windows 11. All scripts tested here. |
+| macOS    | ❌ Untested  | `pygetwindow` (the dep used to find the Idleon window) doesn't support macOS. Would need a Quartz/AppKit-based shim. |
+| Linux    | ❌ Untested  | Same — `pygetwindow` is Windows-only. An xdotool / wmctrl wrapper could substitute. |
+
+Idleon itself runs on all three platforms (Steam), so a port is feasible — only the window-lookup layer (`common/window.py`) is platform-specific. PRs welcome.
+
 ## Setup
 
-Windows-only in practice (depends on `pygetwindow`). Tested on Python 3.11.
+Tested on Python 3.11+ on Windows.
 
 1. Install [Python 3.11+](https://www.python.org/downloads/).
 2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) — Astral's fast Python package manager. On Windows:
