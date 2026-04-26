@@ -20,7 +20,11 @@ _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 
 WINDOW_TITLE = "Idleon"
-POLL_INTERVAL = 0.02
+POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
+                       # ~15-30ms (multi-scale matching), so this sleep is
+                       # mostly irrelevant — we're CPU-bound on the matcher.
+                       # Lowered from 0.02 anyway to make sure sleep isn't
+                       # the bottleneck on cycles where matching is fast.
 
 # Position-dependent vertical offset added to hoop rim Y to get the ideal
 # platform-launch Y. Rolls rim-vs-platform geometry AND ball-travel lead into
