@@ -292,7 +292,7 @@ def _run_inner():
         # a miss forces the hoop to reposition, breaking the deadlock.
         effective_target_y = target_y
         clamped = False
-        if len(range_samples) >= 100:
+        if len(range_samples) >= 40:
             ys = [p[1] for p in range_samples]
             ymin, ymax = min(ys), max(ys)
             if target_y > ymax:
