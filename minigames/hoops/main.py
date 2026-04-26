@@ -144,13 +144,17 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     iters = 0
     last_ball: tuple[int, int] | None = None
     closest_dx: int | None = None
+    prev_frame = None
     while time.time() < deadline:
         iters += 1
         frame = grab_region(left, top, width, height)
-        ball = find_ball(frame, sx0, sy0, sx1, sy1)
+        # First iteration: no prev frame, so HSV-only (may still match rim).
+        # From iteration 2 onward, motion-masking filters out the static rim.
+        ball = find_ball(frame, sx0, sy0, sx1, sy1, prev_frame=prev_frame)
         if monitor_dir is not None:
             bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
             cv2.imwrite(str(monitor_dir / f"flight_{iters:03d}.png"), bgr)
+        prev_frame = frame
         if ball is not None:
             detected += 1
             last_ball = ball

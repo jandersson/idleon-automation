@@ -83,10 +83,12 @@ def find_platform(
 # and the merged ball+rim region (which would be larger than 2000px²).
 BALL_HSV_LOWER = np.array([5, 120, 120])
 BALL_HSV_UPPER = np.array([20, 255, 255])
-BALL_MIN_AREA = 30
-BALL_MAX_AREA = 2500  # bumped from 800: ball+rim merge near hoop produced
-                      # blobs >800 that were getting filtered out, losing track
-                      # in the second half of the flight
+BALL_MIN_AREA = 10  # lowered for motion-masked detection: only the ball's
+                    # leading/trailing edge survives the motion filter (since
+                    # the previous ball position was elsewhere and the rim is
+                    # static), so the surviving blob is smaller than the raw
+                    # color blob.
+BALL_MAX_AREA = 2500
 
 
 def find_game_over(
@@ -141,8 +143,17 @@ def find_ball(
     search_y0: int,
     search_x1: int,
     search_y1: int,
+    prev_frame: np.ndarray | None = None,
+    motion_threshold: float = 12.0,
 ) -> tuple[int, int] | None:
-    """HSV-mask for orange in the given window-relative airspace.
+    """HSV-mask for orange in airspace, optionally restricted to MOVING pixels.
+
+    The static rim/backboard is also orange, so the prior HSV-only detection
+    was finding the rim's centroid as the "ball." Passing prev_frame masks the
+    color result by frame-to-frame motion: only pixels that are orange AND
+    changed between this frame and the previous one count. Result: rim is
+    filtered out automatically since it doesn't move; only the airborne ball
+    survives both filters.
 
     Returns ball center (x, y) in the full frame, or None.
     """
@@ -157,7 +168,16 @@ def find_ball(
 
     crop = bgr[y0:y1, x0:x1]
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, BALL_HSV_LOWER, BALL_HSV_UPPER)
+    color_mask = cv2.inRange(hsv, BALL_HSV_LOWER, BALL_HSV_UPPER)
+
+    mask = color_mask
+    if prev_frame is not None:
+        prev_bgr = cv2.cvtColor(prev_frame, cv2.COLOR_BGRA2BGR)
+        if prev_bgr.shape == bgr.shape:
+            prev_crop = prev_bgr[y0:y1, x0:x1]
+            diff = cv2.absdiff(crop, prev_crop).astype(np.float32).mean(axis=2)
+            motion_mask = (diff > motion_threshold).astype(np.uint8) * 255
+            mask = cv2.bitwise_and(color_mask, motion_mask)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     best = None
