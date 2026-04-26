@@ -379,16 +379,17 @@ def _run_inner():
                 if not is_game_start_click:
                     _log_shot_result(shot_stats, score_before, score_after)
                 # Lives counter cross-check: every real shot should consume a
-                # life. If lives didn't change, our click never registered with
-                # the game (lost focus, popup blocked it, click landed on dead
-                # pixels, etc.). Log loudly so we don't silently chase a tuning
-                # ghost when the real bug is unregistered clicks.
+                # life. The counter only renders AFTER the first make though,
+                # so before then both pre and post crops are uniform background
+                # — skip the check in that case (we'd false-positive WARNING).
                 if lives_before is not None and lives_after is not None:
-                    lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
-                    if lives_changed_flag:
-                        print(f"  [lives] counter ticked down (diff={lives_diff:.1f})")
-                    elif not is_game_start_click:
-                        print(f"  [lives] WARNING: counter unchanged (diff={lives_diff:.1f}) — click likely didn't register")
+                    lives_visible = float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0
+                    if lives_visible:
+                        lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
+                        if lives_changed_flag:
+                            print(f"  [lives] counter ticked down (diff={lives_diff:.1f})")
+                        elif not is_game_start_click:
+                            print(f"  [lives] WARNING: counter unchanged (diff={lives_diff:.1f}) — click likely didn't register")
                 last_clamped_hoop_pos = (hoop_x, hoop_y) if clamped else None
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
