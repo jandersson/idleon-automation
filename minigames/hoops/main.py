@@ -18,6 +18,12 @@ POLL_INTERVAL = 0.02
 # one number per hoop position. Linearly interpolated between anchor points;
 # extrapolation is clamped to the nearest anchor's value.
 #
+# Aim point: per community strategy, target the BOTTOM of the rim opening,
+# not the center -- nothing-but-net hits score 2 points instead of 1. The
+# matched hoop template center is roughly the backboard middle, so the
+# actual rim bottom is well below it; that informs the sign of offset
+# corrections (positive = launch when platform is lower = ball arcs lower).
+#
 # To tune: watch where shots miss for a given hoop_y and add/move an anchor:
 #   - Ball clears top of backboard → offset is too small → bump it up
 #   - Ball hits front of rim       → offset is too large → bump it down

@@ -109,7 +109,7 @@ def score_region(
     return cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
 
-def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 5.0) -> tuple[bool, float]:
+def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 3.0) -> tuple[bool, float]:
     """Mean absolute pixel difference between two crops; True if above threshold.
 
     Returns (changed, mean_diff). The mean_diff is in 0-255 grayscale units;
