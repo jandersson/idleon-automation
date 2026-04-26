@@ -61,6 +61,9 @@ fractional region round-trips, multi-scale template matching against
 synthetic images, chopping zone lookup, score-diff binarization, and
 hoops offset interpolation. Doesn't touch the screen or the game.
 
+CI runs the suite on every push to `main` and every pull request via
+[GitHub Actions on `windows-latest`](.github/workflows/tests.yml).
+
 ## Aborting a bot
 
 Two ways to stop a running bot:
