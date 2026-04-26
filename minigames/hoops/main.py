@@ -137,6 +137,20 @@ def _capture_score_region(left: int, top: int, width: int, height: int):
     )
 
 
+def _capture_lives_region(left: int, top: int, width: int, height: int):
+    region = get_region(_HERE, "lives", width, height)
+    if region is None:
+        return None
+    frame = grab_region(left, top, width, height)
+    return score_region(  # same crop+gray helper, name unfortunate
+        frame,
+        region["left"],
+        region["top"],
+        region["width"],
+        region["height"],
+    )
+
+
 def _log_shot_result(stats: dict, before, after) -> None:
     if before is None or after is None:
         return
@@ -352,16 +366,22 @@ def _run_inner():
                 shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE and not is_game_start_click else None
                 if shot_dir is not None:
                     save_frame(shot_dir / "pre_shot.png", frame)
-                # Snapshot score region before launch so we can diff later.
+                # Snapshot score and lives regions before launch so we can diff later.
                 score_before = _capture_score_region(left, top, width, height)
+                lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
                 click(left + width // 2, top + height // 2)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
                 time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
+                lives_after = _capture_lives_region(left, top, width, height)
                 if not is_game_start_click:
                     _log_shot_result(shot_stats, score_before, score_after)
+                if lives_before is not None and lives_after is not None:
+                    lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
+                    if lives_changed_flag:
+                        print(f"  [lives] counter changed (diff={lives_diff:.1f})")
                 last_clamped_hoop_pos = (hoop_x, hoop_y) if clamped else None
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
