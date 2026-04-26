@@ -27,7 +27,7 @@ POST_THROW_COOLDOWN = 1.5
 
 # Score region for make/miss diff. Calibrate via darts-pick-score-region (TODO)
 # or set to None to skip score logging.
-SCORE_REGION_REL: dict | None = None  # set via darts-pick-score-region
+SCORE_REGION_REL: dict | None = {"left": 48, "top": 385, "width": 77, "height": 30}
 
 # Wind indicator region (set via darts-pick-wind-region). Crop tight around
 # just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
