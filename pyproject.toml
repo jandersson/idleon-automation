@@ -38,6 +38,7 @@ darts-pick-score-region = "minigames.darts.pick_score_region:run"
 catching = "minigames.catching.main:run"
 catching-capture = "minigames.catching.capture:run"
 catching-pick-play-region = "minigames.catching.pick_play_region:run"
+catching-extract-fly = "minigames.catching.auto_extract_fly:run"
 
 [build-system]
 requires = ["hatchling"]
