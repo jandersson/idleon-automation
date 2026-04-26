@@ -125,14 +125,19 @@ def score_region(
 
 
 def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 3.0) -> tuple[bool, float]:
-    """Mean absolute pixel difference between two crops; True if above threshold.
+    """Detect if the score-region crop's DIGITS changed.
 
-    Returns (changed, mean_diff). The mean_diff is in 0-255 grayscale units;
-    threshold ~5 reliably distinguishes a digit changing from background noise.
+    Both crops are binarized via Otsu before comparing. This collapses the
+    animated background (twinkling stars, parallax) to a single value, so
+    only high-contrast digit pixels contribute to the diff. Result: real
+    score changes give large diffs (~10-50) while background motion gives
+    near zero, distinguishing them cleanly.
     """
     if before.shape != after.shape:
         return True, 255.0
-    diff = cv2.absdiff(before, after).astype(np.float32)
+    _, b_bin = cv2.threshold(before, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, a_bin = cv2.threshold(after, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    diff = cv2.absdiff(b_bin, a_bin).astype(np.float32)
     mean_diff = float(diff.mean())
     return mean_diff > threshold, mean_diff
 
