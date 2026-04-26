@@ -155,6 +155,7 @@ def run():
     time.sleep(2)
 
     shot_stats: dict = {"makes": 0, "attempts": 0}
+    throws_taken = 0  # increments every throw, independent of score detection
     best_recent_conf = 0.0  # for visibility into how close the matcher is getting between shots
     wind_seen = _load_existing_wind_samples()
     if wind_seen:
@@ -196,9 +197,10 @@ def run():
         if score_before is not None and score_after is not None:
             diff_changed, diff_val = score_changed(score_before, score_after)
         _log_shot_result(shot_stats, score_before, score_after)
+        throws_taken += 1
         if MONITOR_MODE:
             sub = _save_monitor_throw(
-                throw_idx=shot_stats["attempts"],
+                throw_idx=throws_taken,
                 pre_frame_bgra=frame,
                 pose=(px, py),
                 conf=conf,
