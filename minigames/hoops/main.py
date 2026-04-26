@@ -165,14 +165,21 @@ def _log_shot_result(stats: dict, before, after) -> None:
 
 def _try_rescue(left: int, top: int, width: int, height: int,
                 hoop_x: int, hoop_y: int, platform_x: int,
-                monitor_dir: Path | None = None) -> bool:
-    """After a launch click, track the ball; click on it when it's over the hoop.
+                monitor_dir: Path | None = None,
+                landing_timeout: float = 1.5) -> bool:
+    """After a launch click, track the ball; click on it when it's over the hoop,
+    then continue tracking until the ball has visibly landed.
 
-    Returns True if a rescue click was fired. Logs a one-line diagnostic when
-    it doesn't fire. When monitor_dir is given, saves every captured frame for
-    offline review (and ball-template extraction).
+    "Landed" = motion-masked ball detection misses for 3 consecutive frames
+    after at least one detection. Returns True if a rescue click was fired.
+
+    landing_timeout caps total time spent waiting for landing after the
+    rescue window expires (the ball can take longer than RESCUE_WINDOW for
+    high arcs; this gives us a chance to confirm landing without spinning
+    forever if the ball was never seen).
     """
-    deadline = time.time() + RESCUE_WINDOW
+    rescue_deadline = time.time() + RESCUE_WINDOW
+    landing_hard_deadline = time.time() + RESCUE_WINDOW + landing_timeout
     sx0 = platform_x + 120
     sx1 = max(platform_x, hoop_x) + 40
     sy0 = 0
@@ -183,34 +190,52 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     last_ball: tuple[int, int] | None = None
     closest_dx: int | None = None
     prev_frame = None
-    while time.time() < deadline:
+    consecutive_unseen = 0
+    rescue_fired = False
+    landed_at: float | None = None
+    rescue_start = time.time()
+
+    while time.time() < landing_hard_deadline:
         iters += 1
         frame = grab_region(left, top, width, height)
-        # First iteration: no prev frame, so HSV-only (may still match rim).
-        # From iteration 2 onward, motion-masking filters out the static rim.
         ball = find_ball(frame, sx0, sy0, sx1, sy1, prev_frame=prev_frame)
         if monitor_dir is not None:
             bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
             cv2.imwrite(str(monitor_dir / f"flight_{iters:03d}.png"), bgr)
         prev_frame = frame
+
         if ball is not None:
             detected += 1
             last_ball = ball
+            consecutive_unseen = 0
             bx, by = ball
             dx = abs(bx - hoop_x)
             if closest_dx is None or dx < closest_dx:
                 closest_dx = dx
-            if dx <= BALL_X_TOLERANCE and by < hoop_y:
-                print(f"  [rescue] ball at ({bx},{by}), over hoop_x={hoop_x} — dropping")
-                click(left + bx, top + by)
-                return True
+            # Only fire rescue while still inside the rescue window.
+            if not rescue_fired and time.time() < rescue_deadline:
+                if dx <= BALL_X_TOLERANCE and by < hoop_y:
+                    print(f"  [rescue] ball at ({bx},{by}), over hoop_x={hoop_x} — dropping")
+                    click(left + bx, top + by)
+                    rescue_fired = True
+        else:
+            if detected > 0:
+                consecutive_unseen += 1
+                if consecutive_unseen >= 3 and landed_at is None:
+                    landed_at = time.time() - rescue_start
+                    # Ball has settled — exit early.
+                    break
         time.sleep(RESCUE_POLL)
 
     if detected == 0:
         print(f"  [rescue] no ball detected in {iters} frames — HSV bounds may be off")
-    else:
+    elif not rescue_fired:
         print(f"  [rescue] ball seen {detected}/{iters} frames; closest to hoop_x={hoop_x} was {closest_dx}px (last at {last_ball})")
-    return False
+    if landed_at is not None:
+        print(f"  [land] ball landed after {landed_at:.2f}s")
+    elif detected > 0:
+        print(f"  [land] ball detection didn't terminate within {RESCUE_WINDOW + landing_timeout:.1f}s; assuming landed")
+    return rescue_fired
 
 
 def _make_monitor_dir(throw_idx: int) -> Path:
