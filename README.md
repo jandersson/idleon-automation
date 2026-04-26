@@ -19,13 +19,17 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 
 ## Supported platforms
 
-| Platform | Status      | Notes |
-|----------|-------------|-------|
-| Windows  | ✅ Supported | Developed on Windows 11. All scripts tested here. |
-| macOS    | ❌ Untested  | `pygetwindow` (the dep used to find the Idleon window) doesn't support macOS. Would need a Quartz/AppKit-based shim. |
-| Linux    | ❌ Untested  | Same — `pygetwindow` is Windows-only. An xdotool / wmctrl wrapper could substitute. |
+The bot is a desktop screen-reader; it works on platforms where Idleon runs in a window the OS exposes via standard APIs.
 
-Idleon itself runs on all three platforms (Steam), so a port is feasible — only the window-lookup layer (`common/window.py`) is platform-specific. PRs welcome.
+| Platform | Status         | Notes |
+|----------|----------------|-------|
+| Windows  | ✅ Supported   | Developed on Windows 11. All scripts tested here. |
+| macOS    | ❌ Untested    | `pygetwindow` (the dep used to find the Idleon window) doesn't support macOS. Would need a Quartz/AppKit-based shim. |
+| Linux    | ❌ Untested    | Same — `pygetwindow` is Windows-only. An xdotool / wmctrl wrapper could substitute. |
+| iOS / Android | 🚫 Out of scope | Different process model, no desktop window to read. Would need to be rebuilt on top of a mobile automation framework (Appium etc.). |
+| Web      | 🚫 Out of scope | Browser-sandboxed; would need a browser-extension or a CDP/Playwright-driven approach instead of OS-level capture and click. |
+
+Idleon runs on Steam (Win/Mac/Linux), iOS, Android, and the web; this bot specifically targets the desktop Steam window. A Mac/Linux port is feasible — only `common/window.py` is platform-specific. PRs welcome.
 
 ## Setup
 
