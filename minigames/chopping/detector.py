@@ -7,10 +7,11 @@ import numpy as np
 # Per community wisdom, the hitbox is the LEFT edge of the leaf — that's what
 # we use for the zone lookup (not the leaf's center or rightmost column).
 #
-# LEAF_HSV is a guess; tune via chopping-calibrate. Leaf is some shade of
-# green/brown — make sure the range doesn't overlap with the zone-green below
-# or we'll false-detect the bar itself.
-LEAF_HSV = ((35, 100, 60), (60, 255, 200))         # darker/duller green than zone
+# Leaf is bright/saturated green (the leaf sprite). Detection happens in the
+# LEAF region (above the bar), so overlap with zone-green below the bar is
+# fine — they're never in the same crop. Range tuned wide to catch the leaf's
+# whole body, not just the darker stem.
+LEAF_HSV = ((30, 60, 60), (80, 255, 255))
 GREEN_HSV = ((40, 80, 80), (80, 255, 255))         # bright zone-green
 GOLD_HSV = ((20, 120, 120), (35, 255, 255))
 RED_HSV_LOW = ((0, 120, 80), (10, 255, 255))
