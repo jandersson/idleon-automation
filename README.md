@@ -148,9 +148,11 @@ Tune `LEAF_HSV` / `GREEN_HSV` / `GOLD_HSV` / `RED_HSV_LOW` / `RED_HSV_HIGH` in `
 
 ### catching
 
-Flappy-Bird-style: click to gain altitude, navigate the fly through a series of hoops. 5 tries per day. **Currently scaffold only** — needs a fly template and a working `find_next_gap` implementation before it runs.
+Flappy-Bird-style: click to gain altitude, navigate the fly through a series of hoops. **Currently scaffold only** — needs a fly template and a working `find_next_gap` implementation before it runs.
 
 **Setup so far:** `catching-pick-play-region`, `catching-capture`. Real detector code is the next step.
+
+> Daily attempts are pooled across the in-map minigames (chopping, catching, mining, etc.). Hoops and darts use their own permanent items on individual cooldowns and don't draw from the same pool.
 
 ## Layout
 
