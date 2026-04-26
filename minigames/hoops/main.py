@@ -29,9 +29,9 @@ POLL_INTERVAL = 0.02
 #   - Ball hits front of rim       → offset is too large → bump it down
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
-    (700, 45),   # high hoops — 30 undershot, 44 (from anchor 50) overshot top
-                 # of backboard at hoop_y=729. Make zone is between them.
-    (900, 11),   # mid-range — 1/2 in last run; 8 under-arced, 14 over.
+    (700, 45),   # high hoops — 30 undershot, 44 overshot. ~38 makes.
+    (835, 14),   # upper-mid — interp 22 here overshot backboard top; 14 less arc.
+    (900, 11),   # mid-range — 8 under-arced, 14 over, 11 worked once.
 ]
 
 
