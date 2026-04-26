@@ -76,22 +76,22 @@ BALL_X_TOLERANCE = 35  # how close ball X must be to hoop X to trigger drop;
                        # the prior window. Wider catches more rescue opportunities.
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
 
-# Window-relative crop for the "Score: N" readout in the upper-left of the
-# minigame UI. Tune via hoops-score-calibrate; defaults are an initial guess
-# based on a 1280x1392 window. Disable score detection by setting to None.
-SCORE_REGION_REL: dict | None = get_region(_HERE, "score") or {"left": 6, "top": 384, "width": 78, "height": 18}
+# Score region is loaded fresh from regions.json each shot (using current
+# window dims) so it survives the user resizing the game window between runs.
+# Pick via hoops-pick-score-region (writes regions.json directly).
 
 
 def _capture_score_region(left: int, top: int, width: int, height: int):
-    if SCORE_REGION_REL is None:
+    region = get_region(_HERE, "score", width, height)
+    if region is None:
         return None
     frame = grab_region(left, top, width, height)
     return score_region(
         frame,
-        SCORE_REGION_REL["left"],
-        SCORE_REGION_REL["top"],
-        SCORE_REGION_REL["width"],
-        SCORE_REGION_REL["height"],
+        region["left"],
+        region["top"],
+        region["width"],
+        region["height"],
     )
 
 

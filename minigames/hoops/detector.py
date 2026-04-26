@@ -1,6 +1,12 @@
+import sys
+from pathlib import Path
+
 import cv2
 import numpy as np
-from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from common.templates import match_multiscale_center
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -45,21 +51,31 @@ def _match_in_region(
 def find_hoop(
     frame: np.ndarray, threshold: float = 0.35
 ) -> tuple[tuple[int, int] | None, float]:
-    """Find the basketball hoop — searched in the right half of the frame."""
+    """Find the basketball hoop in the right half of the frame, scale-invariant."""
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("hoop.png")
-    return _match_in_region(bgr, template, w // 2, 0, w, h, threshold)
+    center, val, _scale = match_multiscale_center(bgr, template, region=(w // 2, 0, w, h))
+    if val < threshold:
+        return None, val
+    return center, val
 
 
 def find_platform(
-    frame: np.ndarray, threshold: float = 0.7
+    frame: np.ndarray, threshold: float = 0.5
 ) -> tuple[tuple[int, int] | None, float]:
-    """Find the character's platform — searched in the left half of the frame."""
+    """Find the character's platform in the left half of the frame, scale-invariant.
+
+    Threshold lowered from 0.7 since multi-scale matching at off-tuned scales
+    naturally peaks lower; 0.5 still discriminates the platform from background.
+    """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("platform.png")
-    return _match_in_region(bgr, template, 0, 0, w // 2, h, threshold)
+    center, val, _scale = match_multiscale_center(bgr, template, region=(0, 0, w // 2, h))
+    if val < threshold:
+        return None, val
+    return center, val
 
 
 # Orange basketball — defaults are a guess; tune via hoops-ball-calibrate.
@@ -72,11 +88,7 @@ BALL_MAX_AREA = 800
 def find_game_over(
     frame: np.ndarray, threshold: float = 0.7
 ) -> tuple[bool, float]:
-    """Detect the end-of-trial 'Game over!' screen via template match.
-
-    Returns (detected, confidence). If the template file doesn't exist yet,
-    returns (False, 0.0) silently so the bot runs even before calibration.
-    """
+    """Detect the end-of-trial 'Game over!' screen via multi-scale template match."""
     path = ASSETS / "game_over.png"
     if not path.exists():
         return False, 0.0
@@ -84,11 +96,8 @@ def find_game_over(
     template = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if template is None:
         return False, 0.0
-    if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
-        return False, 0.0
-    result = cv2.matchTemplate(bgr, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, _ = cv2.minMaxLoc(result)
-    return max_val >= threshold, max_val
+    _, val, _scale = match_multiscale_center(bgr, template)
+    return val >= threshold, val
 
 
 def score_region(

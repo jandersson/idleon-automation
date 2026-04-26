@@ -1,8 +1,8 @@
 {
   "score": {
-    "left": 6,
-    "top": 384,
-    "width": 78,
-    "height": 18
+    "left_frac": 0.0046875,
+    "top_frac": 0.27586206896551724,
+    "width_frac": 0.0609375,
+    "height_frac": 0.01293103448275862
   }
 }

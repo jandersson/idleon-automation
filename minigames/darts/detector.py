@@ -1,6 +1,12 @@
+import sys
+from pathlib import Path
+
 import cv2
 import numpy as np
-from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from common.templates import match_multiscale_center
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -14,27 +20,25 @@ def _load(name: str) -> np.ndarray:
 
 
 def find_release_pose(
-    frame: np.ndarray, threshold: float = 0.7
+    frame: np.ndarray, threshold: float = 0.6
 ) -> tuple[tuple[int, int] | None, float]:
-    """Template-match the player's hand+dart in the release angle.
+    """Template-match the player's hand+dart in the release angle, scale-invariant.
 
     The hand sweeps periodically through a `)` arc. The template is captured
-    at the desired release angle (typically arm horizontal-right toward the
-    target), so matchTemplate confidence peaks once per arc cycle when the
-    hand is at that angle.
+    at the desired release angle, so matchTemplate confidence peaks once per
+    arc cycle when the hand is at that angle. Multi-scale matching means the
+    same template works whether the user resizes the game window.
 
-    Returns (center_xy_in_frame, confidence) or (None, confidence).
+    Threshold lowered from 0.7 to 0.6 since multi-scale tries off-tuned scales
+    and naturally peaks lower; 0.6 still discriminates the release angle from
+    other arm positions.
     """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     template = _load("release.png")
-    result = cv2.matchTemplate(bgr, template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(result)
-    if max_val < threshold:
-        return None, max_val
-    th, tw = template.shape[:2]
-    cx = max_loc[0] + tw // 2
-    cy = max_loc[1] + th // 2
-    return (cx, cy), max_val
+    center, val, _scale = match_multiscale_center(bgr, template)
+    if val < threshold:
+        return None, val
+    return center, val
 
 
 def score_region(

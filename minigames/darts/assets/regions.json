@@ -1,14 +1,14 @@
 {
   "score": {
-    "left": 48,
-    "top": 385,
-    "width": 77,
-    "height": 30
+    "left_frac": 0.0375,
+    "top_frac": 0.2765804597701149,
+    "width_frac": 0.06015625,
+    "height_frac": 0.021551724137931036
   },
   "wind": {
-    "left": 720,
-    "top": 350,
-    "width": 130,
-    "height": 90
+    "left_frac": 0.5625,
+    "top_frac": 0.2514367816091954,
+    "width_frac": 0.1015625,
+    "height_frac": 0.06465517241379311
   }
 }

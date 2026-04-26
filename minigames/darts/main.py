@@ -32,10 +32,9 @@ POST_THROW_COOLDOWN = 1.5
 
 # Score region for make/miss diff. Calibrate via darts-pick-score-region (TODO)
 # or set to None to skip score logging.
-# Regions are loaded from assets/regions.json (written by darts-pick-* tools).
-# Defaults below are used only if the JSON entry is missing.
-SCORE_REGION_REL: dict | None = get_region(_HERE, "score") or {"left": 48, "top": 385, "width": 77, "height": 30}
-WIND_REGION_REL: dict | None = get_region(_HERE, "wind") or {"left": 720, "top": 350, "width": 130, "height": 90}
+# Score and wind regions are loaded fresh from regions.json each call (using
+# current window dims) so they survive the user resizing the game window.
+# Pick via darts-pick-score-region / darts-pick-wind-region.
 WIND_SAMPLES_DIR = Path(__file__).parent / "assets" / "wind_samples"
 WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
 
@@ -48,15 +47,15 @@ POST_LAND_DELAY = 0.6  # how long to wait after the cooldown before post-screens
 
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
-    if WIND_REGION_REL is None:
-        return None
     bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
-    r = WIND_REGION_REL
     h_img, w_img = bgr.shape[:2]
-    x0 = max(0, r["left"])
-    y0 = max(0, r["top"])
-    x1 = min(w_img, r["left"] + r["width"])
-    y1 = min(h_img, r["top"] + r["height"])
+    region = get_region(_HERE, "wind", w_img, h_img)
+    if region is None:
+        return None
+    x0 = max(0, region["left"])
+    y0 = max(0, region["top"])
+    x1 = min(w_img, region["left"] + region["width"])
+    y1 = min(h_img, region["top"] + region["height"])
     return bgr[y0:y1, x0:x1]
 
 
@@ -127,15 +126,16 @@ def _save_monitor_throw(
 
 
 def _capture_score(left: int, top: int, width: int, height: int):
-    if SCORE_REGION_REL is None:
+    region = get_region(_HERE, "score", width, height)
+    if region is None:
         return None
     frame = grab_region(left, top, width, height)
     return score_region(
         frame,
-        SCORE_REGION_REL["left"],
-        SCORE_REGION_REL["top"],
-        SCORE_REGION_REL["width"],
-        SCORE_REGION_REL["height"],
+        region["left"],
+        region["top"],
+        region["width"],
+        region["height"],
     )
 
 
