@@ -10,7 +10,9 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 `pip install -e .` or `uv sync` — both work, `uv.lock` is checked in. Python 3.11+.
 
-The project has no tests, linter config, or formatter. Don't add them unless asked.
+There's a small pytest suite under `tests/`. `uv run pytest` runs it. Aimed at the pure-logic helpers (regions.json round-trips, multi-scale template matching against synthetic images, chopping zone lookup, score-diff binarization, hoops offset interpolation). No CV-against-real-game-frames tests — those are inherently visual, calibrated by the user, and don't generalize. Keep tests fast and self-contained; don't pull live screen captures.
+
+No linter or formatter config. Don't add them unless asked.
 
 ## Architecture
 

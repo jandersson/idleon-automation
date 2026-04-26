@@ -50,6 +50,17 @@ Tested on Python 3.11+ on Windows.
 
 (Alternative without `uv`: `pip install -e .`, then call commands directly: `hoops`, `darts`, etc.)
 
+## Running the tests
+
+```bash
+uv run pytest
+```
+
+Small pytest suite under `tests/` covering the pure-logic helpers:
+fractional region round-trips, multi-scale template matching against
+synthetic images, chopping zone lookup, score-diff binarization, and
+hoops offset interpolation. Doesn't touch the screen or the game.
+
 ## Aborting a bot
 
 Two ways to stop a running bot:
