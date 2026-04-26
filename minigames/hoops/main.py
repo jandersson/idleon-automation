@@ -1,7 +1,10 @@
 import time
 import sys
 from collections import deque
+from datetime import datetime
 from pathlib import Path
+
+import cv2
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -33,10 +36,17 @@ POLL_INTERVAL = 0.02
 #   - Ball clears top of backboard → offset is too small → bump it up
 #   - Ball hits front of rim       → offset is too large → bump it down
 #   - Ball hits back of rim        → offset is too small → bump it up
+# OVERSHOOT STRATEGY: deliberately aim ABOVE the rim so the ball passes over
+# it; the mid-flight rescue then drops the ball straight down through the rim
+# for a guaranteed swish (2pts). Offsets are tuned higher than the "direct
+# make" zone, since being over the rim is now the goal, not making the rim
+# directly.
 OFFSET_ANCHORS: list[tuple[int, int]] = [
-    (700, 45),   # high hoops — 30 undershot, 44 overshot. ~38 makes.
-    (835, 14),   # upper-mid — interp 22 here overshot backboard top; 14 less arc.
-    (900, 11),   # mid-range — 8 under-arced, 14 over, 11 worked once.
+    (700, 55),   # high hoops — was 45 (just under-arced); +10 for clearer overshoot
+    (835, 22),   # upper-mid — was 14 (direct make); +8 to overshoot
+    (900, 18),   # mid-range — was 11; +7. Earlier 22 overshot the backboard
+                 # entirely — back off slightly so the peak is over the rim,
+                 # not way past it.
 ]
 
 
@@ -71,10 +81,19 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
 RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
-BALL_X_TOLERANCE = 35  # how close ball X must be to hoop X to trigger drop;
-                       # bumped from 20 since recent runs got closest=30,39 — just outside
-                       # the prior window. Wider catches more rescue opportunities.
+BALL_X_TOLERANCE = 12  # tight: with overshoot strategy we WANT precise drop
+                       # placement so the ball goes through the rim cleanly
+                       # (a swish = 2 pts). Wider tolerance produces backboard
+                       # hits instead.
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
+
+# Monitor mode: per-shot subfolder under assets/monitor/ with pre/post-shot
+# screenshots, all frames captured during the rescue window (so we can see the
+# full ball flight for offline review and ball-template extraction), and a
+# meta.txt with shot details. Heavyweight (~200KB per shot) but invaluable
+# for tuning offline. Toggle off in production.
+MONITOR_MODE = True
+MONITOR_DIR = _HERE / "assets" / "monitor"
 
 # Score region is loaded fresh from regions.json each shot (using current
 # window dims) so it survives the user resizing the game window between runs.
@@ -108,21 +127,19 @@ def _log_shot_result(stats: dict, before, after) -> None:
 
 
 def _try_rescue(left: int, top: int, width: int, height: int,
-                hoop_x: int, hoop_y: int, platform_x: int) -> bool:
+                hoop_x: int, hoop_y: int, platform_x: int,
+                monitor_dir: Path | None = None) -> bool:
     """After a launch click, track the ball; click on it when it's over the hoop.
 
     Returns True if a rescue click was fired. Logs a one-line diagnostic when
-    it doesn't fire so we can see whether the ball is being detected at all and,
-    if so, why it never crossed the drop window.
+    it doesn't fire. When monitor_dir is given, saves every captured frame for
+    offline review (and ball-template extraction).
     """
     deadline = time.time() + RESCUE_WINDOW
-    # Search airspace: starts WELL to the right of the platform so we skip the
-    # character's orange costume entirely (a +60 offset still picked up static
-    # orange around x=platform_x+70). Ends past the hoop, above the rim.
     sx0 = platform_x + 120
     sx1 = max(platform_x, hoop_x) + 40
     sy0 = 0
-    sy1 = hoop_y + 5  # don't let the rim itself confuse the mask
+    sy1 = hoop_y + 5
 
     detected = 0
     iters = 0
@@ -132,6 +149,9 @@ def _try_rescue(left: int, top: int, width: int, height: int,
         iters += 1
         frame = grab_region(left, top, width, height)
         ball = find_ball(frame, sx0, sy0, sx1, sy1)
+        if monitor_dir is not None:
+            bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            cv2.imwrite(str(monitor_dir / f"flight_{iters:03d}.png"), bgr)
         if ball is not None:
             detected += 1
             last_ball = ball
@@ -150,6 +170,15 @@ def _try_rescue(left: int, top: int, width: int, height: int,
     else:
         print(f"  [rescue] ball seen {detected}/{iters} frames; closest to hoop_x={hoop_x} was {closest_dx}px (last at {last_ball})")
     return False
+
+
+def _make_monitor_dir(throw_idx: int) -> Path:
+    """Create per-shot monitor folder under MONITOR_DIR."""
+    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%H%M%S")
+    sub = MONITOR_DIR / f"shot_{throw_idx:03d}_{stamp}"
+    sub.mkdir(parents=True, exist_ok=True)
+    return sub
 
 
 def _direction(history: deque) -> str:
@@ -271,15 +300,35 @@ def _run_inner():
             if x_ok and direction_ok:
                 tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
                 print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
+                # Per-shot monitor folder: we'll save pre/post-shot screenshots
+                # plus all flight frames captured during _try_rescue.
+                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE else None
+                if shot_dir is not None:
+                    pre_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                    cv2.imwrite(str(shot_dir / "pre_shot.png"), pre_bgr)
                 # Snapshot score region before launch so we can diff later.
                 score_before = _capture_score_region(left, top, width, height)
                 random_delay(10, 40)
                 click(left + width // 2, top + height // 2)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
-                _try_rescue(left, top, width, height, hoop_x, hoop_y, px)
+                _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
                 time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 _log_shot_result(shot_stats, score_before, score_after)
+                if shot_dir is not None:
+                    post_frame = grab_region(left, top, width, height)
+                    post_bgr = cv2.cvtColor(post_frame, cv2.COLOR_BGRA2BGR)
+                    cv2.imwrite(str(shot_dir / "post_shot.png"), post_bgr)
+                    meta = [
+                        f"hoop=({hoop_x},{hoop_y})",
+                        f"platform=({px},{py})",
+                        f"offset={offset}",
+                        f"target_y={target_y}",
+                        f"eff_target_y={effective_target_y}",
+                        f"clamped={clamped}",
+                        f"direction={direction}",
+                    ]
+                    (shot_dir / "meta.txt").write_text("\n".join(meta), encoding="utf-8")
                 platform_history.clear()
                 prev_py = None
                 target_y = None  # re-detect hoop after it repositions

@@ -78,11 +78,15 @@ def find_platform(
     return center, val
 
 
-# Orange basketball — defaults are a guess; tune via hoops-ball-calibrate.
+# Orange basketball. HSV bounds are deliberately broad (catches the ball even
+# under different background colors); blob-area limits exclude both small noise
+# and the merged ball+rim region (which would be larger than 2000px²).
 BALL_HSV_LOWER = np.array([5, 120, 120])
 BALL_HSV_UPPER = np.array([20, 255, 255])
 BALL_MIN_AREA = 30
-BALL_MAX_AREA = 800
+BALL_MAX_AREA = 2500  # bumped from 800: ball+rim merge near hoop produced
+                      # blobs >800 that were getting filtered out, losing track
+                      # in the second half of the flight
 
 
 def find_game_over(
