@@ -23,8 +23,8 @@ POLL_INTERVAL = 0.02
 #   - Ball hits front of rim       → offset is too large → bump it down
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
-    (700, 50),   # high hoops — bumped from 35; 30 (interp) undershot below rim
-                 # at hoop_y=743. Higher offset → more arc → ball clears further.
+    (700, 45),   # high hoops — 30 undershot, 44 (from anchor 50) overshot top
+                 # of backboard at hoop_y=729. Make zone is between them.
     (900, 11),   # mid-range — 1/2 in last run; 8 under-arced, 14 over.
 ]
 
@@ -60,7 +60,9 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
 RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
-BALL_X_TOLERANCE = 20  # how close ball X must be to hoop X to trigger drop
+BALL_X_TOLERANCE = 35  # how close ball X must be to hoop X to trigger drop;
+                       # bumped from 20 since recent runs got closest=30,39 — just outside
+                       # the prior window. Wider catches more rescue opportunities.
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
 
 # Window-relative crop for the "Score: N" readout in the upper-left of the
