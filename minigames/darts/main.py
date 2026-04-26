@@ -38,6 +38,13 @@ WIND_REGION_REL: dict | None = {"left": 720, "top": 350, "width": 130, "height":
 WIND_SAMPLES_DIR = Path(__file__).parent / "assets" / "wind_samples"
 WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
 
+# When enabled, every throw writes a per-throw subfolder under assets/monitor/
+# with pre/post screenshots, the wind crop, and a metadata file. User can zip
+# and share for offline review (since the bot can't watch the screen live).
+MONITOR_MODE = True
+MONITOR_DIR = Path(__file__).parent / "assets" / "monitor"
+POST_LAND_DELAY = 0.6  # how long to wait after the cooldown before post-screenshot
+
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
     if WIND_REGION_REL is None:
@@ -81,6 +88,41 @@ def _load_existing_wind_samples() -> list:
         if img is not None:
             samples.append(img)
     return samples
+
+
+def _save_monitor_throw(
+    throw_idx: int,
+    pre_frame_bgra: np.ndarray,
+    pose: tuple[int, int],
+    conf: float,
+    wind_crop: np.ndarray | None,
+    post_frame_bgra: np.ndarray,
+    score_before,
+    score_after,
+    score_diff: float | None,
+    score_changed_flag: bool | None,
+) -> Path:
+    MONITOR_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%H%M%S")
+    sub = MONITOR_DIR / f"throw_{throw_idx:03d}_{stamp}"
+    sub.mkdir(parents=True, exist_ok=True)
+
+    pre_bgr = cv2.cvtColor(pre_frame_bgra, cv2.COLOR_BGRA2BGR)
+    post_bgr = cv2.cvtColor(post_frame_bgra, cv2.COLOR_BGRA2BGR)
+    cv2.imwrite(str(sub / "pre_throw.png"), pre_bgr)
+    cv2.imwrite(str(sub / "post_throw.png"), post_bgr)
+    if wind_crop is not None and wind_crop.size > 0:
+        cv2.imwrite(str(sub / "wind.png"), wind_crop)
+
+    meta = [
+        f"timestamp={datetime.now().isoformat()}",
+        f"release_pose=({pose[0]},{pose[1]})",
+        f"release_conf={conf:.3f}",
+        f"score_diff={score_diff if score_diff is not None else 'n/a'}",
+        f"score_changed={score_changed_flag if score_changed_flag is not None else 'n/a'}",
+    ]
+    (sub / "meta.txt").write_text("\n".join(meta), encoding="utf-8")
+    return sub
 
 
 def _capture_score(left: int, top: int, width: int, height: int):
@@ -145,8 +187,29 @@ def run():
         random_delay(20, 60)
         click(left + width // 2, top + height // 2)
         time.sleep(POST_THROW_COOLDOWN)
+        time.sleep(POST_LAND_DELAY)
+        post_frame = grab_region(left, top, width, height)
         score_after = _capture_score(left, top, width, height)
+        # Compute the diff once so we can log AND save it to meta.
+        diff_val = None
+        diff_changed = None
+        if score_before is not None and score_after is not None:
+            diff_changed, diff_val = score_changed(score_before, score_after)
         _log_shot_result(shot_stats, score_before, score_after)
+        if MONITOR_MODE:
+            sub = _save_monitor_throw(
+                throw_idx=shot_stats["attempts"],
+                pre_frame_bgra=frame,
+                pose=(px, py),
+                conf=conf,
+                wind_crop=wind_crop,
+                post_frame_bgra=post_frame,
+                score_before=score_before,
+                score_after=score_after,
+                score_diff=diff_val,
+                score_changed_flag=diff_changed,
+            )
+            print(f"  [monitor] saved {sub.name}")
         best_recent_conf = 0.0
 
 
