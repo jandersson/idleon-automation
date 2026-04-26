@@ -95,7 +95,22 @@ def find_game_over(
     frame: np.ndarray, threshold: float = 0.7
 ) -> tuple[bool, float]:
     """Detect the end-of-trial 'Game over!' screen via multi-scale template match."""
-    path = ASSETS / "game_over.png"
+    return _find_top_text(frame, "game_over.png", threshold)
+
+
+def find_game_prompt(
+    frame: np.ndarray, threshold: float = 0.65
+) -> tuple[bool, float]:
+    """Detect the 'Make a shot to start the game!' prompt that appears before
+    the game has begun. While this is on screen, the next click only dismisses
+    the prompt; it doesn't count toward score. Slightly lower threshold than
+    game_over since the prompt has more pixel-art noise around it.
+    """
+    return _find_top_text(frame, "game_prompt.png", threshold)
+
+
+def _find_top_text(frame: np.ndarray, template_name: str, threshold: float) -> tuple[bool, float]:
+    path = ASSETS / template_name
     if not path.exists():
         return False, 0.0
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)

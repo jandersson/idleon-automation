@@ -13,7 +13,7 @@ from common.input import click, random_delay
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
+from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, find_game_prompt, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -328,10 +328,18 @@ def _run_inner():
             direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
             if x_ok and direction_ok:
                 tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
-                print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
+                # Detect the "Make a shot to start the game!" prompt. While it's
+                # visible, the next click just dismisses the prompt (game-start)
+                # and doesn't count toward the score. Don't log this click as a
+                # make/miss attempt.
+                is_game_start_click, prompt_conf = find_game_prompt(frame)
+                if is_game_start_click:
+                    print(f"Platform at ({px},{py}) — game-start click (prompt visible, conf={prompt_conf:.2f}, not counted){tag}")
+                else:
+                    print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
-                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE else None
+                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE and not is_game_start_click else None
                 if shot_dir is not None:
                     pre_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
                     cv2.imwrite(str(shot_dir / "pre_shot.png"), pre_bgr)
@@ -343,7 +351,8 @@ def _run_inner():
                 _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
                 time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
-                _log_shot_result(shot_stats, score_before, score_after)
+                if not is_game_start_click:
+                    _log_shot_result(shot_stats, score_before, score_after)
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
                     post_bgr = cv2.cvtColor(post_frame, cv2.COLOR_BGRA2BGR)
