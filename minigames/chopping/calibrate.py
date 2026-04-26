@@ -13,7 +13,7 @@ from common.window import get_bounds
 from minigames.chopping.detector import (
     GOLD_HSV,
     GREEN_HSV,
-    POINTER_HSV,
+    LEAF_HSV,
     RED_HSV_HIGH,
     RED_HSV_LOW,
 )
@@ -48,7 +48,7 @@ def run():
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
 
     masks = {
-        "pointer": _mask(hsv, *POINTER_HSV),
+        "leaf": _mask(hsv, *LEAF_HSV),
         "green": _mask(hsv, *GREEN_HSV),
         "gold": _mask(hsv, *GOLD_HSV),
         "red": cv2.bitwise_or(_mask(hsv, *RED_HSV_LOW), _mask(hsv, *RED_HSV_HIGH)),
