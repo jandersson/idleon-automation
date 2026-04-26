@@ -99,12 +99,13 @@ def find_game_over(
 
 
 def find_game_prompt(
-    frame: np.ndarray, threshold: float = 0.65
+    frame: np.ndarray, threshold: float = 0.5
 ) -> tuple[bool, float]:
     """Detect the 'Make a shot to start the game!' prompt that appears before
     the game has begun. While this is on screen, the next click only dismisses
-    the prompt; it doesn't count toward score. Slightly lower threshold than
-    game_over since the prompt has more pixel-art noise around it.
+    the prompt; it doesn't count toward score. Lowered threshold (0.5) since
+    multi-scale matching peaks lower at off-tuned scales and a missed detection
+    here causes a false-positive MAKE on the wake-up click.
     """
     return _find_top_text(frame, "game_prompt.png", threshold)
 
