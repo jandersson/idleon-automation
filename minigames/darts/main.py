@@ -10,8 +10,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay
+from common.regions import get_region
 from common.window import get_bounds, WindowNotFoundError
 from minigames.darts.detector import find_release_pose, score_region, score_changed
+
+_HERE = Path(__file__).parent
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
@@ -27,14 +30,10 @@ POST_THROW_COOLDOWN = 1.5
 
 # Score region for make/miss diff. Calibrate via darts-pick-score-region (TODO)
 # or set to None to skip score logging.
-SCORE_REGION_REL: dict | None = {"left": 48, "top": 385, "width": 77, "height": 30}
-
-# Wind indicator region (set via darts-pick-wind-region). Crop tight around
-# just the wind value/arrow, not the "Wind:" label, so we're sensitive to the
-# state, not the static label.
-# Generous bounds so we catch both the arrow and adjacent mph text wherever
-# they end up rendering (we picked tight on the arrow alone before seeing mph).
-WIND_REGION_REL: dict | None = {"left": 720, "top": 350, "width": 130, "height": 90}
+# Regions are loaded from assets/regions.json (written by darts-pick-* tools).
+# Defaults below are used only if the JSON entry is missing.
+SCORE_REGION_REL: dict | None = get_region(_HERE, "score") or {"left": 48, "top": 385, "width": 77, "height": 30}
+WIND_REGION_REL: dict | None = get_region(_HERE, "wind") or {"left": 720, "top": 350, "width": 130, "height": 90}
 WIND_SAMPLES_DIR = Path(__file__).parent / "assets" / "wind_samples"
 WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
 

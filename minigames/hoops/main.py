@@ -7,8 +7,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay
+from common.regions import get_region
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
+
+_HERE = Path(__file__).parent
 
 WINDOW_TITLE = "Idleon"
 POLL_INTERVAL = 0.02
@@ -74,7 +77,7 @@ RESCUE_POLL = 0.01  # tight loop — ball moves fast
 # Window-relative crop for the "Score: N" readout in the upper-left of the
 # minigame UI. Tune via hoops-score-calibrate; defaults are an initial guess
 # based on a 1280x1392 window. Disable score detection by setting to None.
-SCORE_REGION_REL: dict | None = {"left": 6, "top": 384, "width": 78, "height": 18}
+SCORE_REGION_REL: dict | None = get_region(_HERE, "score") or {"left": 6, "top": 384, "width": 78, "height": 18}
 
 
 def _capture_score_region(left: int, top: int, width: int, height: int):
