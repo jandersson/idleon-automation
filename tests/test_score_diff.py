@@ -58,3 +58,18 @@ def test_score_region_returns_grayscale():
     bgra[..., 2] = 200  # red channel
     crop = score_region(bgra, region_left=10, region_top=10, region_width=30, region_height=20)
     assert crop.ndim == 2  # grayscale, no channel dim
+
+
+def test_uniform_background_doesnt_false_positive():
+    """If the score region was picked over solid background, Otsu becomes
+    ill-defined: tiny pixel noise can produce a huge fake diff. The function
+    should detect this and return no-change."""
+    # Pre: near-uniform with tiny noise (matches a real captured background)
+    pre = np.full((30, 80), 25, dtype=np.uint8)
+    pre[5, 10] = 21  # a few stray pixels off by a couple of values
+    pre[10, 30] = 23
+    # Post: completely uniform
+    post = np.full((30, 80), 26, dtype=np.uint8)
+    changed, diff = score_changed(pre, post)
+    assert not changed
+    assert diff == 0.0

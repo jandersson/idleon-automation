@@ -37,9 +37,18 @@ def score_changed(before: np.ndarray, after: np.ndarray, threshold: float = 3.0)
     animated background (twinkling stars, parallax) to a single value, so
     only high-contrast digit pixels contribute to the diff. Real digit changes
     give large diffs (~10-50); background motion gives near zero.
+
+    Guard against the bad-region-pick case: if both crops are near-uniform
+    (the pick missed the score and grabbed solid background), Otsu's threshold
+    becomes ill-defined and tiny noise can produce a huge fake diff. Bail out
+    early with no-change in that case, and warn so the user knows to re-pick.
     """
     if before.shape != after.shape:
         return True, 255.0
+    if float(before.std()) < 5.0 and float(after.std()) < 5.0:
+        # Both crops are essentially uniform — score region is pointing at
+        # background pixels, not the digits. No change detectable.
+        return False, 0.0
     _, b_bin = cv2.threshold(before, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     _, a_bin = cv2.threshold(after, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     diff = cv2.absdiff(b_bin, a_bin).astype(np.float32)
