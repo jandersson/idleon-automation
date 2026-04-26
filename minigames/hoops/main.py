@@ -23,9 +23,9 @@ POLL_INTERVAL = 0.02
 #   - Ball hits front of rim       → offset is too large → bump it down
 #   - Ball hits back of rim        → offset is too small → bump it up
 OFFSET_ANCHORS: list[tuple[int, int]] = [
-    (700, 35),   # high hoops — initial guess, tune from observation
-    (900, 11),   # mid-range — bisect: 8 was back-of-rim (under), 14 still
-                 # overshot. Make zone is between 8 and 14; trying 11.
+    (700, 50),   # high hoops — bumped from 35; 30 (interp) undershot below rim
+                 # at hoop_y=743. Higher offset → more arc → ball clears further.
+    (900, 11),   # mid-range — 1/2 in last run; 8 under-arced, 14 over.
 ]
 
 
