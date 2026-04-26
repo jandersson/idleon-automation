@@ -53,9 +53,13 @@ POLL_INTERVAL = 0.02
 SHOT_STRATEGY = "direct"
 
 OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    (700, 45),   # high hoops — pre-overshoot value; 30 undershot, 50 overshot.
-    (835, 14),   # upper-mid — pre-overshoot value; the make zone here.
-    (900, 11),   # mid-range — known good (6/7 in one session).
+    # In widescreen layout, hoops sit at y=380-450 — well above the (700)
+    # anchor and clamping to 45 gives too-flat trajectories (ball hits top
+    # of rim and bounces). Add a top anchor so widescreen hoops get more arc.
+    (400, 55),   # widescreen-tier hoops — first guess; tune from miss pattern.
+    (700, 45),   # high hoops in portrait layout
+    (835, 14),   # upper-mid (portrait)
+    (900, 11),   # mid-range (portrait); known good (6/7 in one session).
 ]
 
 OFFSET_ANCHORS_OVERSHOOT: list[tuple[int, int]] = [
