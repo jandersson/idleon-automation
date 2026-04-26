@@ -22,10 +22,12 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
+from common.regions import get_region
 from common.window import get_bounds, WindowNotFoundError
-from minigames.darts.main import WINDOW_TITLE, WIND_REGION_REL
+from minigames.darts.main import WINDOW_TITLE
 
-OUT_DIR = Path(__file__).parent / "assets" / "wind_samples"
+_HERE = Path(__file__).parent
+OUT_DIR = _HERE / "assets" / "wind_samples"
 POLL_SECONDS = 1.0  # how often to check; wind changes between throws
 
 
@@ -37,14 +39,16 @@ def _arg(name: str, default):
     return default
 
 
-def _crop_wind(frame_bgra) -> np.ndarray:
+def _crop_wind(frame_bgra, win_w: int, win_h: int) -> np.ndarray | None:
+    region = get_region(_HERE, "wind", win_w, win_h)
+    if region is None:
+        return None
     bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
-    r = WIND_REGION_REL
     h_img, w_img = bgr.shape[:2]
-    x0 = max(0, r["left"])
-    y0 = max(0, r["top"])
-    x1 = min(w_img, r["left"] + r["width"])
-    y1 = min(h_img, r["top"] + r["height"])
+    x0 = max(0, region["left"])
+    y0 = max(0, region["top"])
+    x1 = min(w_img, region["left"] + region["width"])
+    y1 = min(h_img, region["top"] + region["height"])
     return bgr[y0:y1, x0:x1]
 
 
@@ -55,9 +59,6 @@ def _diff(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def run():
-    if WIND_REGION_REL is None:
-        print("WIND_REGION_REL is None — pick it first via darts-pick-wind-region.")
-        return
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     threshold = _arg("--threshold", 5.0)
@@ -83,7 +84,11 @@ def run():
             time.sleep(2)
             continue
         frame = grab_region(left, top, width, height)
-        wind = _crop_wind(frame)
+        wind = _crop_wind(frame, width, height)
+        if wind is None:
+            print("No 'wind' region in regions.json — pick it via darts-pick-wind-region.")
+            time.sleep(2)
+            continue
 
         is_new = True
         closest_diff = 999.0
