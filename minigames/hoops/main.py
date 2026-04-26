@@ -312,7 +312,12 @@ def _run_inner():
         # Either py is inside the tolerance window, OR the platform crossed the
         # target between this sample and the previous one (catches the fast
         # mid-bob region where ±tolerance is narrower than per-sample movement).
-        in_window = abs(py - effective_target_y) <= Y_TOLERANCE
+        # When clamped, target_y is unreachable; the platform only kisses
+        # effective_target_y (its bob max) for a single sample per cycle and we
+        # easily miss it with the tight tolerance — so widen specifically for
+        # the clamped case.
+        active_tolerance = max(Y_TOLERANCE, 6) if clamped else Y_TOLERANCE
+        in_window = abs(py - effective_target_y) <= active_tolerance
         crossed = prev_py is not None and (
             (prev_py - effective_target_y) * (py - effective_target_y) < 0
         )
