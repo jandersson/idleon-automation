@@ -8,6 +8,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
+from common.regions import get_region
 from common.window import get_bounds
 from minigames.chopping.detector import (
     GOLD_HSV,
@@ -16,9 +17,10 @@ from minigames.chopping.detector import (
     RED_HSV_HIGH,
     RED_HSV_LOW,
 )
-from minigames.chopping.main import BAR_REGION_REL, WINDOW_TITLE
+from minigames.chopping.main import WINDOW_TITLE
 
-OUT_DIR = Path(__file__).parent / "calibration"
+_HERE = Path(__file__).parent
+OUT_DIR = _HERE / "calibration"
 
 
 def _mask(hsv: np.ndarray, low, high) -> np.ndarray:
@@ -27,12 +29,16 @@ def _mask(hsv: np.ndarray, low, high) -> np.ndarray:
 
 def run():
     OUT_DIR.mkdir(exist_ok=True)
-    win_left, win_top, _, _ = get_bounds(WINDOW_TITLE)
+    win_left, win_top, win_w, win_h = get_bounds(WINDOW_TITLE)
+    bar_region = get_region(_HERE, "bar", win_w, win_h)
+    if bar_region is None:
+        print("No bar region in regions.json. Run chopping-pick-bar-region first.")
+        return
     abs_region = {
-        "left": win_left + BAR_REGION_REL["left"],
-        "top": win_top + BAR_REGION_REL["top"],
-        "width": BAR_REGION_REL["width"],
-        "height": BAR_REGION_REL["height"],
+        "left": win_left + bar_region["left"],
+        "top": win_top + bar_region["top"],
+        "width": bar_region["width"],
+        "height": bar_region["height"],
     }
     print(f"Calibrating in 3s — bar region resolved to {abs_region}")
     time.sleep(3)
