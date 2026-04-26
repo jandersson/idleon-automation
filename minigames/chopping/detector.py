@@ -40,22 +40,34 @@ def _leftmost_column(mask: np.ndarray, min_pixels_per_col: int = 2) -> int | Non
     return int(qualifying[0])
 
 
-def analyze_bar(bar_frame: np.ndarray) -> tuple[int | None, str]:
+def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> tuple[int | None, str]:
     """Return (leaf_left_edge_x, zone_under_left_edge).
+
+    leaf_frame is the strip ABOVE the bar where the leaf scrolls; it MUST be
+    horizontally aligned with bar_frame (same left/right window-relative). The
+    leaf's X is detected in leaf_frame and looked up against zones in bar_frame.
+
+    If leaf_frame is None, falls back to looking for the leaf in bar_frame
+    itself — for setups where leaf and bar overlap.
 
     zone is one of: 'green', 'gold', 'red', 'none'.
     """
-    bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
 
-    leaf_mask = _mask(hsv, *LEAF_HSV)
+    leaf_source_hsv = bar_hsv
+    if leaf_frame is not None:
+        leaf_bgr = cv2.cvtColor(leaf_frame, cv2.COLOR_BGRA2BGR)
+        leaf_source_hsv = cv2.cvtColor(leaf_bgr, cv2.COLOR_BGR2HSV)
+
+    leaf_mask = _mask(leaf_source_hsv, *LEAF_HSV)
     leaf_x = _leftmost_column(leaf_mask)
     if leaf_x is None:
         return None, "none"
 
-    green = _mask(hsv, *GREEN_HSV)
-    gold = _mask(hsv, *GOLD_HSV)
-    red = cv2.bitwise_or(_mask(hsv, *RED_HSV_LOW), _mask(hsv, *RED_HSV_HIGH))
+    green = _mask(bar_hsv, *GREEN_HSV)
+    gold = _mask(bar_hsv, *GOLD_HSV)
+    red = cv2.bitwise_or(_mask(bar_hsv, *RED_HSV_LOW), _mask(bar_hsv, *RED_HSV_HIGH))
 
     # Check zones in priority order: gold > green > red.
     if _column_has_color(gold, leaf_x):

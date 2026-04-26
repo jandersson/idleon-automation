@@ -44,19 +44,30 @@ def _run_inner():
             continue
 
         bar_region = get_region(_HERE, "bar", win_w, win_h)
+        leaf_region = get_region(_HERE, "leaf", win_w, win_h)
         button_region = get_region(_HERE, "button", win_w, win_h)
         if bar_region is None or button_region is None:
             print("Missing region(s) in regions.json. Run chopping-pick-bar-region and chopping-pick-button-region first.")
             time.sleep(2)
             continue
 
-        frame = grab_region(
+        bar_frame = grab_region(
             win_left + bar_region["left"],
             win_top + bar_region["top"],
             bar_region["width"],
             bar_region["height"],
         )
-        pointer_x, zone = analyze_bar(frame)
+        # Leaf region is optional: if not picked, fall back to detecting the
+        # leaf in the bar region itself (works when they visually overlap).
+        leaf_frame = None
+        if leaf_region is not None:
+            leaf_frame = grab_region(
+                win_left + leaf_region["left"],
+                win_top + leaf_region["top"],
+                leaf_region["width"],
+                leaf_region["height"],
+            )
+        pointer_x, zone = analyze_bar(bar_frame, leaf_frame=leaf_frame)
 
         if pointer_x is not None and zone in ("green", "gold"):
             print(f"Pointer at x={pointer_x} in {zone} zone — chopping")
