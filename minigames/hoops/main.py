@@ -36,18 +36,35 @@ POLL_INTERVAL = 0.02
 #   - Ball clears top of backboard → offset is too small → bump it up
 #   - Ball hits front of rim       → offset is too large → bump it down
 #   - Ball hits back of rim        → offset is too small → bump it up
-# OVERSHOOT STRATEGY: deliberately aim ABOVE the rim so the ball passes over
-# it; the mid-flight rescue then drops the ball straight down through the rim
-# for a guaranteed swish (2pts). Offsets are tuned higher than the "direct
-# make" zone, since being over the rim is now the goal, not making the rim
-# directly.
-OFFSET_ANCHORS: list[tuple[int, int]] = [
-    (700, 55),   # high hoops — was 45 (just under-arced); +10 for clearer overshoot
-    (835, 22),   # upper-mid — was 14 (direct make); +8 to overshoot
-    (900, 18),   # mid-range — was 11; +7. Earlier 22 overshot the backboard
-                 # entirely — back off slightly so the peak is over the rim,
-                 # not way past it.
+# Two strategies for landing shots. Set SHOT_STRATEGY to switch.
+#
+# - "direct"   : tune launch timing so the ball arc passes through the rim
+#                naturally. Mid-flight rescue still active as a backup but is
+#                NOT the primary make mechanism. Offsets calibrated for shots
+#                that go in by themselves.
+# - "overshoot": deliberately aim past the rim; rescue drops the ball straight
+#                down through the rim opening. Depends on the click-on-the-ball
+#                drop trick actually working — to date unconfirmed in this
+#                game version.
+#
+# Default to "direct" since (a) it's empirically known-good (6/7 makes in an
+# earlier session) and (b) overshoot was failing with no evidence the drop
+# trick activates as the wiki claims.
+SHOT_STRATEGY = "direct"
+
+OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
+    (700, 45),   # high hoops — pre-overshoot value; 30 undershot, 50 overshot.
+    (835, 14),   # upper-mid — pre-overshoot value; the make zone here.
+    (900, 11),   # mid-range — known good (6/7 in one session).
 ]
+
+OFFSET_ANCHORS_OVERSHOOT: list[tuple[int, int]] = [
+    (700, 55),   # high hoops
+    (835, 22),   # upper-mid
+    (900, 18),   # mid-range
+]
+
+OFFSET_ANCHORS = OFFSET_ANCHORS_DIRECT if SHOT_STRATEGY == "direct" else OFFSET_ANCHORS_OVERSHOOT
 
 
 def _compute_offset(hoop_y: int) -> int:
@@ -81,9 +98,12 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
 RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
-BALL_X_TOLERANCE = 6   # tight rim-opening match: empirically, 4px-off shots
-                       # made and 8px+ off shots missed. The rim is narrower
-                       # than the previous 12px window suggested.
+# Strategy-dependent rescue tolerance:
+# - direct:    wider, since rescue is a backup safety net, not the primary
+#              make mechanism. We don't want it to interfere with shots that
+#              would already make on their own.
+# - overshoot: tight, since drop placement determines the make.
+BALL_X_TOLERANCE = 6 if SHOT_STRATEGY == "overshoot" else 18
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
 
 # Monitor mode: per-shot subfolder under assets/monitor/ with pre/post-shot

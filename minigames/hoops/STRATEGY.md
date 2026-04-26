@@ -30,7 +30,23 @@ to reason about changes to it. Living document — update as we learn more.
 - Trophy at single-trial score **40+**.
 - Pet from combined score **66** across 3 trials.
 
-## Strategy: Overshoot + Rescue
+## Two switchable strategies
+
+`SHOT_STRATEGY` in `main.py` toggles between two whole approaches.
+
+### "direct" (default)
+
+Tune `OFFSET_ANCHORS_DIRECT` so the ball arc passes through the rim
+naturally. Mid-flight rescue runs as a safety net for marginal overshoots
+but is not the primary make mechanism — `BALL_X_TOLERANCE=18` is wide
+enough not to interfere with shots that would have made on their own.
+
+Empirically known to work (6/7 in an earlier session). Sensitive to small
+offset errors (a few pixels too high or low and shots miss).
+
+### "overshoot"
+
+
 
 We deliberately tune `OFFSET_ANCHORS` so the launched ball passes **above**
 the rim, not through it. The mid-flight rescue (`_try_rescue`) then clicks
