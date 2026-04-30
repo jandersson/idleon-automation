@@ -9,7 +9,7 @@ from common.input import click, random_delay
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.chopping.detector import analyze_bar
+from minigames.chopping.detector import analyze_bar, nearest_red_distance
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -28,6 +28,11 @@ COOLDOWN_AFTER_CLICK = 0.45
 # assume the minigame is over (a stationary post-game UI element looks like a
 # leaf to the detector) and exit cleanly instead of spamming clicks.
 STAGNATION_LIMIT = 5
+
+# Skip the click if the leaf's left edge is within this many pixels of a red
+# column. Click latency (~50ms pre-click delay + OS jitter) lets the leaf drift
+# a few px between detection and click — landing in red ends the minigame.
+RED_SAFETY_MARGIN_PX = 8
 
 
 def run():
@@ -78,6 +83,11 @@ def _run_inner():
         pointer_x, zone = analyze_bar(bar_frame, leaf_frame=leaf_frame)
 
         if pointer_x is not None and zone in ("green", "gold"):
+            red_dist = nearest_red_distance(bar_frame, pointer_x)
+            if red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX:
+                print(f"Pointer at x={pointer_x} in {zone} but only {red_dist}px from red — skipping (unsafe)")
+                time.sleep(POLL_INTERVAL)
+                continue
             if last_click == (pointer_x, zone):
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:

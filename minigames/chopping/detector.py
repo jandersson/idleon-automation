@@ -41,6 +41,22 @@ def _leftmost_column(mask: np.ndarray, min_pixels_per_col: int = 2) -> int | Non
     return int(qualifying[0])
 
 
+def nearest_red_distance(bar_frame: np.ndarray, x: int) -> int | None:
+    """Return horizontal distance in pixels from `x` to the nearest red column.
+
+    None if there's no red in the bar at all. Used by the bot to add a safety
+    margin: clicking with the leaf too close to a red zone risks the leaf
+    drifting into red during click latency.
+    """
+    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
+    red = cv2.bitwise_or(_mask(bar_hsv, *RED_HSV_LOW), _mask(bar_hsv, *RED_HSV_HIGH))
+    red_cols = np.where((red > 0).any(axis=0))[0]
+    if len(red_cols) == 0:
+        return None
+    return int(np.min(np.abs(red_cols - x)))
+
+
 def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> tuple[int | None, str]:
     """Return (leaf_left_edge_x, zone_under_left_edge).
 
