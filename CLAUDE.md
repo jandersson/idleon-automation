@@ -21,6 +21,7 @@ No linter or formatter config. Don't add them unless asked.
 ```
 common/             IO layer — screen capture, clicks, window lookup
 minigames/<name>/   per-minigame bot, one folder each
+ui/                 user-facing UI (launcher, future dashboards)
 ```
 
 Every minigame folder follows the same quartet:
