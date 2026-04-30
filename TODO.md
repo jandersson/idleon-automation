@@ -15,6 +15,19 @@
   clicks. Consider deriving from observed leaf velocity instead of a fixed
   pixel count.
 
+- **Chopping: bot starts the game itself.** Today the user manually clicks
+  the START button before launching the bot. The bot could click it itself
+  by reusing `chopping-pick-button-region` for a separate `start_button`
+  region (or repurposing the existing button picker with a second slot).
+  Then the bot polls for a "ready" state, clicks start, plays through, and
+  exits — fully unattended.
+
+- **Chopping: detect greyed-out START button = no attempts left.** The
+  game shows daily attempt exhaustion by greying out the start button (no
+  numeric counter shown). Before clicking start, sample the button region's
+  HSV saturation; if it's near zero, exit with a "no attempts left today"
+  message instead of clicking. Required for an unattended launcher.
+
 ## Someday
 
 - **Tighten `common.window.get_bounds`** so it doesn't match the first window
