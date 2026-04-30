@@ -22,7 +22,12 @@ WINDOW_TITLE = "Legends Of Idleon"
 # - button: the CHOP button (bot clicks its center)
 
 POLL_INTERVAL = 0.01
-COOLDOWN_AFTER_CLICK = 0.25
+COOLDOWN_AFTER_CLICK = 0.45
+
+# If the same pointer x is reported in the same zone this many clicks in a row,
+# assume the minigame is over (a stationary post-game UI element looks like a
+# leaf to the detector) and exit cleanly instead of spamming clicks.
+STAGNATION_LIMIT = 5
 
 
 def run():
@@ -34,6 +39,9 @@ def run():
 def _run_inner():
     print(f"Chopping bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
+
+    last_click: tuple[int, str] | None = None
+    stagnation_count = 0
 
     while True:
         try:
@@ -70,11 +78,19 @@ def _run_inner():
         pointer_x, zone = analyze_bar(bar_frame, leaf_frame=leaf_frame)
 
         if pointer_x is not None and zone in ("green", "gold"):
+            if last_click == (pointer_x, zone):
+                stagnation_count += 1
+                if stagnation_count >= STAGNATION_LIMIT:
+                    print(f"Pointer stuck at x={pointer_x} in {zone} for {stagnation_count} clicks — minigame likely over, stopping.")
+                    return
+            else:
+                stagnation_count = 0
             print(f"Pointer at x={pointer_x} in {zone} zone — chopping")
             random_delay(20, 60)
             button_cx = button_region["left"] + button_region["width"] // 2
             button_cy = button_region["top"] + button_region["height"] // 2
             click(win_left + button_cx, win_top + button_cy)
+            last_click = (pointer_x, zone)
             time.sleep(COOLDOWN_AFTER_CLICK)
             continue
 
