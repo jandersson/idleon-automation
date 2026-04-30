@@ -14,7 +14,7 @@ from minigames.catching.detector import find_fly, find_next_gap
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 
-WINDOW_TITLE = "Idleon"
+WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
 
 # Click vertical strategy: if the fly's projected Y after the next click delay

@@ -19,7 +19,7 @@ from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_g
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 
-WINDOW_TITLE = "Idleon"
+WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
                        # ~15-30ms (multi-scale matching), so this sleep is
                        # mostly irrelevant — we're CPU-bound on the matcher.

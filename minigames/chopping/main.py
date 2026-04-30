@@ -14,7 +14,7 @@ from minigames.chopping.detector import analyze_bar
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 
-WINDOW_TITLE = "Idleon"
+WINDOW_TITLE = "Legends Of Idleon"
 
 # Regions are loaded from assets/regions.json each iteration so they survive
 # window resizes. Pick via chopping-pick-bar-region / chopping-pick-button-region.

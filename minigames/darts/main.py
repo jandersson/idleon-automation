@@ -19,7 +19,7 @@ from minigames.darts.detector import find_release_pose, score_region, score_chan
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 
-WINDOW_TITLE = "Idleon"
+WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
 
 # Template-match confidence threshold for the release pose. The hand sweeps
