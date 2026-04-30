@@ -14,7 +14,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, find_game_prompt, score_region, score_changed
+from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -281,7 +281,7 @@ def _run_inner():
     # shot (target unreachable) at a hoop position and the hoop is still there
     # next iteration, we'd waste another life on a guaranteed miss. Track the
     # last clamped position; if we'd clamp at the same place again, exit.
-    last_clamped_hoop_pos: tuple[int, int] | None = None
+    last_unreachable_hoop: tuple[int, int] | None = None
 
     while True:
         try:
@@ -373,26 +373,23 @@ def _run_inner():
             # where direction is whatever-it-just-was → never matches. Bypass.
             direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
             if x_ok and direction_ok:
-                # Hoop only respawns on a make. If we've already fired a clamped
-                # (unreachable) shot at this exact hoop position, firing again
-                # is a guaranteed miss + wasted life. Exit cleanly instead.
-                if clamped and last_clamped_hoop_pos == (hoop_x, hoop_y):
-                    print(f"Hoop at {(hoop_x, hoop_y)} is unreachable and already missed once — "
-                          f"firing again would waste a life. Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
-                    return
-                tag = " [clamped — likely miss]" if clamped else (" [crossed]" if crossed and not in_window else "")
-                # Detect the "Make a shot to start the game!" prompt. While it's
-                # visible, the next click just dismisses the prompt (game-start)
-                # and doesn't count toward the score. Don't log this click as a
-                # make/miss attempt.
-                is_game_start_click, prompt_conf = find_game_prompt(frame)
-                if is_game_start_click:
-                    print(f"Platform at ({px},{py}) — game-start click (prompt visible, conf={prompt_conf:.2f}, not counted){tag}")
-                else:
-                    print(f"Platform at ({px},{py}) (target_y={target_y}, eff={effective_target_y}, dir={direction}) — shooting{tag}")
+                # If the hoop is outside the platform's bob range, every shot is a
+                # guaranteed miss — and a miss costs a life (the prompt-dismiss
+                # click is the first scored shot, not a freebie). Idle here and
+                # let the user notice + recalibrate the offset.
+                if clamped:
+                    if last_unreachable_hoop != (hoop_x, hoop_y):
+                        print(f"Hoop at {(hoop_x, hoop_y)} is outside platform's reach "
+                              f"(target_y={target_y}). Idling — likely needs offset recalibration.")
+                        last_unreachable_hoop = (hoop_x, hoop_y)
+                    prev_py = py
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                tag = " [crossed]" if crossed and not in_window else ""
+                print(f"Platform at ({px},{py}) (target_y={target_y}, dir={direction}) — shooting{tag}")
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
-                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE and not is_game_start_click else None
+                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE else None
                 if shot_dir is not None:
                     save_frame(shot_dir / "pre_shot.png", frame)
                 # Snapshot score and lives regions before launch so we can diff later.
@@ -405,8 +402,7 @@ def _run_inner():
                 time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
-                if not is_game_start_click:
-                    _log_shot_result(shot_stats, score_before, score_after)
+                _log_shot_result(shot_stats, score_before, score_after)
                 # Lives counter check: when the digit visibly changes between
                 # pre and post, log it. Doesn't reliably indicate "click didn't
                 # register" when unchanged (the lives counter doesn't always
@@ -418,7 +414,6 @@ def _run_inner():
                         lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
                         if lives_changed_flag:
                             print(f"  [lives] counter ticked down (diff={lives_diff:.1f})")
-                last_clamped_hoop_pos = (hoop_x, hoop_y) if clamped else None
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
                     save_frame(shot_dir / "post_shot.png", post_frame)
