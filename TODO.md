@@ -20,7 +20,15 @@
   by reusing `chopping-pick-button-region` for a separate `start_button`
   region (or repurposing the existing button picker with a second slot).
   Then the bot polls for a "ready" state, clicks start, plays through, and
-  exits — fully unattended.
+  exits — fully unattended. Needs the state-awareness item below.
+
+- **Chopping: state-awareness.** Three states the bot may launch into:
+  pre-game (start button visible), active (bar/leaf/chop button visible),
+  post-game (back to start screen). Pick a cheap distinguishing signal per
+  state — e.g., presence of the leaf in the leaf region = active; presence
+  of the start button template in its region = pre/post-game; greyed start
+  button color = no attempts left. Today the bot assumes (active) and
+  polls forever in (pre/post). Needed before any autostart work.
 
 - **Chopping: detect greyed-out START button = no attempts left.** The
   game shows daily attempt exhaustion by greying out the start button (no
