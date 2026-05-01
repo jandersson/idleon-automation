@@ -4,8 +4,9 @@ Two tabs:
 - Bots: per-minigame Start/Stop and inline setup-tool buttons. Each button
   shells out to `uv run <entry-point>` in a subprocess; stdout streams into
   the log pane at the bottom.
-- Shots: image inspector for per-shot monitor folders. Pick a minigame +
-  shot folder, see the saved pre/post/flight frames stacked.
+- Frames: image inspector. Pick a minigame, then any directory under its
+  assets/ that contains PNGs — see them stacked. Works for hoops/darts
+  per-shot monitor folders, capture dumps, calibration outputs, etc.
 """
 import queue
 import subprocess
@@ -79,8 +80,10 @@ class Launcher:
         self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
         self.log_queue: queue.Queue = queue.Queue()
 
-        # Shots tab state — keep PhotoImage refs alive so Tk doesn't GC them.
-        self.shot_images: list[ImageTk.PhotoImage] = []
+        # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
+        self.frame_images: list[ImageTk.PhotoImage] = []
+        # Maps listbox display name -> Path of the directory it represents.
+        self.frame_dirs: dict[str, Path] = {}
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -91,12 +94,12 @@ class Launcher:
         nb.pack(fill="both", expand=True, padx=4, pady=4)
 
         bots_tab = ttk.Frame(nb)
-        shots_tab = ttk.Frame(nb)
+        frames_tab = ttk.Frame(nb)
         nb.add(bots_tab, text="Bots")
-        nb.add(shots_tab, text="Shots")
+        nb.add(frames_tab, text="Frames")
 
         self._build_bots_tab(bots_tab)
-        self._build_shots_tab(shots_tab)
+        self._build_frames_tab(frames_tab)
 
     def _build_bots_tab(self, parent: ttk.Frame):
         for i, mg in enumerate(MINIGAMES):
@@ -135,132 +138,138 @@ class Launcher:
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(len(MINIGAMES), weight=1)
 
-    def _build_shots_tab(self, parent: ttk.Frame):
+    def _build_frames_tab(self, parent: ttk.Frame):
         controls = ttk.Frame(parent, padding=6)
         controls.pack(fill="x")
 
         ttk.Label(controls, text="Minigame:").pack(side="left")
-        self.shot_minigame = tk.StringVar(value="hoops")
+        self.frame_minigame = tk.StringVar(value=MINIGAMES[0]["name"])
         mg_picker = ttk.Combobox(
-            controls, textvariable=self.shot_minigame, state="readonly",
-            values=[mg["name"] for mg in MINIGAMES if (MINIGAMES_DIR / mg["name"] / "assets" / "monitor").exists()],
+            controls, textvariable=self.frame_minigame, state="readonly",
+            values=[mg["name"] for mg in MINIGAMES],
             width=12,
         )
         mg_picker.pack(side="left", padx=(4, 12))
-        mg_picker.bind("<<ComboboxSelected>>", lambda _e: self._refresh_shots_list())
+        mg_picker.bind("<<ComboboxSelected>>", lambda _e: self._refresh_frames_list())
 
-        ttk.Button(controls, text="Refresh", command=self._refresh_shots_list).pack(side="left")
-        self.shot_status_label = ttk.Label(controls, text="", foreground="grey")
-        self.shot_status_label.pack(side="left", padx=12)
+        ttk.Button(controls, text="Refresh", command=self._refresh_frames_list).pack(side="left")
+        self.frame_status_label = ttk.Label(controls, text="", foreground="grey")
+        self.frame_status_label.pack(side="left", padx=12)
 
         body = ttk.Frame(parent)
         body.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
-        # Left: shot folder list
-        list_frame = ttk.LabelFrame(body, text="Shot folders", padding=4)
+        # Left: list of directories under assets/ that contain PNGs.
+        list_frame = ttk.LabelFrame(body, text="Folders with images", padding=4)
         list_frame.pack(side="left", fill="y", padx=(0, 6))
         list_scroll = ttk.Scrollbar(list_frame)
         list_scroll.pack(side="right", fill="y")
-        self.shot_listbox = tk.Listbox(list_frame, width=28, height=20,
-                                       yscrollcommand=list_scroll.set,
-                                       font=("Consolas", 9))
-        self.shot_listbox.pack(side="left", fill="y")
-        list_scroll.config(command=self.shot_listbox.yview)
-        self.shot_listbox.bind("<<ListboxSelect>>", lambda _e: self._show_selected_shot())
+        self.frame_listbox = tk.Listbox(list_frame, width=32, height=20,
+                                        yscrollcommand=list_scroll.set,
+                                        font=("Consolas", 9))
+        self.frame_listbox.pack(side="left", fill="y")
+        list_scroll.config(command=self.frame_listbox.yview)
+        self.frame_listbox.bind("<<ListboxSelect>>", lambda _e: self._show_selected_frames())
 
-        # Right: scrollable image canvas
-        viewer_frame = ttk.LabelFrame(body, text="Frames", padding=4)
+        # Right: scrollable image canvas.
+        viewer_frame = ttk.LabelFrame(body, text="Images", padding=4)
         viewer_frame.pack(side="left", fill="both", expand=True)
 
-        self.shot_canvas = tk.Canvas(viewer_frame, bg="#222", highlightthickness=0)
-        self.shot_canvas.pack(side="left", fill="both", expand=True)
+        self.frame_canvas = tk.Canvas(viewer_frame, bg="#222", highlightthickness=0)
+        self.frame_canvas.pack(side="left", fill="both", expand=True)
         canvas_scroll = ttk.Scrollbar(viewer_frame, orient="vertical",
-                                      command=self.shot_canvas.yview)
+                                      command=self.frame_canvas.yview)
         canvas_scroll.pack(side="right", fill="y")
-        self.shot_canvas.config(yscrollcommand=canvas_scroll.set)
+        self.frame_canvas.config(yscrollcommand=canvas_scroll.set)
 
-        self.shot_inner = ttk.Frame(self.shot_canvas)
-        self.shot_canvas.create_window((0, 0), window=self.shot_inner, anchor="nw")
-        self.shot_inner.bind(
+        self.frame_inner = ttk.Frame(self.frame_canvas)
+        self.frame_canvas.create_window((0, 0), window=self.frame_inner, anchor="nw")
+        self.frame_inner.bind(
             "<Configure>",
-            lambda _e: self.shot_canvas.configure(scrollregion=self.shot_canvas.bbox("all")),
+            lambda _e: self.frame_canvas.configure(scrollregion=self.frame_canvas.bbox("all")),
         )
-        # Mouse wheel scroll on Windows.
-        self.shot_canvas.bind_all(
+        self.frame_canvas.bind_all(
             "<MouseWheel>",
-            lambda e: self.shot_canvas.yview_scroll(-int(e.delta / 120), "units"),
+            lambda e: self.frame_canvas.yview_scroll(-int(e.delta / 120), "units"),
         )
 
-        self._refresh_shots_list()
+        self._refresh_frames_list()
 
-    def _refresh_shots_list(self):
-        self.shot_listbox.delete(0, "end")
-        mg = self.shot_minigame.get()
-        monitor = MINIGAMES_DIR / mg / "assets" / "monitor"
-        if not monitor.exists():
-            self.shot_status_label.config(text=f"no monitor dir for {mg}")
+    def _refresh_frames_list(self):
+        self.frame_listbox.delete(0, "end")
+        self.frame_dirs.clear()
+        mg = self.frame_minigame.get()
+        assets = MINIGAMES_DIR / mg / "assets"
+        if not assets.exists():
+            self.frame_status_label.config(text=f"no assets/ dir for {mg}")
             return
-        folders = sorted(
-            (p for p in monitor.iterdir() if p.is_dir()),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
-        for p in folders:
-            self.shot_listbox.insert("end", p.name)
-        self.shot_status_label.config(text=f"{len(folders)} shot folder(s)")
 
-    def _show_selected_shot(self):
-        sel = self.shot_listbox.curselection()
+        # Find every directory under assets/ (including assets/ itself) that
+        # has at least one PNG directly inside it. Display path is relative
+        # to assets/ for compactness; "." represents assets/ root.
+        candidates: list[Path] = []
+        for d in [assets, *(p for p in assets.rglob("*") if p.is_dir())]:
+            if any(p.suffix.lower() == ".png" for p in d.iterdir() if p.is_file()):
+                candidates.append(d)
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+        for d in candidates:
+            rel = "." if d == assets else str(d.relative_to(assets)).replace("\\", "/")
+            self.frame_listbox.insert("end", rel)
+            self.frame_dirs[rel] = d
+        self.frame_status_label.config(
+            text=f"{len(candidates)} folder(s) with PNGs under {mg}/assets/"
+        )
+
+    def _show_selected_frames(self):
+        sel = self.frame_listbox.curselection()
         if not sel:
             return
-        folder_name = self.shot_listbox.get(sel[0])
-        mg = self.shot_minigame.get()
-        folder = MINIGAMES_DIR / mg / "assets" / "monitor" / folder_name
-        if not folder.exists():
+        rel = self.frame_listbox.get(sel[0])
+        folder = self.frame_dirs.get(rel)
+        if folder is None or not folder.exists():
             return
 
-        # Clear previous images
-        for child in self.shot_inner.winfo_children():
+        for child in self.frame_inner.winfo_children():
             child.destroy()
-        self.shot_images.clear()
+        self.frame_images.clear()
 
-        # Show meta.txt if present
-        meta = folder / "meta.txt"
-        if meta.exists():
-            meta_text = tk.Text(self.shot_inner, height=4, wrap="word",
-                                bg="#1a1a1a", fg="#ddd", font=("Consolas", 9))
-            meta_text.insert("1.0", meta.read_text())
-            meta_text.config(state="disabled")
-            meta_text.pack(fill="x", padx=4, pady=(0, 6))
+        # Show any sibling text files (meta.txt, notes) above the images.
+        for txt in sorted(folder.glob("*.txt")):
+            try:
+                content = txt.read_text(errors="replace")
+            except Exception:
+                continue
+            t = tk.Text(self.frame_inner, height=min(8, max(2, content.count("\n") + 1)),
+                        wrap="word", bg="#1a1a1a", fg="#ddd", font=("Consolas", 9))
+            t.insert("1.0", f"{txt.name}\n{content}")
+            t.config(state="disabled")
+            t.pack(fill="x", padx=4, pady=(0, 6))
 
-        # Order: pre, post, then flight frames in order
-        png_files = list(folder.glob("*.png"))
+        # Stable ordering: a few well-known names first (pre/post for hoops),
+        # then everything else sorted by name.
+        png_files = sorted(folder.glob("*.png"))
+        priority = ["pre_shot.png", "post_shot.png"]
         ordered = (
-            [p for p in png_files if p.name == "pre_shot.png"]
-            + [p for p in png_files if p.name == "post_shot.png"]
-            + sorted(p for p in png_files if p.name.startswith("flight_"))
-            + [p for p in png_files
-               if p.name not in {"pre_shot.png", "post_shot.png"}
-               and not p.name.startswith("flight_")]
+            [p for name in priority for p in png_files if p.name == name]
+            + [p for p in png_files if p.name not in priority]
         )
         for path in ordered:
             try:
                 img = Image.open(path)
             except Exception as e:
-                ttk.Label(self.shot_inner, text=f"{path.name}: {e}",
+                ttk.Label(self.frame_inner, text=f"{path.name}: {e}",
                           foreground="red").pack(anchor="w")
                 continue
-            # Cap width so the row of frames stays visible.
             max_w = 720
             if img.width > max_w:
                 ratio = max_w / img.width
-                img = img.resize((max_w, int(img.height * ratio)),
-                                 Image.LANCZOS)
+                img = img.resize((max_w, int(img.height * ratio)), Image.LANCZOS)
             photo = ImageTk.PhotoImage(img)
-            self.shot_images.append(photo)
-            row = ttk.Frame(self.shot_inner)
+            self.frame_images.append(photo)
+            row = ttk.Frame(self.frame_inner)
             row.pack(fill="x", padx=4, pady=2)
-            ttk.Label(row, text=path.name, width=18,
+            ttk.Label(row, text=path.name, width=20,
                       foreground="#9cf").pack(side="left", anchor="n")
             tk.Label(row, image=photo, bd=0).pack(side="left")
 
