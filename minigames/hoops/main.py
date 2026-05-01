@@ -13,11 +13,13 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
+from common.shot_log import open_db, log_shot
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
+SHOT_DB_PATH = _HERE / "assets" / "shots.db"
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
@@ -191,9 +193,11 @@ def _capture_lives_region(left: int, top: int, width: int, height: int):
     )
 
 
-def _log_shot_result(stats: dict, before, after) -> None:
+def _log_shot_result(stats: dict, before, after) -> tuple[bool | None, float | None]:
+    """Print the score diff line and update stats. Returns (changed, diff) or
+    (None, None) if either snapshot was missing — caller can persist either way."""
     if before is None or after is None:
-        return
+        return None, None
     changed, diff = score_changed(before, after)
     stats["attempts"] += 1
     if changed:
@@ -201,6 +205,7 @@ def _log_shot_result(stats: dict, before, after) -> None:
         print(f"  [score] MAKE (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
     else:
         print(f"  [score] miss (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
+    return changed, diff
 
 
 def _try_rescue(left: int, top: int, width: int, height: int,
@@ -296,10 +301,15 @@ def _direction(history: deque) -> str:
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
-        _run_inner()
+        session_started = datetime.now().isoformat(timespec="seconds")
+        shot_db = open_db(SHOT_DB_PATH)
+        try:
+            _run_inner(session_started, shot_db)
+        finally:
+            shot_db.close()
 
 
-def _run_inner():
+def _run_inner(session_started: str, shot_db):
     print(f"Hoops bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -307,6 +317,7 @@ def _run_inner():
     target_y: int | None = None
     hoop_x: int | None = None
     hoop_y: int | None = None
+    hoop_conf_last: float = 0.0  # carries to shot_log row
     x_samples: list[int] = []
     home_x: int | None = None
     range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
@@ -343,6 +354,7 @@ def _run_inner():
                 time.sleep(0.2)
                 continue
             hoop_x, hoop_y = hoop_pos
+            hoop_conf_last = hoop_conf
             offset = _compute_offset(hoop_y)
             target_y = hoop_y + offset
             print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}, target launch y={target_y}")
@@ -426,13 +438,15 @@ def _run_inner():
                 print(f"Platform at ({px},{py}) (target_y={target_y}, dir={direction}) — shooting{tag}")
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
-                shot_dir = _make_monitor_dir(shot_stats["attempts"] + 1) if MONITOR_MODE else None
+                shot_idx = shot_stats["attempts"] + 1
+                shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
                 if shot_dir is not None:
                     save_frame(shot_dir / "pre_shot.png", frame)
                 # Snapshot score and lives regions before launch so we can diff later.
                 score_before = _capture_score_region(left, top, width, height)
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
+                fired_at = datetime.now().isoformat(timespec="seconds")
                 click(left + width // 2, top + height // 2)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
@@ -452,7 +466,27 @@ def _run_inner():
                     time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
-                _log_shot_result(shot_stats, score_before, score_after)
+                made, score_diff = _log_shot_result(shot_stats, score_before, score_after)
+                log_shot(
+                    shot_db,
+                    session_started=session_started,
+                    shot_idx=shot_idx,
+                    fired_at=fired_at,
+                    hoop_x=hoop_x,
+                    hoop_y=hoop_y,
+                    hoop_conf=float(hoop_conf_last),
+                    platform_x=int(px),
+                    platform_y=int(py),
+                    offset=int(offset),
+                    target_y=int(target_y),
+                    eff_target_y=int(effective_target_y),
+                    clamped=int(bool(clamped)),
+                    direction=direction,
+                    required_direction=REQUIRED_DIRECTION,
+                    score_diff=float(score_diff) if score_diff is not None else None,
+                    made=int(bool(made)) if made is not None else None,
+                    shot_dir=str(shot_dir) if shot_dir is not None else None,
+                )
                 # Lives counter check: when the digit visibly changes between
                 # pre and post, log it. Doesn't reliably indicate "click didn't
                 # register" when unchanged (the lives counter doesn't always
