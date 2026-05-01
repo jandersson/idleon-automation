@@ -49,7 +49,11 @@ POST_LAND_DELAY = 0.6  # how long to wait after the cooldown before post-screens
 # If no release pose has matched in this many seconds, assume the game-over
 # screen has replaced the dartboard scene (the entire scene is replaced at
 # game over, so the player avatar disappears and the template can't match).
-GAME_OVER_NO_POSE_SEC = 10.0
+# 10s was too tight — false-fired between normal throws after a 7-throw run
+# while the game was still active. 25s gives plenty of headroom for slow
+# cycles (wind change, score animations) while still terminating quickly
+# when the dartboard is actually gone.
+GAME_OVER_NO_POSE_SEC = 25.0
 
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
