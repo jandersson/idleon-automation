@@ -318,6 +318,7 @@ def _run_inner(session_started: str, shot_db):
     hoop_x: int | None = None
     hoop_y: int | None = None
     hoop_conf_last: float = 0.0  # carries to shot_log row
+    hoop_missing_since: float | None = None  # for exit-when-stuck
     x_samples: list[int] = []
     home_x: int | None = None
     range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
@@ -350,9 +351,20 @@ def _run_inner(session_started: str, shot_db):
         if target_y is None:
             hoop_pos, hoop_conf = find_hoop(frame)
             if hoop_pos is None:
-                print(f"Hoop not found (best confidence={hoop_conf:.2f})")
+                if hoop_missing_since is None:
+                    hoop_missing_since = time.time()
+                elapsed = time.time() - hoop_missing_since
+                print(f"Hoop not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
+                # Lives only tick on shots; if we can't find a hoop we'll
+                # never fire and never end. Exit when the hoop has been
+                # invisible for 20s — likely spawned outside the playable
+                # area (e.g. below the platform), nothing the bot can do.
+                if elapsed > 20:
+                    print("Hoop has been missing for >20s — likely out of playable area. Exiting.")
+                    return
                 time.sleep(0.2)
                 continue
+            hoop_missing_since = None
             hoop_x, hoop_y = hoop_pos
             hoop_conf_last = hoop_conf
             offset = _compute_offset(hoop_y)

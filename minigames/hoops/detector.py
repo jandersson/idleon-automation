@@ -49,9 +49,17 @@ def _match_in_region(
 
 
 def find_hoop(
-    frame: np.ndarray, threshold: float = 0.35
+    frame: np.ndarray, threshold: float = 0.6
 ) -> tuple[tuple[int, int] | None, float]:
-    """Find the basketball hoop in the right half of the frame, scale-invariant."""
+    """Find the basketball hoop in the right half of the frame, scale-invariant.
+
+    Threshold bumped from 0.35 to 0.6 after a session where the hoop spawned
+    below the platform's bob range (visually at the bottom of the screen).
+    The template still produced spurious 0.36-confidence matches at the
+    template's "expected" hoop_y, and the bot fired at imaginary hoops.
+    Real hoops match at 0.96-0.98; 0.6 still leaves headroom for low-but-
+    valid matches like the conf=0.58 hoop_y=474 shot that made.
+    """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("hoop.png")
