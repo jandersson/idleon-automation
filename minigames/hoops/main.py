@@ -69,10 +69,16 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     #   Effective ideal target for hoop_y=464 is ~485 → offset ≈ 21.
     # Legacy (400, 80) and (416, 80) anchors removed — they were tuned for
     # dir=down at higher hoops and produced wrong slope under dir=up.
-    (371, 50),   # was 80 (overshot); reduce arc/range. Untested at this
-                 # value — adjust if it now undershoots.
-    (450, 33),   # CONFIRMED make.
+    (371, 25),   # was 50 — still overshot (back rim) at hoop_y=359 in
+                 # the next session, with ball landing ~30-40px past
+                 # hoop_x at rim height. Halve the offset.
+    (450, 28),   # was 33. The hoop_y=448 makes happen when fired_py is
+                 # below ~475; with offset=33 the platform fires anywhere
+                 # 463..477 and only the lower end makes. Smaller offset
+                 # shifts the trigger earlier in the upstroke (fired_py
+                 # closer to 462) so makes are consistent.
     (464, 22),   # CONFIRMED make territory (fired at py=481-489).
+    (474, 23),   # CONFIRMED make from session 17:15 (fired_py=495).
     (700, 50),   # untested in dir=up regime; legacy from dir=down.
     (835, 14),   # untested in dir=up; legacy.
     (900, 11),   # untested in dir=up; legacy.
