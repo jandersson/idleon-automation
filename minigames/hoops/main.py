@@ -58,7 +58,9 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 SHOT_STRATEGY = "direct"
 
 OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    (400, 90),   # widescreen high hoops
+    (400, 50),   # 960x572 window; 90 was stale from a taller window and put
+                 # target_y past the platform's bob max — bot never fired.
+                 # 50 is a starting guess; refine after observing misses.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
