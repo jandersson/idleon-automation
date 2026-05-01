@@ -64,11 +64,12 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
     (400, 80),
     (416, 80),
-    (450, 25),   # was 35 (and 60 before that). Flight frames at offset=35
-                 # showed the ball arriving JUST left of the rim opening
-                 # (still front-of-rim, but much closer than at 60). Lower
-                 # to fire even higher in the bob → more downward platform
-                 # velocity at launch → more horizontal range.
+    (450, 10),   # was 25. Iterating down: at offset=28 (interpolated from
+                 # (450,25)), flight frame 026 showed the ball literally
+                 # sitting on the front lip of the rim — 2-3px short of
+                 # going in. Hypothesis: launch velocity is fixed by the
+                 # game animation, so smaller offset = ball starts higher =
+                 # more horizontal range. Keep pushing down until make.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
