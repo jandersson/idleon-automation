@@ -108,8 +108,12 @@ Y_TOLERANCE = 2
 # different timing).
 REQUIRED_DIRECTION = "down"
 
-# Wait after clicking so the ball can travel and the hoop can reposition.
-POST_SHOT_COOLDOWN = 2.0
+# Wait after clicking so the ball can travel, land, and the score animation
+# completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
+# score updates after that. With 2.0s the post_shot snapshot consistently
+# captured the OLD score, so every make was logged as miss (the next shot's
+# pre_shot would show the updated score, but we don't compare across shots).
+POST_SHOT_COOLDOWN = 4.0
 
 # At score >=10 the platform also moves horizontally. We sample the platform's X
 # during the early stationary phase, lock in the median as our anchor, and from
