@@ -6,6 +6,10 @@ Screen-reading bots for the game **Idleon**. Each bot grabs a region of the scre
 
 The README covers per-minigame run commands and tuning knobs — don't duplicate that here. This file documents the cross-cutting patterns.
 
+## Workflow
+
+**Always commit changes.** After completing a logical unit of work, commit it without waiting to be asked. Split unrelated changes into separate commits. Pushing follows the daytime-hours rule from user memory; committing has no time gate.
+
 ## Setup
 
 `pip install -e .` or `uv sync` — both work, `uv.lock` is checked in. Python 3.11+.
