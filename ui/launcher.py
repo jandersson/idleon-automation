@@ -55,7 +55,6 @@ MINIGAMES = [
             ("Pick wind", "darts-pick-wind-region"),
             ("Watch wind", "darts-watch-wind"),
             ("Pick score", "darts-pick-score-region"),
-            ("Pick game over", "darts-pick-game-over"),
         ],
     },
     {

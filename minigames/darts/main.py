@@ -14,7 +14,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
+from minigames.darts.detector import find_release_pose, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -45,6 +45,11 @@ WIND_DEDUP_THRESHOLD = 5.0  # mean pixel diff above this = new wind state
 MONITOR_MODE = True
 MONITOR_DIR = Path(__file__).parent / "assets" / "monitor"
 POST_LAND_DELAY = 0.6  # how long to wait after the cooldown before post-screenshot
+
+# If no release pose has matched in this many seconds, assume the game-over
+# screen has replaced the dartboard scene (the entire scene is replaced at
+# game over, so the player avatar disappears and the template can't match).
+GAME_OVER_NO_POSE_SEC = 10.0
 
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
@@ -161,6 +166,7 @@ def _run_inner():
     wind_seen = _load_existing_wind_samples()
     if wind_seen:
         print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
+    last_pose_time = time.time()
 
     while True:
         check_failsafe()
@@ -172,21 +178,23 @@ def _run_inner():
             continue
 
         frame = grab_region(left, top, width, height)
-
-        # Stop cleanly when the game-over screen appears.
-        is_game_over, go_conf = find_game_over(frame)
-        if is_game_over:
-            print(f"Game over detected (conf={go_conf:.2f}). Final session: "
-                  f"{shot_stats['makes']}/{shot_stats['attempts']} makes.")
-            return
-
         pose, conf = find_release_pose(frame, threshold=RELEASE_THRESHOLD)
 
         if pose is None:
             best_recent_conf = max(best_recent_conf, conf)
+            # Game-over signal: the entire dartboard scene is replaced when
+            # the trial ends, so the player avatar disappears and the release
+            # template can't match. If we haven't seen the player in a while,
+            # bail.
+            if time.time() - last_pose_time > GAME_OVER_NO_POSE_SEC:
+                print(f"No release pose detected for {GAME_OVER_NO_POSE_SEC:.0f}s — "
+                      f"assuming game over. Final session: "
+                      f"{shot_stats['makes']}/{shot_stats['attempts']} makes.")
+                return
             time.sleep(POLL_INTERVAL)
             continue
 
+        last_pose_time = time.time()
         px, py = pose
         print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}) — throwing")
         score_before = _capture_score(left, top, width, height)
@@ -195,7 +203,9 @@ def _run_inner():
         wind_crop = _crop_wind(frame)
         if _maybe_save_wind_sample(wind_crop, wind_seen):
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
-        random_delay(20, 60)
+        # No pre-click delay: the arm sweeps fast enough that even 20-60ms of
+        # latency drifts the hand a few degrees off the captured release angle,
+        # which is the difference between bullseye and a regular hit.
         click(left + width // 2, top + height // 2)
         time.sleep(POST_THROW_COOLDOWN)
         time.sleep(POST_LAND_DELAY)
