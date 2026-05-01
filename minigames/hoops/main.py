@@ -101,10 +101,11 @@ def _compute_offset(hoop_y: int) -> int:
 Y_TOLERANCE = 2
 
 # Required direction of platform motion to fire. "up", "down", or "any".
-# Trying "down" — last 12-shot session at hoop_y=416 missed identically with
-# "up" across offsets 50 and 80. If launch power depends on platform velocity
-# (not just position), the down-stroke gives a meaningfully different shot.
-REQUIRED_DIRECTION = "down"
+# Trying "up" — dir=down made hoop_y in 380-450 range work but hoop_y=337
+# (very high hoops) consistently miss. Up-stroke might give the extra
+# vertical reach needed. If this regresses the mid-range hoops we just got
+# working, we'd need per-hoop_y direction logic.
+REQUIRED_DIRECTION = "up"
 
 # Wait after clicking so the ball can travel and the hoop can reposition.
 POST_SHOT_COOLDOWN = 2.0
