@@ -58,3 +58,39 @@ def log_shot(conn: sqlite3.Connection, **fields) -> None:
         tuple(fields.values()),
     )
     conn.commit()
+
+
+def fit_target_predictor(
+    conn: sqlite3.Connection,
+    required_direction: str,
+    min_samples: int = 3,
+) -> tuple[float, float, int] | None:
+    """Linear regression `target_y = m*hoop_y + b` from confirmed makes.
+
+    Excludes clamped shots — those fired at the bob extreme regardless of
+    nominal target_y, so they say nothing about target tuning.
+
+    Returns (m, b, n_samples) or None when there isn't enough data.
+    """
+    rows = list(
+        conn.execute(
+            'SELECT hoop_y, target_y FROM shots '
+            'WHERE made = 1 AND clamped = 0 AND required_direction = ? '
+            'AND hoop_y IS NOT NULL AND target_y IS NOT NULL',
+            (required_direction,),
+        )
+    )
+    n = len(rows)
+    if n < min_samples:
+        return None
+    xs = [float(r[0]) for r in rows]
+    ys = [float(r[1]) for r in rows]
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    den = sum((x - mean_x) ** 2 for x in xs)
+    if den == 0:
+        return None
+    m = num / den
+    b = mean_y - m * mean_x
+    return m, b, n

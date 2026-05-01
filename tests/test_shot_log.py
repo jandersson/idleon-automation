@@ -1,7 +1,7 @@
 """Round-trip test for the shot SQLite log."""
 import sqlite3
 
-from common.shot_log import open_db, log_shot
+from common.shot_log import open_db, log_shot, fit_target_predictor
 
 
 def test_open_db_creates_schema(tmp_path):
@@ -37,3 +37,43 @@ def test_log_shot_handles_offset_keyword(tmp_path):
     val = conn.execute("SELECT \"offset\" FROM shots").fetchone()[0]
     conn.close()
     assert val == 42
+
+
+def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, hoop_y=400, target_y=420, made=1, clamped=0, required_direction="up")
+    log_shot(conn, hoop_y=450, target_y=470, made=1, clamped=0, required_direction="up")
+    assert fit_target_predictor(conn, "up") is None  # default min_samples=3
+    conn.close()
+
+
+def test_fit_target_predictor_fits_makes(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    # target_y = 1.0 * hoop_y + 20 (perfect fit)
+    for hy, ty in [(300, 320), (400, 420), (500, 520)]:
+        log_shot(conn, hoop_y=hy, target_y=ty, made=1, clamped=0, required_direction="up")
+    fit = fit_target_predictor(conn, "up")
+    assert fit is not None
+    m, b, n = fit
+    assert n == 3
+    assert abs(m - 1.0) < 1e-9
+    assert abs(b - 20.0) < 1e-9
+
+
+def test_fit_target_predictor_excludes_clamped_and_misses(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    # Clean makes
+    for hy, ty in [(300, 320), (400, 420), (500, 520)]:
+        log_shot(conn, hoop_y=hy, target_y=ty, made=1, clamped=0, required_direction="up")
+    # Clamped make — should be excluded (otherwise would skew the fit)
+    log_shot(conn, hoop_y=600, target_y=999, made=1, clamped=1, required_direction="up")
+    # Miss — should be excluded
+    log_shot(conn, hoop_y=350, target_y=999, made=0, clamped=0, required_direction="up")
+    # Wrong direction — should be excluded
+    log_shot(conn, hoop_y=350, target_y=999, made=1, clamped=0, required_direction="down")
+    fit = fit_target_predictor(conn, "up")
+    assert fit is not None
+    m, b, n = fit
+    assert n == 3  # only the three clean makes
+    assert abs(m - 1.0) < 1e-9
+    assert abs(b - 20.0) < 1e-9

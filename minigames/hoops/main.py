@@ -13,7 +13,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot
+from common.shot_log import open_db, log_shot, fit_target_predictor
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
@@ -28,86 +28,26 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
                        # Lowered from 0.02 anyway to make sure sleep isn't
                        # the bottleneck on cycles where matching is fast.
 
-# Position-dependent vertical offset added to hoop rim Y to get the ideal
-# platform-launch Y. Rolls rim-vs-platform geometry AND ball-travel lead into
-# one number per hoop position. Linearly interpolated between anchor points;
-# extrapolation is clamped to the nearest anchor's value.
+# Offset is now learned from confirmed makes in shots.db at session start
+# (see fit_target_predictor in common.shot_log). The hand-tuned OFFSET_ANCHORS
+# table the bot used to use was non-monotonic and brittle: each new hoop_y
+# regime needed a manually-inserted anchor. Linear regression over makes
+# generalises automatically as the DB grows.
 #
-# Aim point: per community strategy, target the BOTTOM of the rim opening,
-# not the center -- nothing-but-net hits score 2 points instead of 1. The
-# matched hoop template center is roughly the backboard middle, so the
-# actual rim bottom is well below it; that informs the sign of offset
-# corrections (positive = launch when platform is lower = ball arcs lower).
-#
-# To tune: watch where shots miss for a given hoop_y and add/move an anchor:
-#   - Ball clears top of backboard → offset is too small → bump it up
-#   - Ball hits front of rim       → offset is too large → bump it down
-#   - Ball hits back of rim        → offset is too small → bump it up
-# Two strategies for landing shots. Set SHOT_STRATEGY to switch.
-#
-# - "direct"   : tune launch timing so the ball arc passes through the rim
-#                naturally. Mid-flight rescue still active as a backup but is
-#                NOT the primary make mechanism. Offsets calibrated for shots
-#                that go in by themselves.
-# - "overshoot": deliberately aim past the rim; rescue drops the ball straight
-#                down through the rim opening. Depends on the click-on-the-ball
-#                drop trick actually working — to date unconfirmed in this
-#                game version.
-#
-# Default to "direct" since (a) it's empirically known-good (6/7 makes in an
-# earlier session) and (b) overshoot was failing with no evidence the drop
-# trick activates as the wiki claims.
-SHOT_STRATEGY = "direct"
-
-OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    # 960x572 window, REQUIRED_DIRECTION="up". Calibrated from the first
-    # dir=up session (shots.db ids 5-10):
-    # - hoop_y=371, offset=80 → big overshoot (ball over the backboard) ×2
-    # - hoop_y=448, offset=33 → MAKE
-    # - hoop_y=464, offset=31 → 2/3 MAKES; the miss fired late (py=494,
-    #   close to target=495); makes fired earlier in upstroke (py=481, 489).
-    #   Effective ideal target for hoop_y=464 is ~485 → offset ≈ 21.
-    # Legacy (400, 80) and (416, 80) anchors removed — they were tuned for
-    # dir=down at higher hoops and produced wrong slope under dir=up.
-    (371, 25),   # was 50 — still overshot (back rim) at hoop_y=359 in
-                 # the next session, with ball landing ~30-40px past
-                 # hoop_x at rim height. Halve the offset.
-    (388, 12),   # ALL miss/overshoot in session 18:25 at off=26
-                 # (interpolated between (371,25) and (450,28)). Insert
-                 # an explicit dip to cut range here. May need further
-                 # adjustment.
-    (450, 28),   # was 33. The hoop_y=448 makes happen when fired_py is
-                 # below ~475; with offset=33 the platform fires anywhere
-                 # 463..477 and only the lower end makes. Smaller offset
-                 # shifts the trigger earlier in the upstroke (fired_py
-                 # closer to 462) so makes are consistent.
-    (464, 22),   # CONFIRMED make territory (fired at py=481-489).
-    (474, 23),   # CONFIRMED make from session 17:15 (fired_py=495).
-    (700, 50),   # untested in dir=up regime; legacy from dir=down.
-    (835, 14),   # untested in dir=up; legacy.
-    (900, 11),   # untested in dir=up; legacy.
-]
-
-OFFSET_ANCHORS_OVERSHOOT: list[tuple[int, int]] = [
-    (700, 55),   # high hoops
-    (835, 22),   # upper-mid
-    (900, 18),   # mid-range
-]
-
-OFFSET_ANCHORS = OFFSET_ANCHORS_DIRECT if SHOT_STRATEGY == "direct" else OFFSET_ANCHORS_OVERSHOOT
+# Cold-start fallback: when there are <3 confirmed makes for the active
+# REQUIRED_DIRECTION, use this constant offset. Picked from the cluster of
+# makes in dir=up data (target_y ≈ hoop_y + ~20).
+COLD_START_OFFSET = 20
 
 
-def _compute_offset(hoop_y: int) -> int:
-    pts = sorted(OFFSET_ANCHORS)
-    if hoop_y <= pts[0][0]:
-        return pts[0][1]
-    if hoop_y >= pts[-1][0]:
-        return pts[-1][1]
-    for (y1, o1), (y2, o2) in zip(pts, pts[1:]):
-        if y1 <= hoop_y <= y2:
-            t = (hoop_y - y1) / (y2 - y1)
-            return int(round(o1 + t * (o2 - o1)))
-    return pts[-1][1]
+def _compute_offset(hoop_y: int, predictor: tuple[float, float, int] | None) -> int:
+    """target_y = m*hoop_y + b → offset = target_y - hoop_y. Falls back to
+    COLD_START_OFFSET if there's not enough data to fit yet."""
+    if predictor is None:
+        return COLD_START_OFFSET
+    m, b, _n = predictor
+    target_y = m * hoop_y + b
+    return int(round(target_y - hoop_y))
 
 # Accepted window around target_y (pixels) when deciding to fire.
 Y_TOLERANCE = 2
@@ -148,12 +88,9 @@ RESCUE_WINDOW = 3.5  # seconds to track the ball after launch. Was 1.5 — but
                      # so the rescue's "fire if ball is over hoop" check was
                      # being gated out by the deadline expiring before the
                      # ball got there.
-# Strategy-dependent rescue tolerance:
-# - direct:    wider, since rescue is a backup safety net, not the primary
-#              make mechanism. We don't want it to interfere with shots that
-#              would already make on their own.
-# - overshoot: tight, since drop placement determines the make.
-BALL_X_TOLERANCE = 6 if SHOT_STRATEGY == "overshoot" else 18
+# Wider tolerance: rescue is a backup safety net, not the primary make
+# mechanism. Don't want rescue clicks interfering with otherwise-good shots.
+BALL_X_TOLERANCE = 18
 RESCUE_POLL = 0.01  # tight loop — ball moves fast
 
 # Monitor mode: per-shot subfolder under assets/monitor/ with pre/post-shot
@@ -314,12 +251,18 @@ def run():
         session_started = datetime.now().isoformat(timespec="seconds")
         shot_db = open_db(SHOT_DB_PATH)
         try:
-            _run_inner(session_started, shot_db)
+            predictor = fit_target_predictor(shot_db, REQUIRED_DIRECTION)
+            if predictor is None:
+                print(f"No predictor fit — fewer than 3 confirmed makes in dir={REQUIRED_DIRECTION!r}; using cold-start offset={COLD_START_OFFSET}")
+            else:
+                m, b, n = predictor
+                print(f"Fitted target predictor (dir={REQUIRED_DIRECTION!r}, n={n}): target_y = {m:.3f}*hoop_y + {b:.1f}")
+            _run_inner(session_started, shot_db, predictor)
         finally:
             shot_db.close()
 
 
-def _run_inner(session_started: str, shot_db):
+def _run_inner(session_started: str, shot_db, predictor):
     print(f"Hoops bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -375,7 +318,7 @@ def _run_inner(session_started: str, shot_db):
             hoop_missing_since = None
             hoop_x, hoop_y = hoop_pos
             hoop_conf_last = hoop_conf
-            offset = _compute_offset(hoop_y)
+            offset = _compute_offset(hoop_y, predictor)
             target_y = hoop_y + offset
             print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}, target launch y={target_y}")
 
