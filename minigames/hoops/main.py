@@ -64,11 +64,12 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
     (400, 80),
     (416, 80),
-    (450, 60),   # was 50 — dir=down at hoop_y=447 with offset=53 came up
-                 # short (front-of-rim). Bumped, but capped at 60 because
-                 # target_y must stay ≤ ~510 (platform bob max) — anything
-                 # higher and the bot can't fire. May still be too low to
-                 # actually reach rim at this hoop_y.
+    (450, 35),   # was 60. Flight-frame analysis at offset=61 showed ball
+                 # arcing too short (front of rim): platform was at bob max
+                 # (~510) when fired, so launch velocity ≈ 0. Mid-bob target
+                 # (~483) puts firing in the high-velocity part of the bob,
+                 # matching the (416, 80) anchor's regime (target_y=496).
+                 # Earlier "bumped from 50" calibration had the sign flipped.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
@@ -150,6 +151,12 @@ RESCUE_POLL = 0.01  # tight loop — ball moves fast
 # for tuning offline. Toggle off in production.
 MONITOR_MODE = True
 MONITOR_DIR = _HERE / "assets" / "monitor"
+
+# Capture flight frames during the post-shot cooldown, independent of
+# RESCUE_ENABLED. Used to record actual ball trajectory for offline offset
+# tuning when rescue is off.
+MONITOR_FLIGHT = True
+FLIGHT_POLL = 0.05
 
 # Score region is loaded fresh from regions.json each shot (using current
 # window dims) so it survives the user resizing the game window between runs.
@@ -430,7 +437,19 @@ def _run_inner():
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
                     _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
-                time.sleep(POST_SHOT_COOLDOWN)
+                    time.sleep(POST_SHOT_COOLDOWN)
+                elif MONITOR_FLIGHT and shot_dir is not None:
+                    flight_deadline = time.time() + POST_SHOT_COOLDOWN
+                    flight_idx = 0
+                    while time.time() < flight_deadline:
+                        check_failsafe()
+                        flight_idx += 1
+                        f = grab_region(left, top, width, height)
+                        bgr = cv2.cvtColor(f, cv2.COLOR_BGRA2BGR)
+                        cv2.imwrite(str(shot_dir / f"flight_{flight_idx:03d}.png"), bgr)
+                        time.sleep(FLIGHT_POLL)
+                else:
+                    time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
                 _log_shot_result(shot_stats, score_before, score_after)
