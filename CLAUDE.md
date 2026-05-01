@@ -10,6 +10,8 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 **Always commit changes.** After completing a logical unit of work, commit it without waiting to be asked. Split unrelated changes into separate commits. Pushing follows the daytime-hours rule from user memory; committing has no time gate.
 
+**Add unit tests for new stuff.** New pure-logic helpers, parsers, schema modules, regression guards — write a test alongside the change in `tests/`. Match the existing style: fast, self-contained, no live captures. CV-against-real-frames stays manual (visual, calibrated by user).
+
 ## Setup
 
 `pip install -e .` or `uv sync` — both work, `uv.lock` is checked in. Python 3.11+.
