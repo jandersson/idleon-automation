@@ -60,22 +60,22 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 SHOT_STRATEGY = "direct"
 
 OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    # 960x572 window with REQUIRED_DIRECTION="down":
-    # - (606, 416) confirmed make at offset=80
-    # - (604, 395) and (577, 345) missed front-of-rim at offset=50 → need ~80 too
-    # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
-    (400, 80),
-    (416, 80),
-    (450, 30),   # Reset to moderate offset for dir=up regime (see
-                 # REQUIRED_DIRECTION below). The offset 60->10 sweep on
-                 # dir=down plateaued at "ball touches front rim, doesn't
-                 # clear" — flipping to dir=up to add upward velocity bias
-                 # and a higher arc; tune from this baseline if needed.
-    (700, 50),   # portrait high hoops — last session missed at y=722 with
-                 # interpolated offset 40; extrapolating the make trend from
-                 # (835,14) and (900,11) suggests ~50 here, not 40.
-    (835, 14),   # upper-mid (portrait); makes at y=832, 866 confirmed
-    (900, 11),   # mid-range (portrait); makes at y=905 confirmed
+    # 960x572 window, REQUIRED_DIRECTION="up". Calibrated from the first
+    # dir=up session (shots.db ids 5-10):
+    # - hoop_y=371, offset=80 → big overshoot (ball over the backboard) ×2
+    # - hoop_y=448, offset=33 → MAKE
+    # - hoop_y=464, offset=31 → 2/3 MAKES; the miss fired late (py=494,
+    #   close to target=495); makes fired earlier in upstroke (py=481, 489).
+    #   Effective ideal target for hoop_y=464 is ~485 → offset ≈ 21.
+    # Legacy (400, 80) and (416, 80) anchors removed — they were tuned for
+    # dir=down at higher hoops and produced wrong slope under dir=up.
+    (371, 50),   # was 80 (overshot); reduce arc/range. Untested at this
+                 # value — adjust if it now undershoots.
+    (450, 33),   # CONFIRMED make.
+    (464, 22),   # CONFIRMED make territory (fired at py=481-489).
+    (700, 50),   # untested in dir=up regime; legacy from dir=down.
+    (835, 14),   # untested in dir=up; legacy.
+    (900, 11),   # untested in dir=up; legacy.
 ]
 
 OFFSET_ANCHORS_OVERSHOOT: list[tuple[int, int]] = [
