@@ -64,12 +64,11 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
     (400, 80),
     (416, 80),
-    (450, 35),   # was 60. Flight-frame analysis at offset=61 showed ball
-                 # arcing too short (front of rim): platform was at bob max
-                 # (~510) when fired, so launch velocity ≈ 0. Mid-bob target
-                 # (~483) puts firing in the high-velocity part of the bob,
-                 # matching the (416, 80) anchor's regime (target_y=496).
-                 # Earlier "bumped from 50" calibration had the sign flipped.
+    (450, 25),   # was 35 (and 60 before that). Flight frames at offset=35
+                 # showed the ball arriving JUST left of the rim opening
+                 # (still front-of-rim, but much closer than at 60). Lower
+                 # to fire even higher in the bob → more downward platform
+                 # velocity at launch → more horizontal range.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
