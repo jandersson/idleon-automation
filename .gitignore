@@ -13,6 +13,7 @@ minigames/*/assets/debug_match.png
 minigames/*/assets/monitor/
 minigames/*/assets/logs/
 minigames/*/assets/shots.db
+minigames/*/assets/diagnostics/
 minigames/*/calibration/
 
 # Editor / OS

@@ -365,6 +365,14 @@ def _run_inner(session_started: str, shot_db):
             if hoop_pos is None or unreachable:
                 if hoop_missing_since is None:
                     hoop_missing_since = time.time()
+                    # Save the very first frame where we couldn't find a
+                    # hoop, so we can see WHAT is on screen when detection
+                    # fails. Goes to assets/diagnostics/missing_<ts>.png.
+                    diag_dir = _HERE / "assets" / "diagnostics"
+                    diag_dir.mkdir(parents=True, exist_ok=True)
+                    diag_path = diag_dir / f"missing_{datetime.now():%Y%m%d_%H%M%S}.png"
+                    save_frame(diag_path, frame)
+                    print(f"Saved diagnostic frame to {diag_path}")
                 elapsed = time.time() - hoop_missing_since
                 if unreachable:
                     print(f"Hoop rim at y={hoop_pos[1]} is below platform reach (>{UNREACHABLE_RIM_Y}); missing for {elapsed:.0f}s")
