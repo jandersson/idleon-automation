@@ -15,7 +15,7 @@ from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop_structure, find_platform, find_ball, find_game_over, score_region, score_changed
+from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -360,7 +360,7 @@ def _run_inner(session_started: str, shot_db):
             return
 
         if target_y is None:
-            hoop_pos, hoop_conf = find_hoop_structure(frame)
+            hoop_pos, hoop_conf = find_rim(frame)
             unreachable = hoop_pos is not None and hoop_pos[1] > UNREACHABLE_RIM_Y
             if hoop_pos is None or unreachable:
                 if hoop_missing_since is None:
