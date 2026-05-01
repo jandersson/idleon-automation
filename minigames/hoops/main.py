@@ -120,6 +120,12 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # Mid-flight rescue: after the launch click, watch for the ball. When it crosses
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
+#
+# Disabled by default: even with detection working (60-70/90 frames seen),
+# the rescue session went 0/N. Pure-trajectory makes happen ~20-30% of the
+# time at known-good offsets, and the rescue's mid-flight clicks seem to
+# interfere more than they help. Flip back to True to A/B test.
+RESCUE_ENABLED = False
 RESCUE_WINDOW = 3.5  # seconds to track the ball after launch. Was 1.5 — but
                      # observed ball arrival at the rim is ~2.9s after click,
                      # so the rescue's "fire if ball is over hoop" check was
@@ -418,7 +424,8 @@ def _run_inner():
                 random_delay(10, 40)
                 click(left + width // 2, top + height // 2)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
-                _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
+                if RESCUE_ENABLED:
+                    _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
                 time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
