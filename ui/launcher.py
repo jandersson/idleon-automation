@@ -1,8 +1,11 @@
 """Tkinter launcher for the Idleon bots.
 
-One row per minigame with Start/Stop and inline setup-tool buttons. Each
-button shells out to `uv run <entry-point>` in a subprocess; stdout is
-streamed into the log pane at the bottom.
+Two tabs:
+- Bots: per-minigame Start/Stop and inline setup-tool buttons. Each button
+  shells out to `uv run <entry-point>` in a subprocess; stdout streams into
+  the log pane at the bottom.
+- Shots: image inspector for per-shot monitor folders. Pick a minigame +
+  shot folder, see the saved pre/post/flight frames stacked.
 """
 import queue
 import subprocess
@@ -12,7 +15,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from PIL import Image, ImageTk
+
 PROJECT_ROOT = Path(__file__).parent.parent
+MINIGAMES_DIR = PROJECT_ROOT / "minigames"
 
 MINIGAMES = [
     {
@@ -66,22 +72,35 @@ class Launcher:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Idleon bot launcher")
-        self.root.geometry("780x520")
+        self.root.geometry("980x720")
 
         self.processes: dict[str, subprocess.Popen | None] = {m["name"]: None for m in MINIGAMES}
         self.status_labels: dict[str, ttk.Label] = {}
-        # entry_point -> (button widget, original label) so we can show "running"
-        # state on setup buttons and restore them when the subprocess exits.
         self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
         self.log_queue: queue.Queue = queue.Queue()
+
+        # Shots tab state — keep PhotoImage refs alive so Tk doesn't GC them.
+        self.shot_images: list[ImageTk.PhotoImage] = []
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_log_queue()
 
     def _build_ui(self):
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=4, pady=4)
+
+        bots_tab = ttk.Frame(nb)
+        shots_tab = ttk.Frame(nb)
+        nb.add(bots_tab, text="Bots")
+        nb.add(shots_tab, text="Shots")
+
+        self._build_bots_tab(bots_tab)
+        self._build_shots_tab(shots_tab)
+
+    def _build_bots_tab(self, parent: ttk.Frame):
         for i, mg in enumerate(MINIGAMES):
-            frame = ttk.LabelFrame(self.root, text=mg["name"].capitalize(), padding=6)
+            frame = ttk.LabelFrame(parent, text=mg["name"].capitalize(), padding=6)
             frame.grid(row=i, column=0, sticky="ew", padx=8, pady=4)
 
             top = ttk.Frame(frame)
@@ -103,7 +122,7 @@ class Launcher:
                 btn.pack(side="left", padx=2)
                 self.setup_buttons[cmd] = (btn, label)
 
-        log_frame = ttk.LabelFrame(self.root, text="Log", padding=4)
+        log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES), column=0, sticky="nsew", padx=8, pady=(4, 8))
         self.log_text = tk.Text(log_frame, height=10, wrap="none", state="disabled",
                                 bg="#111", fg="#ddd", insertbackground="#ddd",
@@ -113,8 +132,137 @@ class Launcher:
         scrollbar.pack(side="right", fill="y")
         self.log_text.pack(side="left", fill="both", expand=True)
 
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(len(MINIGAMES), weight=1)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(len(MINIGAMES), weight=1)
+
+    def _build_shots_tab(self, parent: ttk.Frame):
+        controls = ttk.Frame(parent, padding=6)
+        controls.pack(fill="x")
+
+        ttk.Label(controls, text="Minigame:").pack(side="left")
+        self.shot_minigame = tk.StringVar(value="hoops")
+        mg_picker = ttk.Combobox(
+            controls, textvariable=self.shot_minigame, state="readonly",
+            values=[mg["name"] for mg in MINIGAMES if (MINIGAMES_DIR / mg["name"] / "assets" / "monitor").exists()],
+            width=12,
+        )
+        mg_picker.pack(side="left", padx=(4, 12))
+        mg_picker.bind("<<ComboboxSelected>>", lambda _e: self._refresh_shots_list())
+
+        ttk.Button(controls, text="Refresh", command=self._refresh_shots_list).pack(side="left")
+        self.shot_status_label = ttk.Label(controls, text="", foreground="grey")
+        self.shot_status_label.pack(side="left", padx=12)
+
+        body = ttk.Frame(parent)
+        body.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+        # Left: shot folder list
+        list_frame = ttk.LabelFrame(body, text="Shot folders", padding=4)
+        list_frame.pack(side="left", fill="y", padx=(0, 6))
+        list_scroll = ttk.Scrollbar(list_frame)
+        list_scroll.pack(side="right", fill="y")
+        self.shot_listbox = tk.Listbox(list_frame, width=28, height=20,
+                                       yscrollcommand=list_scroll.set,
+                                       font=("Consolas", 9))
+        self.shot_listbox.pack(side="left", fill="y")
+        list_scroll.config(command=self.shot_listbox.yview)
+        self.shot_listbox.bind("<<ListboxSelect>>", lambda _e: self._show_selected_shot())
+
+        # Right: scrollable image canvas
+        viewer_frame = ttk.LabelFrame(body, text="Frames", padding=4)
+        viewer_frame.pack(side="left", fill="both", expand=True)
+
+        self.shot_canvas = tk.Canvas(viewer_frame, bg="#222", highlightthickness=0)
+        self.shot_canvas.pack(side="left", fill="both", expand=True)
+        canvas_scroll = ttk.Scrollbar(viewer_frame, orient="vertical",
+                                      command=self.shot_canvas.yview)
+        canvas_scroll.pack(side="right", fill="y")
+        self.shot_canvas.config(yscrollcommand=canvas_scroll.set)
+
+        self.shot_inner = ttk.Frame(self.shot_canvas)
+        self.shot_canvas.create_window((0, 0), window=self.shot_inner, anchor="nw")
+        self.shot_inner.bind(
+            "<Configure>",
+            lambda _e: self.shot_canvas.configure(scrollregion=self.shot_canvas.bbox("all")),
+        )
+        # Mouse wheel scroll on Windows.
+        self.shot_canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: self.shot_canvas.yview_scroll(-int(e.delta / 120), "units"),
+        )
+
+        self._refresh_shots_list()
+
+    def _refresh_shots_list(self):
+        self.shot_listbox.delete(0, "end")
+        mg = self.shot_minigame.get()
+        monitor = MINIGAMES_DIR / mg / "assets" / "monitor"
+        if not monitor.exists():
+            self.shot_status_label.config(text=f"no monitor dir for {mg}")
+            return
+        folders = sorted(
+            (p for p in monitor.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for p in folders:
+            self.shot_listbox.insert("end", p.name)
+        self.shot_status_label.config(text=f"{len(folders)} shot folder(s)")
+
+    def _show_selected_shot(self):
+        sel = self.shot_listbox.curselection()
+        if not sel:
+            return
+        folder_name = self.shot_listbox.get(sel[0])
+        mg = self.shot_minigame.get()
+        folder = MINIGAMES_DIR / mg / "assets" / "monitor" / folder_name
+        if not folder.exists():
+            return
+
+        # Clear previous images
+        for child in self.shot_inner.winfo_children():
+            child.destroy()
+        self.shot_images.clear()
+
+        # Show meta.txt if present
+        meta = folder / "meta.txt"
+        if meta.exists():
+            meta_text = tk.Text(self.shot_inner, height=4, wrap="word",
+                                bg="#1a1a1a", fg="#ddd", font=("Consolas", 9))
+            meta_text.insert("1.0", meta.read_text())
+            meta_text.config(state="disabled")
+            meta_text.pack(fill="x", padx=4, pady=(0, 6))
+
+        # Order: pre, post, then flight frames in order
+        png_files = list(folder.glob("*.png"))
+        ordered = (
+            [p for p in png_files if p.name == "pre_shot.png"]
+            + [p for p in png_files if p.name == "post_shot.png"]
+            + sorted(p for p in png_files if p.name.startswith("flight_"))
+            + [p for p in png_files
+               if p.name not in {"pre_shot.png", "post_shot.png"}
+               and not p.name.startswith("flight_")]
+        )
+        for path in ordered:
+            try:
+                img = Image.open(path)
+            except Exception as e:
+                ttk.Label(self.shot_inner, text=f"{path.name}: {e}",
+                          foreground="red").pack(anchor="w")
+                continue
+            # Cap width so the row of frames stays visible.
+            max_w = 720
+            if img.width > max_w:
+                ratio = max_w / img.width
+                img = img.resize((max_w, int(img.height * ratio)),
+                                 Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self.shot_images.append(photo)
+            row = ttk.Frame(self.shot_inner)
+            row.pack(fill="x", padx=4, pady=2)
+            ttk.Label(row, text=path.name, width=18,
+                      foreground="#9cf").pack(side="left", anchor="n")
+            tk.Label(row, image=photo, bd=0).pack(side="left")
 
     def _start_bot(self, mg: dict):
         name = mg["name"]
@@ -130,7 +278,6 @@ class Launcher:
         if proc is None:
             return
         self._enqueue_log(f"[{name}] stopping...\n")
-        # `uv run` spawns python as a child — kill the whole tree on Windows.
         if sys.platform == "win32":
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                            capture_output=True)
@@ -143,7 +290,6 @@ class Launcher:
     def _spawn(self, entry_point: str, track_as: str | None):
         creationflags = 0
         if sys.platform == "win32":
-            # Detach from console so closing the launcher doesn't kill children.
             creationflags = subprocess.CREATE_NO_WINDOW
         try:
             proc = subprocess.Popen(
@@ -160,7 +306,6 @@ class Launcher:
             return
         if track_as is not None:
             self.processes[track_as] = proc
-        # Mark the corresponding setup button as in-progress.
         if entry_point in self.setup_buttons:
             btn, label = self.setup_buttons[entry_point]
             btn.config(state="disabled", text=f"{label} (running)")
