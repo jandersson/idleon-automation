@@ -53,16 +53,37 @@ def find_hoop(
 ) -> tuple[tuple[int, int] | None, float]:
     """Find the basketball hoop in the right half of the frame, scale-invariant.
 
-    Threshold bumped from 0.35 to 0.6 after a session where the hoop spawned
-    below the platform's bob range (visually at the bottom of the screen).
-    The template still produced spurious 0.36-confidence matches at the
-    template's "expected" hoop_y, and the bot fired at imaginary hoops.
-    Real hoops match at 0.96-0.98; 0.6 still leaves headroom for low-but-
-    valid matches like the conf=0.58 hoop_y=474 shot that made.
+    Kept for compatibility with tests/tools. Production callers should prefer
+    find_hoop_structure — its template includes the full pole + backboard +
+    rim, which gives much higher signal-to-noise (0.96+ for valid hoops vs
+    0.34 noise floor when no hoop is present).
     """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("hoop.png")
+    center, val, _scale = match_multiscale_center(bgr, template, region=(w // 2, 0, w, h))
+    if val < threshold:
+        return None, val
+    return center, val
+
+
+def find_hoop_structure(
+    frame: np.ndarray, threshold: float = 0.7
+) -> tuple[tuple[int, int] | None, float]:
+    """Match the full hoop structure (backboard + rim + pole).
+
+    The template was cropped centered on the rim, so the matched center
+    coordinates ARE the rim center — no offset math needed in callers.
+
+    Why a bigger template: rim-only matching (find_hoop) hit 0.34 noise
+    floors when the hoop spawned offscreen, and the 0.6 threshold barely
+    discriminated. The pole is a tall, distinctive vertical bar with
+    little else like it in the playfield, so structure matching gives
+    0.96+ for valid hoops and 0.34 for absent hoops — clean separation.
+    """
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    h, w = bgr.shape[:2]
+    template = _load("hoop_structure.png")
     center, val, _scale = match_multiscale_center(bgr, template, region=(w // 2, 0, w, h))
     if val < threshold:
         return None, val

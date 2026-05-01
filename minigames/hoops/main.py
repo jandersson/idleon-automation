@@ -15,7 +15,7 @@ from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_hoop, find_platform, find_ball, find_game_over, score_region, score_changed
+from minigames.hoops.detector import find_hoop_structure, find_platform, find_ball, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -107,6 +107,11 @@ def _compute_offset(hoop_y: int) -> int:
 
 # Accepted window around target_y (pixels) when deciding to fire.
 Y_TOLERANCE = 2
+
+# Rim y-coordinates above this are considered unreachable: the platform's
+# bob range is ~290..510 in the 960x572 window, so a rim below ~520 is
+# physically below where any shot can land. Treat as not-found and skip.
+UNREACHABLE_RIM_Y = 520
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
@@ -355,18 +360,22 @@ def _run_inner(session_started: str, shot_db):
             return
 
         if target_y is None:
-            hoop_pos, hoop_conf = find_hoop(frame)
-            if hoop_pos is None:
+            hoop_pos, hoop_conf = find_hoop_structure(frame)
+            unreachable = hoop_pos is not None and hoop_pos[1] > UNREACHABLE_RIM_Y
+            if hoop_pos is None or unreachable:
                 if hoop_missing_since is None:
                     hoop_missing_since = time.time()
                 elapsed = time.time() - hoop_missing_since
-                print(f"Hoop not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
+                if unreachable:
+                    print(f"Hoop rim at y={hoop_pos[1]} is below platform reach (>{UNREACHABLE_RIM_Y}); missing for {elapsed:.0f}s")
+                else:
+                    print(f"Hoop not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
                 # Lives only tick on shots; if we can't find a hoop we'll
                 # never fire and never end. Exit when the hoop has been
-                # invisible for 20s — likely spawned outside the playable
-                # area (e.g. below the platform), nothing the bot can do.
+                # invisible / unreachable for 20s — likely spawned outside
+                # the playable area, nothing the bot can do.
                 if elapsed > 20:
-                    print("Hoop has been missing for >20s — likely out of playable area. Exiting.")
+                    print("Hoop has been missing/unreachable for >20s. Exiting.")
                     return
                 time.sleep(0.2)
                 continue
