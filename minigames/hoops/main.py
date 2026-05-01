@@ -58,9 +58,13 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 SHOT_STRATEGY = "direct"
 
 OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
-    (400, 50),   # 960x572 window; 90 was stale from a taller window and put
-                 # target_y past the platform's bob max — bot never fired.
-                 # 50 is a starting guess; refine after observing misses.
+    (400, 50),   # 960x572 window. 50 confirmed working at hoop_y=448, 342.
+    (416, 80),   # PATCH: hoop_y=416 systematically overshot at offset=50
+                 # (ball flew past backboard tip in 7/7 shots last session).
+                 # Higher offset fires later (platform lower) → ball launched
+                 # from lower starting position → lower trajectory → less
+                 # overshoot. Directional bet, untested.
+    (450, 50),   # Anchor to keep hoop_y=448 close to its known-good 50.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
