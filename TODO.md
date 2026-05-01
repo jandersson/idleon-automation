@@ -8,6 +8,15 @@
   on a red-zone misclick. If it still misses at edges, raise the margin or
   add velocity-based prediction.
 
+- **Hoops: tune OFFSET_ANCHORS_DIRECT for 960x572 window.** Current entries:
+  `(400, 50)`, `(700, 50)`, `(835, 14)`, `(900, 11)`. The first anchor was a
+  starting guess; in the latest session 7 shots at hoop (606, 416) all
+  missed into the backboard with offset=50 (target_y=466). Need real shots
+  to bias-correct. Suggested method: keep the bot running for one full
+  attempt and watch which side of the rim shots land (over/under), then
+  nudge the (400, …) anchor by 5-10px in the right direction. Repeat until
+  the bot makes consistently in this hoop_y range.
+
 ## Next
 
 - **Chopping: tune red safety margin** if the current 8px is wrong — too
