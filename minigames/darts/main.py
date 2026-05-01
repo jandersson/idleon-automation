@@ -171,6 +171,7 @@ def _run_inner():
     if wind_seen:
         print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
     last_pose_time = time.time()
+    last_wind_crop: np.ndarray | None = None
 
     while True:
         check_failsafe()
@@ -205,6 +206,16 @@ def _run_inner():
         # Snapshot wind state right before this throw — useful even now (so the
         # library accumulates) and later (so we can pick the right release angle).
         wind_crop = _crop_wind(frame)
+        # Log wind change between throws (vs the previous throw's reading,
+        # not vs the saved library — that one only fires on never-seen-before
+        # samples). Useful for correlating bullseye-or-not with wind shifts.
+        if wind_crop is not None and last_wind_crop is not None \
+                and wind_crop.shape == last_wind_crop.shape:
+            wind_diff = float(cv2.absdiff(wind_crop, last_wind_crop).astype(np.float32).mean())
+            if wind_diff >= WIND_DEDUP_THRESHOLD:
+                print(f"  [wind] changed since last throw (diff={wind_diff:.1f})")
+        if wind_crop is not None:
+            last_wind_crop = wind_crop
         if _maybe_save_wind_sample(wind_crop, wind_seen):
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
         # No pre-click delay: the arm sweeps fast enough that even 20-60ms of
