@@ -148,6 +148,13 @@ def find_ball(
 
     Returns ball center (x, y) in the full frame, or None.
     """
+    # Without a prev_frame for motion-masking, the orange rim itself passes
+    # the color filter and gets returned as the ball — a false positive that
+    # makes the rescue click on the rim instead of the ball. Require motion
+    # info before reporting any detection.
+    if prev_frame is None:
+        return None
+
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     x0 = max(0, search_x0)
@@ -161,14 +168,13 @@ def find_ball(
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     color_mask = cv2.inRange(hsv, BALL_HSV_LOWER, BALL_HSV_UPPER)
 
-    mask = color_mask
-    if prev_frame is not None:
-        prev_bgr = cv2.cvtColor(prev_frame, cv2.COLOR_BGRA2BGR)
-        if prev_bgr.shape == bgr.shape:
-            prev_crop = prev_bgr[y0:y1, x0:x1]
-            diff = cv2.absdiff(crop, prev_crop).astype(np.float32).mean(axis=2)
-            motion_mask = (diff > motion_threshold).astype(np.uint8) * 255
-            mask = cv2.bitwise_and(color_mask, motion_mask)
+    prev_bgr = cv2.cvtColor(prev_frame, cv2.COLOR_BGRA2BGR)
+    if prev_bgr.shape != bgr.shape:
+        return None
+    prev_crop = prev_bgr[y0:y1, x0:x1]
+    diff = cv2.absdiff(crop, prev_crop).astype(np.float32).mean(axis=2)
+    motion_mask = (diff > motion_threshold).astype(np.uint8) * 255
+    mask = cv2.bitwise_and(color_mask, motion_mask)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     best = None
