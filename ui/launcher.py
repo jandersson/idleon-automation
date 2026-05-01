@@ -70,6 +70,9 @@ class Launcher:
 
         self.processes: dict[str, subprocess.Popen | None] = {m["name"]: None for m in MINIGAMES}
         self.status_labels: dict[str, ttk.Label] = {}
+        # entry_point -> (button widget, original label) so we can show "running"
+        # state on setup buttons and restore them when the subprocess exits.
+        self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
         self.log_queue: queue.Queue = queue.Queue()
 
         self._build_ui()
@@ -95,8 +98,10 @@ class Launcher:
             tools.pack(fill="x", pady=(4, 0))
             ttk.Label(tools, text="Setup:", foreground="grey").pack(side="left", padx=(0, 4))
             for label, cmd in mg["setup"]:
-                ttk.Button(tools, text=label,
-                           command=lambda c=cmd: self._run_oneshot(c)).pack(side="left", padx=2)
+                btn = ttk.Button(tools, text=label,
+                                 command=lambda c=cmd: self._run_oneshot(c))
+                btn.pack(side="left", padx=2)
+                self.setup_buttons[cmd] = (btn, label)
 
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES), column=0, sticky="nsew", padx=8, pady=(4, 8))
@@ -155,6 +160,10 @@ class Launcher:
             return
         if track_as is not None:
             self.processes[track_as] = proc
+        # Mark the corresponding setup button as in-progress.
+        if entry_point in self.setup_buttons:
+            btn, label = self.setup_buttons[entry_point]
+            btn.config(state="disabled", text=f"{label} (running)")
         self._enqueue_log(f"[{entry_point}] started (pid {proc.pid})\n")
         threading.Thread(target=self._drain, args=(entry_point, proc, track_as),
                          daemon=True).start()
@@ -168,6 +177,8 @@ class Launcher:
         if track_as is not None:
             self.log_queue.put(("status", track_as, "stopped", "grey"))
             self.processes[track_as] = None
+        if entry_point in self.setup_buttons:
+            self.log_queue.put(("setup_done", entry_point))
 
     def _enqueue_log(self, text: str):
         self.log_queue.put(text)
@@ -176,10 +187,16 @@ class Launcher:
         try:
             while True:
                 item = self.log_queue.get_nowait()
-                if isinstance(item, tuple) and item and item[0] == "status":
-                    _, name, text, color = item
-                    if name in self.status_labels:
-                        self.status_labels[name].config(text=text, foreground=color)
+                if isinstance(item, tuple) and item:
+                    if item[0] == "status":
+                        _, name, text, color = item
+                        if name in self.status_labels:
+                            self.status_labels[name].config(text=text, foreground=color)
+                    elif item[0] == "setup_done":
+                        _, entry_point = item
+                        if entry_point in self.setup_buttons:
+                            btn, label = self.setup_buttons[entry_point]
+                            btn.config(state="normal", text=label)
                 else:
                     self._append_log(str(item))
         except queue.Empty:
