@@ -64,7 +64,11 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
     (400, 80),
     (416, 80),
-    (450, 50),   # keep hoop_y=448 near its old known-good 50.
+    (450, 60),   # was 50 — dir=down at hoop_y=447 with offset=53 came up
+                 # short (front-of-rim). Bumped, but capped at 60 because
+                 # target_y must stay ≤ ~510 (platform bob max) — anything
+                 # higher and the bot can't fire. May still be too low to
+                 # actually reach rim at this hoop_y.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
