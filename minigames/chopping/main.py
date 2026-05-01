@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
-from common.input import click, random_delay
+from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
@@ -49,6 +49,7 @@ def _run_inner():
     stagnation_count = 0
 
     while True:
+        check_failsafe()
         try:
             win_left, win_top, win_w, win_h = get_bounds(WINDOW_TITLE)
         except WindowNotFoundError as e:

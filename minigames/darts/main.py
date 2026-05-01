@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
-from common.input import click, random_delay
+from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
@@ -163,6 +163,7 @@ def _run_inner():
         print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
 
     while True:
+        check_failsafe()
         try:
             left, top, width, height = get_bounds(WINDOW_TITLE)
         except WindowNotFoundError as e:
