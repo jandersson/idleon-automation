@@ -66,12 +66,11 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     # So everything with hoop_y < 450 gets ~80; hoop_y around 448 stays near 50.
     (400, 80),
     (416, 80),
-    (450, 10),   # was 25. Iterating down: at offset=28 (interpolated from
-                 # (450,25)), flight frame 026 showed the ball literally
-                 # sitting on the front lip of the rim — 2-3px short of
-                 # going in. Hypothesis: launch velocity is fixed by the
-                 # game animation, so smaller offset = ball starts higher =
-                 # more horizontal range. Keep pushing down until make.
+    (450, 30),   # Reset to moderate offset for dir=up regime (see
+                 # REQUIRED_DIRECTION below). The offset 60->10 sweep on
+                 # dir=down plateaued at "ball touches front rim, doesn't
+                 # clear" — flipping to dir=up to add upward velocity bias
+                 # and a higher arc; tune from this baseline if needed.
     (700, 50),   # portrait high hoops — last session missed at y=722 with
                  # interpolated offset 40; extrapolating the make trend from
                  # (835,14) and (900,11) suggests ~50 here, not 40.
@@ -104,12 +103,13 @@ def _compute_offset(hoop_y: int) -> int:
 Y_TOLERANCE = 2
 
 # Required direction of platform motion to fire. "up", "down", or "any".
-# Back to "down" after dir=up got 0/8 on hoop_y=337-346 (overshoot, top of
-# rim). Dir=down had real makes at hoop_y 380, 416, 447 (3/7 session). Very
-# high hoops (hoop_y < 380) miss in BOTH regimes — that's a separate
-# problem to solve later (likely needs different click position, not
-# different timing).
-REQUIRED_DIRECTION = "down"
+# Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
+# the front of the rim (5px short, plateaued). Hypothesis: launch inherits
+# platform velocity, so dir=down imparts downward bias → flat arc. dir=up
+# adds upward bias → higher arc → more time aloft → more horizontal range.
+# Earlier "dir=up overshot" note was at hoop_y=337 (much higher hoop, easier
+# to overshoot); at lower hoops it should land closer to right.
+REQUIRED_DIRECTION = "up"
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
