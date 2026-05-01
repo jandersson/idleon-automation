@@ -15,6 +15,19 @@
   clicks. Consider deriving from observed leaf velocity instead of a fixed
   pixel count.
 
+- **Hoops: detect swish (+2) vs direct make (+1).** The `score_changed`
+  diff only knows "digits changed", not by how much. Last session a 0→2
+  swish was logged as a single +1 make. To tally accurately, read the
+  actual digit value (template-match each digit, or OCR the score crop)
+  and use the delta. Affects session score reporting and trophy
+  progress — not load-bearing for whether the bot fires.
+
+- **Hoops: verify lives region.** Same regions.json had `lives` at
+  top_frac=0.28 — likely also pointing at empty sky in the 960x572
+  window. The lives counter is only used as a diagnostic (`[lives]
+  counter ticked down`), not for control flow, so this doesn't break
+  anything but the diagnostic is noise. Re-pick when next in front of
+  the game.
 
 ## Someday
 
@@ -30,3 +43,8 @@
   (`bf155f2`..`faa3678`).
 - Chopping: stagnation guard + cooldown bump (`6ec43c8`).
 - Chopping: red safety margin to avoid edge misclicks (`d356d6b`).
+- Hoops: never fire clamped shots; drop game-start-click loophole (`3c7f7e6`).
+- Hoops: drop top OFFSET_ANCHORS_DIRECT anchor 90→50 for current window
+  (`ff69fdc`).
+- Hoops: fix score region — was pointing at empty sky (`3fccfea`).
+- Tkinter launcher under `ui/` with one row per minigame (`3df1ab6`).
