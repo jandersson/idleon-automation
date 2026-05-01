@@ -120,7 +120,11 @@ X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 
 # Mid-flight rescue: after the launch click, watch for the ball. When it crosses
 # over the hoop's X (still above the rim), click on it — the wiki trick that
 # makes the ball drop straight down. Saves shots that would otherwise overshoot.
-RESCUE_WINDOW = 1.5  # seconds to track the ball after launch
+RESCUE_WINDOW = 3.5  # seconds to track the ball after launch. Was 1.5 — but
+                     # observed ball arrival at the rim is ~2.9s after click,
+                     # so the rescue's "fire if ball is over hoop" check was
+                     # being gated out by the deadline expiring before the
+                     # ball got there.
 # Strategy-dependent rescue tolerance:
 # - direct:    wider, since rescue is a backup safety net, not the primary
 #              make mechanism. We don't want it to interfere with shots that
