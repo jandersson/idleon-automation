@@ -108,11 +108,6 @@ def _compute_offset(hoop_y: int) -> int:
 # Accepted window around target_y (pixels) when deciding to fire.
 Y_TOLERANCE = 2
 
-# Rim y-coordinates above this are considered unreachable: the platform's
-# bob range is ~290..510 in the 960x572 window, so a rim below ~520 is
-# physically below where any shot can land. Treat as not-found and skip.
-UNREACHABLE_RIM_Y = 520
-
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
 # the front of the rim (5px short, plateaued). Hypothesis: launch inherits
@@ -361,29 +356,20 @@ def _run_inner(session_started: str, shot_db):
 
         if target_y is None:
             hoop_pos, hoop_conf = find_rim(frame)
-            unreachable = hoop_pos is not None and hoop_pos[1] > UNREACHABLE_RIM_Y
-            if hoop_pos is None or unreachable:
+            if hoop_pos is None:
                 if hoop_missing_since is None:
                     hoop_missing_since = time.time()
-                    # Save the very first frame where we couldn't find a
-                    # hoop, so we can see WHAT is on screen when detection
-                    # fails. Goes to assets/diagnostics/missing_<ts>.png.
+                    # Save the very first frame where the rim isn't found,
+                    # for offline review. Goes to assets/diagnostics/.
                     diag_dir = _HERE / "assets" / "diagnostics"
                     diag_dir.mkdir(parents=True, exist_ok=True)
                     diag_path = diag_dir / f"missing_{datetime.now():%Y%m%d_%H%M%S}.png"
                     save_frame(diag_path, frame)
                     print(f"Saved diagnostic frame to {diag_path}")
                 elapsed = time.time() - hoop_missing_since
-                if unreachable:
-                    print(f"Hoop rim at y={hoop_pos[1]} is below platform reach (>{UNREACHABLE_RIM_Y}); missing for {elapsed:.0f}s")
-                else:
-                    print(f"Hoop not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
-                # Lives only tick on shots; if we can't find a hoop we'll
-                # never fire and never end. Exit when the hoop has been
-                # invisible / unreachable for 20s — likely spawned outside
-                # the playable area, nothing the bot can do.
+                print(f"Rim not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
                 if elapsed > 20:
-                    print("Hoop has been missing/unreachable for >20s. Exiting.")
+                    print("Rim invisible for >20s — bailing out.")
                     return
                 time.sleep(0.2)
                 continue
