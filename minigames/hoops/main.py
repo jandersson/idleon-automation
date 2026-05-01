@@ -331,11 +331,6 @@ def _run_inner(session_started: str, shot_db):
     last_range_log = time.time()
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0}
-    # Hoops only respawn on MAKES (per user observation). If we fire a clamped
-    # shot (target unreachable) at a hoop position and the hoop is still there
-    # next iteration, we'd waste another life on a guaranteed miss. Track the
-    # last clamped position; if we'd clamp at the same place again, exit.
-    last_unreachable_hoop: tuple[int, int] | None = None
 
     while True:
         check_failsafe()
@@ -443,19 +438,9 @@ def _run_inner(session_started: str, shot_db):
             # where direction is whatever-it-just-was → never matches. Bypass.
             direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
             if x_ok and direction_ok:
-                # If the hoop is outside the platform's bob range, every shot is a
-                # guaranteed miss — and a miss costs a life (the prompt-dismiss
-                # click is the first scored shot, not a freebie). Idle here and
-                # let the user notice + recalibrate the offset.
-                if clamped:
-                    if last_unreachable_hoop != (hoop_x, hoop_y):
-                        print(f"Hoop at {(hoop_x, hoop_y)} is outside platform's reach "
-                              f"(target_y={target_y}). Idling — likely needs offset recalibration.")
-                        last_unreachable_hoop = (hoop_x, hoop_y)
-                    prev_py = py
-                    time.sleep(POLL_INTERVAL)
-                    continue
                 tag = " [crossed]" if crossed and not in_window else ""
+                if clamped:
+                    tag += " [clamped]"
                 print(f"Platform at ({px},{py}) (target_y={target_y}, dir={direction}) — shooting{tag}")
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
