@@ -72,6 +72,10 @@ OFFSET_ANCHORS_DIRECT: list[tuple[int, int]] = [
     (371, 25),   # was 50 — still overshot (back rim) at hoop_y=359 in
                  # the next session, with ball landing ~30-40px past
                  # hoop_x at rim height. Halve the offset.
+    (388, 12),   # ALL miss/overshoot in session 18:25 at off=26
+                 # (interpolated between (371,25) and (450,28)). Insert
+                 # an explicit dip to cut range here. May need further
+                 # adjustment.
     (450, 28),   # was 33. The hoop_y=448 makes happen when fired_py is
                  # below ~475; with offset=33 the platform fires anywhere
                  # 463..477 and only the lower end makes. Smaller offset
