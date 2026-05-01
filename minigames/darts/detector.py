@@ -41,10 +41,29 @@ def find_release_pose(
     return center, val
 
 
+def find_game_over(
+    frame: np.ndarray, threshold: float = 0.7
+) -> tuple[bool, float]:
+    """Detect the end-of-trial screen via multi-scale template match.
+
+    Template `game_over.png` is captured at the actual game-over screen via
+    `darts-pick-game-over`. Returns (matched, confidence).
+    """
+    path = ASSETS / "game_over.png"
+    if not path.exists():
+        return False, 0.0
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        return False, 0.0
+    _, val, _scale = match_multiscale_center(bgr, template)
+    return val >= threshold, val
+
+
 # score_region / score_changed live in common.score_diff. Re-exported here so
 # `from minigames.darts.detector import score_region, score_changed` keeps
 # working unchanged. Darts previously used a non-binarized diff with threshold
 # 5.0; the common version is binarized with threshold 3.0 (same as hoops post-
 # noise-fix). Keeping the same behavior is preferable since both bots crop the
 # same kind of in-game UI text.
-from common.score_diff import score_region, score_changed  # noqa: F401
+from common.score_diff import score_region, score_changed  # noqa: F401, E402
