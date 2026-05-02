@@ -15,6 +15,7 @@ from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot, fit_target_predictor
 from common.auto_commit import commit_file_if_changed
+from common.review_nag import maybe_print_nag
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
@@ -310,6 +311,9 @@ def _refresh_and_commit_snapshot() -> None:
         SNAPSHOT_REL,
         "Hoops: refresh shots_snapshot.json (auto)",
     )
+    # Surface a nudge if many sessions have been played since the last
+    # code-level review — keeps human-in-the-loop without external comms.
+    maybe_print_nag(REPO_ROOT, SHOT_DB_PATH, SNAPSHOT_REL)
 
 
 def _run_inner(session_started: str, shot_db, predictor):
