@@ -14,6 +14,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot, fit_target_predictor
+from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
@@ -273,6 +274,10 @@ def _direction(history: deque) -> str:
     return "flat"
 
 
+REPO_ROOT = _HERE.parent.parent
+SNAPSHOT_REL = "minigames/hoops/assets/shots_snapshot.json"
+
+
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
@@ -288,6 +293,23 @@ def run():
             _run_inner(session_started, shot_db, predictor)
         finally:
             shot_db.close()
+            _refresh_and_commit_snapshot()
+
+
+def _refresh_and_commit_snapshot() -> None:
+    """Regenerate shots_snapshot.json from the DB, then commit + push (if in
+    window). Best-effort — failures are reported but don't propagate."""
+    try:
+        from scripts import dump_shots
+        dump_shots.main()
+    except Exception as e:
+        print(f"  [snapshot] dump failed (non-fatal): {e}")
+        return
+    commit_file_if_changed(
+        REPO_ROOT,
+        SNAPSHOT_REL,
+        "Hoops: refresh shots_snapshot.json (auto)",
+    )
 
 
 def _run_inner(session_started: str, shot_db, predictor):
