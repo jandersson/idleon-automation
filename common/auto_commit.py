@@ -12,13 +12,21 @@ user's mid-edit work is never touched).
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 PUSH_WINDOW = (9, 22)  # inclusive start, exclusive end (Europe/Stockholm hours)
 
 
 def _within_push_window() -> bool:
-    h = datetime.now(ZoneInfo("Europe/Stockholm")).hour
+    """Returns True iff Europe/Stockholm local hour is in PUSH_WINDOW.
+
+    Falls back to system local time if the IANA zone isn't installed (Windows
+    venvs without `tzdata`). The user runs this on their own machine so local
+    time is the right approximation."""
+    try:
+        h = datetime.now(ZoneInfo("Europe/Stockholm")).hour
+    except ZoneInfoNotFoundError:
+        h = datetime.now().hour
     return PUSH_WINDOW[0] <= h < PUSH_WINDOW[1]
 
 
