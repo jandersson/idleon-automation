@@ -39,29 +39,21 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 # makes in dir=up data (platform_y at make ≈ hoop_y + 5..20).
 COLD_START_OFFSET = 20
 
-# Sampling-rate compensation. The "crossed" detection fires the sample AFTER
-# the actual target crossing, so platform_y at fire is below target_y by some
-# amount that depends on platform velocity at target. Empirically ~10-15px on
-# dir=up upstrokes in this game's bob speed. The predictor fits on observed
-# platform_y of makes; we add this compensation to set target_y above the
-# desired fire position so the actual fire moment lands on it.
-UPSTROKE_COMPENSATION = 12
-
-
 def _compute_offset(hoop_y: int, predictor: tuple[float, float, int] | None) -> int:
     """Compute offset for the given hoop_y.
 
-    With a predictor: optimal platform_y = m*hoop_y + b (fit on makes), then
-    target_y = optimal_platform_y + UPSTROKE_COMPENSATION so the bot's
-    sampling-rate overshoot lands the actual fire on the optimal py.
+    With a predictor: target_y = m*hoop_y + b, where the fit is on the
+    platform_y observed at past makes. With Y_TOLERANCE wide enough that
+    the in_window branch reliably fires (currently 6), the bot fires when
+    platform is AT target on the upstroke — so target_y == the optimal
+    platform_y. No compensation needed.
 
     Cold start: constant offset.
     """
     if predictor is None:
         return COLD_START_OFFSET
     m, b, _n = predictor
-    optimal_platform_y = m * hoop_y + b
-    target_y = optimal_platform_y + UPSTROKE_COMPENSATION
+    target_y = m * hoop_y + b
     return int(round(target_y - hoop_y))
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
