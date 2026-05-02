@@ -301,8 +301,13 @@ class Launcher:
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
         try:
+            # --no-sync: skip uv's implicit dependency-sync check. The launcher
+            # itself is one of the entry points (idleon.exe), so a sync would
+            # try to rewrite a file that's currently locked by us, causing
+            # "Access is denied" on Windows. User runs `uv sync` manually
+            # when they actually change dependencies.
             proc = subprocess.Popen(
-                ["uv", "run", entry_point],
+                ["uv", "run", "--no-sync", entry_point],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
