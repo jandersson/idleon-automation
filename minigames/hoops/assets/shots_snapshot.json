@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-02T17:55:51",
-  "total_shots": 105,
-  "total_makes": 23,
-  "make_rate": 0.219,
+  "generated_at": "2026-05-02T18:04:21",
+  "total_shots": 114,
+  "total_makes": 24,
+  "make_rate": 0.211,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -73,6 +73,11 @@
       "started": "2026-05-02T17:48:15",
       "shots": 5,
       "makes": 3
+    },
+    {
+      "started": "2026-05-02T18:03:29",
+      "shots": 9,
+      "makes": 1
     }
   ],
   "buckets": [
@@ -89,10 +94,16 @@
       "makes": 0
     },
     {
+      "hoop_x_bucket": 590,
+      "hoop_y_bucket": 330,
+      "shots": 3,
+      "makes": 0
+    },
+    {
       "hoop_x_bucket": 600,
       "hoop_y_bucket": 330,
-      "shots": 2,
-      "makes": 1
+      "shots": 8,
+      "makes": 2
     },
     {
       "hoop_x_bucket": 600,
@@ -228,6 +239,16 @@
     }
   ],
   "makes": [
+    {
+      "hoop_x": 607,
+      "hoop_y": 338,
+      "platform_y": 318,
+      "offset": -18,
+      "target_y": 320,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up"
+    },
     {
       "hoop_x": 607,
       "hoop_y": 338,
