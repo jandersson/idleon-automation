@@ -444,7 +444,13 @@ def _run_inner(session_started: str, shot_db, predictor):
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
                 fired_at = datetime.now().isoformat(timespec="seconds")
-                click(left + width // 2, top + height // 2)
+                # EXPERIMENT: click at hoop position instead of window center.
+                # Data shows the bot can't make hoop_x ≤ 617 with the center
+                # click (44 misses, 0 makes), but does make hoop_x ≥ 645. If
+                # click position affects aim, clicking at the hoop should
+                # extend the makeable range. Revert if no makes appear at
+                # hoop_x ≤ 617 after a session.
+                click(left + hoop_x, top + hoop_y)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
                     _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
