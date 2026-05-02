@@ -41,40 +41,50 @@ def test_log_shot_handles_offset_keyword(tmp_path):
 
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
-    log_shot(conn, hoop_y=400, platform_y=420, made=1, clamped=0, required_direction="up")
-    log_shot(conn, hoop_y=450, platform_y=470, made=1, clamped=0, required_direction="up")
-    assert fit_target_predictor(conn, "up") is None  # default min_samples=3
+    for i in range(3):  # min_samples is 4 for bivariate
+        log_shot(conn, hoop_y=400 + i, hoop_x=700, platform_y=420, made=1,
+                 clamped=0, required_direction="up")
+    assert fit_target_predictor(conn, "up") is None
     conn.close()
 
 
-def test_fit_target_predictor_fits_makes(tmp_path):
-    """Fit uses platform_y of makes (where the platform actually was at fire)."""
+def test_fit_target_predictor_fits_bivariate(tmp_path):
+    """Recovers a known bivariate function: platform_y = 0.5*hoop_y + 0.3*hoop_x + 10."""
     conn = open_db(tmp_path / "shots.db")
-    # platform_y = 1.0 * hoop_y + 20 (perfect fit)
-    for hy, py in [(300, 320), (400, 420), (500, 520)]:
-        log_shot(conn, hoop_y=hy, platform_y=py, made=1, clamped=0, required_direction="up")
+    points = [
+        (300, 600), (300, 700), (400, 600), (400, 700), (500, 700), (500, 800)
+    ]
+    for hy, hx in points:
+        py = 0.5 * hy + 0.3 * hx + 10
+        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=py, made=1,
+                 clamped=0, required_direction="up")
     fit = fit_target_predictor(conn, "up")
     assert fit is not None
-    m, b, n = fit
-    assert n == 3
-    assert abs(m - 1.0) < 1e-9
-    assert abs(b - 20.0) < 1e-9
+    a, b, c, n = fit
+    assert n == 6
+    assert abs(a - 0.5) < 1e-6
+    assert abs(b - 0.3) < 1e-6
+    assert abs(c - 10.0) < 1e-6
 
 
 def test_fit_target_predictor_excludes_clamped_and_misses(tmp_path):
     conn = open_db(tmp_path / "shots.db")
-    # Clean makes
-    for hy, py in [(300, 320), (400, 420), (500, 520)]:
-        log_shot(conn, hoop_y=hy, platform_y=py, made=1, clamped=0, required_direction="up")
-    # Clamped make — should be excluded (otherwise would skew the fit)
-    log_shot(conn, hoop_y=600, platform_y=999, made=1, clamped=1, required_direction="up")
-    # Miss — should be excluded
-    log_shot(conn, hoop_y=350, platform_y=999, made=0, clamped=0, required_direction="up")
-    # Wrong direction — should be excluded
-    log_shot(conn, hoop_y=350, platform_y=999, made=1, clamped=0, required_direction="down")
+    # Non-collinear points so the 3-param fit is well-conditioned.
+    points = [(300, 600), (300, 700), (400, 600), (400, 700)]
+    for hy, hx in points:
+        py = 0.5 * hy + 0.3 * hx + 10
+        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=py, made=1,
+                 clamped=0, required_direction="up")
+    # Pollution that should NOT be picked up
+    log_shot(conn, hoop_y=600, hoop_x=700, platform_y=999, made=1,
+             clamped=1, required_direction="up")  # clamped
+    log_shot(conn, hoop_y=350, hoop_x=700, platform_y=999, made=0,
+             clamped=0, required_direction="up")  # miss
+    log_shot(conn, hoop_y=350, hoop_x=700, platform_y=999, made=1,
+             clamped=0, required_direction="down")  # wrong direction
     fit = fit_target_predictor(conn, "up")
     assert fit is not None
-    m, b, n = fit
-    assert n == 3  # only the three clean makes
-    assert abs(m - 1.0) < 1e-9
-    assert abs(b - 20.0) < 1e-9
+    a, b, c, n = fit
+    assert n == 4  # only the four clean makes
+    assert abs(a - 0.5) < 1e-6
+    assert abs(b - 0.3) < 1e-6

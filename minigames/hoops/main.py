@@ -39,21 +39,22 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 # makes in dir=up data (platform_y at make ≈ hoop_y + 5..20).
 COLD_START_OFFSET = 20
 
-def _compute_offset(hoop_y: int, predictor: tuple[float, float, int] | None) -> int:
-    """Compute offset for the given hoop_y.
+def _compute_offset(
+    hoop_y: int, hoop_x: int,
+    predictor: tuple[float, float, float, int] | None,
+) -> int:
+    """Compute offset for the given hoop position.
 
-    With a predictor: target_y = m*hoop_y + b, where the fit is on the
-    platform_y observed at past makes. With Y_TOLERANCE wide enough that
-    the in_window branch reliably fires (currently 6), the bot fires when
-    platform is AT target on the upstroke — so target_y == the optimal
-    platform_y. No compensation needed.
+    With a predictor: target_y = a*hoop_y + b*hoop_x + c, fit on platform_y
+    of past makes. With Y_TOLERANCE wide enough that in_window fires
+    reliably, target_y ≈ where we want the platform to be at fire.
 
     Cold start: constant offset.
     """
     if predictor is None:
         return COLD_START_OFFSET
-    m, b, _n = predictor
-    target_y = m * hoop_y + b
+    a, b, c, _n = predictor
+    target_y = a * hoop_y + b * hoop_x + c
     return int(round(target_y - hoop_y))
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -265,10 +266,10 @@ def run():
         try:
             predictor = fit_target_predictor(shot_db, REQUIRED_DIRECTION)
             if predictor is None:
-                print(f"No predictor fit — fewer than 3 confirmed makes in dir={REQUIRED_DIRECTION!r}; using cold-start offset={COLD_START_OFFSET}")
+                print(f"No predictor fit — fewer than 4 confirmed makes in dir={REQUIRED_DIRECTION!r}; using cold-start offset={COLD_START_OFFSET}")
             else:
-                m, b, n = predictor
-                print(f"Fitted target predictor (dir={REQUIRED_DIRECTION!r}, n={n}): target_y = {m:.3f}*hoop_y + {b:.1f}")
+                a, b, c, n = predictor
+                print(f"Fitted target predictor (dir={REQUIRED_DIRECTION!r}, n={n}): target_y = {a:.3f}*hoop_y + {b:.3f}*hoop_x + {c:.1f}")
             _run_inner(session_started, shot_db, predictor)
         finally:
             shot_db.close()
@@ -330,7 +331,7 @@ def _run_inner(session_started: str, shot_db, predictor):
             hoop_missing_since = None
             hoop_x, hoop_y = hoop_pos
             hoop_conf_last = hoop_conf
-            offset = _compute_offset(hoop_y, predictor)
+            offset = _compute_offset(hoop_y, hoop_x, predictor)
             target_y = hoop_y + offset
             print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}, target launch y={target_y}")
 
