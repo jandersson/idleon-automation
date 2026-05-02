@@ -57,6 +57,21 @@ def _compute_offset(
     target_y = a * hoop_y + b * hoop_x + c
     return int(round(target_y - hoop_y))
 
+
+# When a hoop position is missed, sweep offsets around the predicted value
+# on subsequent shots. The hoop only respawns on makes, so without
+# perturbation the bot would burn every life trying the same wrong offset.
+# Sequence: predicted, then ±8, ±16, ±24, ±32 — covers a 64px window which
+# is wider than any observed make spread.
+PERTURBATION_SEQUENCE = [0, -8, 8, -16, 16, -24, 24, -32, 32]
+
+
+def _perturbation_for(miss_count: int) -> int:
+    """Pixels to add to the predicted offset on the (miss_count+1)-th shot at
+    a given hoop. miss_count=0 → no perturbation; subsequent misses cycle
+    through the sweep."""
+    return PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
+
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
 # bumped to 6 — at 2, the in_window branch almost never fires and we rely
 # entirely on "crossed", which catches the cross between samples and
@@ -291,6 +306,11 @@ def _run_inner(session_started: str, shot_db, predictor):
     last_range_log = time.time()
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0}
+    # Misses at the current hoop position. Each consecutive miss bumps the
+    # offset perturbation. Reset when the hoop position changes (after a
+    # make, the game spawns a new hoop).
+    current_hoop_key: tuple[int, int] | None = None
+    misses_at_current_hoop: int = 0
 
     while True:
         check_failsafe()
@@ -331,9 +351,20 @@ def _run_inner(session_started: str, shot_db, predictor):
             hoop_missing_since = None
             hoop_x, hoop_y = hoop_pos
             hoop_conf_last = hoop_conf
-            offset = _compute_offset(hoop_y, hoop_x, predictor)
+            # Reset miss tracking if the hoop has moved (i.e., last shot made
+            # and a new hoop spawned). Use ±2px tolerance to absorb detector
+            # jitter — a hoop "in the same place" matches if both x and y are
+            # within a couple of pixels.
+            new_key = (hoop_x, hoop_y)
+            if current_hoop_key is None or abs(new_key[0] - current_hoop_key[0]) > 2 or abs(new_key[1] - current_hoop_key[1]) > 2:
+                current_hoop_key = new_key
+                misses_at_current_hoop = 0
+            base_offset = _compute_offset(hoop_y, hoop_x, predictor)
+            perturbation = _perturbation_for(misses_at_current_hoop)
+            offset = base_offset + perturbation
             target_y = hoop_y + offset
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}, target launch y={target_y}")
+            tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}, target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
@@ -453,6 +484,13 @@ def _run_inner(session_started: str, shot_db, predictor):
                     made=int(bool(made)) if made is not None else None,
                     shot_dir=str(shot_dir) if shot_dir is not None else None,
                 )
+                # Update perturbation tracking. Made → reset (next hoop will
+                # be in a new position anyway). Miss → bump for next attempt.
+                if made:
+                    misses_at_current_hoop = 0
+                    current_hoop_key = None
+                else:
+                    misses_at_current_hoop += 1
                 # Lives counter check: when the digit visibly changes between
                 # pre and post, log it. Doesn't reliably indicate "click didn't
                 # register" when unchanged (the lives counter doesn't always
