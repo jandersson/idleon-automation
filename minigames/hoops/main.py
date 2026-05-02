@@ -36,21 +36,41 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 #
 # Cold-start fallback: when there are <3 confirmed makes for the active
 # REQUIRED_DIRECTION, use this constant offset. Picked from the cluster of
-# makes in dir=up data (target_y ≈ hoop_y + ~20).
+# makes in dir=up data (platform_y at make ≈ hoop_y + 5..20).
 COLD_START_OFFSET = 20
+
+# Sampling-rate compensation. The "crossed" detection fires the sample AFTER
+# the actual target crossing, so platform_y at fire is below target_y by some
+# amount that depends on platform velocity at target. Empirically ~10-15px on
+# dir=up upstrokes in this game's bob speed. The predictor fits on observed
+# platform_y of makes; we add this compensation to set target_y above the
+# desired fire position so the actual fire moment lands on it.
+UPSTROKE_COMPENSATION = 12
 
 
 def _compute_offset(hoop_y: int, predictor: tuple[float, float, int] | None) -> int:
-    """target_y = m*hoop_y + b → offset = target_y - hoop_y. Falls back to
-    COLD_START_OFFSET if there's not enough data to fit yet."""
+    """Compute offset for the given hoop_y.
+
+    With a predictor: optimal platform_y = m*hoop_y + b (fit on makes), then
+    target_y = optimal_platform_y + UPSTROKE_COMPENSATION so the bot's
+    sampling-rate overshoot lands the actual fire on the optimal py.
+
+    Cold start: constant offset.
+    """
     if predictor is None:
         return COLD_START_OFFSET
     m, b, _n = predictor
-    target_y = m * hoop_y + b
+    optimal_platform_y = m * hoop_y + b
+    target_y = optimal_platform_y + UPSTROKE_COMPENSATION
     return int(round(target_y - hoop_y))
 
-# Accepted window around target_y (pixels) when deciding to fire.
-Y_TOLERANCE = 2
+# Accepted window around target_y (pixels) when deciding to fire. Was 2,
+# bumped to 6 — at 2, the in_window branch almost never fires and we rely
+# entirely on "crossed", which catches the cross between samples and
+# reports a sample-after-cross platform_y that's variably 0-20px past
+# target. Wider in_window catches more shots near target with consistent
+# platform_y, reducing variance in fire timing.
+Y_TOLERANCE = 6
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit

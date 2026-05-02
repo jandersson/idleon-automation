@@ -65,18 +65,25 @@ def fit_target_predictor(
     required_direction: str,
     min_samples: int = 3,
 ) -> tuple[float, float, int] | None:
-    """Linear regression `target_y = m*hoop_y + b` from confirmed makes.
+    """Linear regression `optimal_platform_y = m*hoop_y + b` from confirmed makes.
+
+    Fits on the *observed* platform_y at fire time (what actually launched
+    successful shots), not the bot's nominal target_y. The two diverge
+    because the bot's "crossed" detection fires the sample after the actual
+    cross, so platform_y is consistently below target_y on the upstroke by
+    a sampling-rate-dependent amount. Caller adds an UPSTROKE_COMPENSATION
+    constant to convert from optimal_platform_y back to target_y.
 
     Excludes clamped shots — those fired at the bob extreme regardless of
-    nominal target_y, so they say nothing about target tuning.
+    nominal target_y, so they say nothing about timing.
 
     Returns (m, b, n_samples) or None when there isn't enough data.
     """
     rows = list(
         conn.execute(
-            'SELECT hoop_y, target_y FROM shots '
+            'SELECT hoop_y, platform_y FROM shots '
             'WHERE made = 1 AND clamped = 0 AND required_direction = ? '
-            'AND hoop_y IS NOT NULL AND target_y IS NOT NULL',
+            'AND hoop_y IS NOT NULL AND platform_y IS NOT NULL',
             (required_direction,),
         )
     )
