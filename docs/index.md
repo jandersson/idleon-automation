@@ -13,9 +13,9 @@ Companion notes and tools for the screen-reading bots at
   prediction algorithms used (or planned) in `common/predictor.py`:
   KNN with inverse-distance weighting, bivariate OLS, and the
   in-progress Gaussian Process upgrade.
-- **[predictors.html](predictors.html)** — interactive heatmap
-  visualisation. Switch between predictors, scrub K and noise, hover
-  for predicted vs true offset.
+- **[predictor_playground.html](predictor_playground.html)** —
+  interactive heatmap visualisation. Switch between predictors,
+  scrub K and noise, hover for predicted vs true offset.
 
 ## Backlogs
 

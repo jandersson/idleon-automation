@@ -6,12 +6,12 @@ school". Concepts are spelled out as a refresher, not first-time
 teaching.
 
 > **Companion visualisation:**
-> [predictors.html](https://jandersson.github.io/idleon-automation/predictors.html)
+> [predictor_playground.html](https://jandersson.github.io/idleon-automation/predictor_playground.html)
 > on GitHub Pages — interactive heatmap of each predictor's
 > predicted-offset surface over a synthetic 2D playfield. Switch
 > predictors, scrub K and noise, hover for predicted vs ground truth.
-> (For local viewing, open `docs/predictors.html` directly in a
-> browser — no server or build.)
+> (For local viewing, open `docs/predictor_playground.html` directly
+> in a browser — no server or build.)
 
 The shared problem: given the current `(hoop_y, hoop_x)`, predict the
 optimal `platform_y` to fire at. Training data is a list of past makes
