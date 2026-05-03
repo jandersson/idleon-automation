@@ -68,7 +68,7 @@ def find_hoop(
 
 
 def find_rim(
-    frame: np.ndarray, threshold: float = 0.7
+    frame: np.ndarray, threshold: float = 0.5
 ) -> tuple[tuple[int, int] | None, float]:
     """Match just the rim (orange ring + net + small piece of backboard).
 
@@ -82,6 +82,11 @@ def find_rim(
     The rim sprite itself doesn't deform with rim_y, so a tight rim+net
     crop matches at conf 0.99-1.00 across the full vertical range
     (verified against rim_y=450, 518, and 537 frames).
+
+    Threshold lowered 0.7 → 0.5 after a low-spawn near the EXIT button
+    matched at conf 0.572 — visually a clean rim, just dropped scale 0.9
+    + lighting/contrast differences. Noise floor (no rim present) is
+    ~0.34, so 0.5 still has comfortable headroom.
     """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
