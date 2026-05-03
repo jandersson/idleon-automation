@@ -1,4 +1,3 @@
-import os
 import time
 import sys
 from collections import deque
@@ -86,45 +85,12 @@ def _perturbation_for(miss_count: int) -> int:
     return PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
 
 
-VARIED_CLICK_POSITIONS = ("hoop", "center", "above_hoop", "far_right")
-
-
 def _pick_click_position(
     hoop_x: int, hoop_y: int, width: int, height: int, shot_idx: int,
 ) -> tuple[int, int]:
-    """Decide where to click for this shot, based on CLICK_STRATEGY. Returns
-    (x, y) window-relative."""
-    # sweep_y / extreme are their own things — handle first so the
-    # varied/hoop branches below don't grab them.
-    if CLICK_STRATEGY == "sweep_y":
-        dy = CLICK_SWEEP_Y_OFFSETS[(shot_idx - 1) % len(CLICK_SWEEP_Y_OFFSETS)]
-        return hoop_x, max(0, min(height - 1, hoop_y + dy))
-    if CLICK_STRATEGY == "extreme":
-        pos = CLICK_EXTREME_POSITIONS[(shot_idx - 1) % len(CLICK_EXTREME_POSITIONS)]
-        edge = 10  # margin from window edges, stay clear of failsafe corners
-        if pos == "top_left":     return edge, edge
-        if pos == "top_right":    return width - edge, edge
-        if pos == "bottom_left":  return edge, height - edge
-        if pos == "bottom_right": return width - edge, height - edge
-        if pos == "center":       return width // 2, height // 2
-        # at_hoop control case
-        return hoop_x, hoop_y
-
-    if CLICK_STRATEGY == "varied":
-        choice = VARIED_CLICK_POSITIONS[(shot_idx - 1) % len(VARIED_CLICK_POSITIONS)]
-    elif CLICK_STRATEGY == "center":
-        choice = "center"
-    else:
-        choice = "hoop"
-
-    if choice == "hoop":
-        return hoop_x, hoop_y
-    if choice == "center":
-        return width // 2, height // 2
-    if choice == "above_hoop":
-        return hoop_x, max(0, hoop_y - 80)
-    if choice == "far_right":
-        return min(width - 5, 800), height // 2
+    """Window-relative click position. Always at the hoop — click position
+    has no measurable effect on aim (verified May 3); kept as a function
+    so future experiments can branch here cleanly if needed."""
     return hoop_x, hoop_y
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -144,44 +110,12 @@ Y_TOLERANCE = 6
 # to overshoot); at lower hoops it should land closer to right.
 REQUIRED_DIRECTION = "up"
 
-# Where to click when firing the shot. The user's hypothesis is that click
-# position has no effect on aim. Set "varied" to test it: each shot cycles
-# through several click positions, and the ball trajectory metrics
-# (ball_x_at_rim_height, ball_landing_x) reveal whether the click position
-# correlates with where the ball goes for the same hoop_x/hoop_y.
-#
-# - "hoop":   click at (hoop_x, hoop_y)  — current default
-# - "center": click at window center
-# - "varied": cycle through [hoop, center, above_hoop, far_right] per shot
-CLICK_STRATEGY = "hoop"
-
-# Experiment mode, set by launcher via env var. "click_sweep" disables
-# offset perturbation and cycles click_y per shot to isolate the effect
-# of click position on ball trajectory. Empty string means normal play.
-EXPERIMENT_MODE = os.environ.get("HOOPS_EXPERIMENT", "")
-if EXPERIMENT_MODE:
-    print(f"[experiment] HOOPS_EXPERIMENT={EXPERIMENT_MODE!r}")
-if EXPERIMENT_MODE == "click_sweep":
-    CLICK_STRATEGY = "sweep_y"
-if EXPERIMENT_MODE == "click_extreme":
-    CLICK_STRATEGY = "extreme"
-
-# Click_y offsets cycled through in sweep_y mode. Negative = above hoop.
-# Span chosen to test the "lower click_y → bigger ball range" hypothesis
-# observed in earlier varied-click data.
-CLICK_SWEEP_Y_OFFSETS = (0, -80, -160, +80, -240)
-
-# Extreme corner positions (relative to game window). Stay 10px in from
-# the edges so we don't trip pyautogui's corner fail-safe. Order is
-# rotation to maximise per-shot diversity.
-CLICK_EXTREME_POSITIONS = (
-    "top_left",
-    "top_right",
-    "bottom_left",
-    "bottom_right",
-    "center",
-    "at_hoop",  # control
-)
+# Click position is fixed at the hoop (hoop_x, hoop_y). Earlier experiments
+# (May 3 click_sweep + click_extreme) confirmed click position has no
+# measurable effect on ball trajectory — the only thing that matters is
+# the platform's position at click time (driven by the offset). Keeping
+# click-at-hoop as a sane default; could click anywhere with the same
+# result.
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
@@ -510,9 +444,7 @@ def _run_inner(session_started: str, shot_db, predictor):
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
-            # In experiment mode, freeze perturbation at 0 — we want to
-            # isolate the effect of whatever the experiment varies.
-            perturbation = 0 if EXPERIMENT_MODE else _perturbation_for(misses_at_current_hoop)
+            perturbation = _perturbation_for(misses_at_current_hoop)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
             tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""

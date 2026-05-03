@@ -17,22 +17,18 @@ The earlier "click matters" reading was confounded by perturbation-sweep
 luck and a small number of flukey makes. The clean isolation experiments
 disproved it.
 
-### Remove
+### Remove (done 2026-05-03)
 
-- [ ] `CLICK_STRATEGY` constants and all branches in `_pick_click_position`
-      (`varied`, `sweep_y`, `extreme`, `center`) → just always click at
-      window center, or wherever; pick the simplest single thing.
-- [ ] `VARIED_CLICK_POSITIONS`, `CLICK_SWEEP_Y_OFFSETS`,
+- [x] `CLICK_STRATEGY` constants and all branches in `_pick_click_position`
+- [x] `VARIED_CLICK_POSITIONS`, `CLICK_SWEEP_Y_OFFSETS`,
       `CLICK_EXTREME_POSITIONS` constants
-- [ ] `EXPERIMENT_MODE` env-var dispatch in `minigames/hoops/main.py`
-      (keep the launcher's `experiments` config slot, but drop the two
-      click experiments from the hoops minigame entry)
-- [ ] `tests/test_click_strategy.py` — delete entirely once the picker
-      is collapsed to a constant
+- [x] `EXPERIMENT_MODE` env-var dispatch in `minigames/hoops/main.py`;
+      removed the two click experiments from the hoops launcher entry
+      (kept the general `experiments` slot for future use)
+- [x] `tests/test_click_strategy.py` deleted
 - [ ] DB rows logged during click-sweep and click-extreme sessions:
-      `WHERE session_started IN (...)` — they're polluted relative to
-      "normal" play. Probably fine to leave them since the OCR+trajectory
-      validation now blocks the false makes from those runs anyway.
+      left as-is. The OCR+trajectory validation now blocks the false
+      makes from those runs.
 
 ### Keep
 
