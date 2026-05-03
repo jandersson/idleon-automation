@@ -24,16 +24,31 @@ This file holds only items that don't fit those buckets.
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.
-- **Predictor: LOESS / locally-weighted linear regression** — upgrade
-  on the current "KNN with inverse-distance" predictor, which is
-  basically Nadaraya-Watson kernel regression with a hard K-nearest
-  cutoff. Same weighted neighborhood, but instead of *averaging* the
-  past makes' platform_y values, fit a small weighted lstsq through
-  them so the predictor captures the local *slope* of the surface,
-  not just the local height. Add as `LoessPredictor` in
-  `common/predictor.py` + `PREDICTOR_KIND="loess"` switch in
-  `minigames/hoops/main.py`. Uses the same `fetch_makes` data — no
-  new schema. Compare make-rate vs current `knn`.
+- **Predictor: Gaussian Process regression** — biggest jump available
+  with the data we already have. Beyond just predicting platform_y,
+  GP gives a *posterior variance* per query — the bot can say "high
+  confidence, fire" vs "no nearby training data, skip this shot".
+  That turns the predictor from a point estimator into a strategic
+  signal. Reference implementation in own repo
+  https://github.com/jandersson/gp_regression. Squared-exponential
+  (RBF) kernel is the standard starting choice; lengthscale +
+  variance hyperparameters fitted via marginal-likelihood
+  maximisation. Add as `GpPredictor` in `common/predictor.py` +
+  `PREDICTOR_KIND="gp"` switch. Likely needs sklearn or GPy; check
+  pyproject.toml dependency policy first. New shot_log column for
+  `predicted_uncertainty` so we can analyse the relationship between
+  variance and actual hit/miss rate.
+
+- **Predictor: LOESS / locally-weighted linear regression** — smaller
+  upgrade on the current "KNN with inverse-distance" predictor,
+  which is basically Nadaraya-Watson kernel regression with a hard
+  K-nearest cutoff. Same weighted neighborhood, but instead of
+  *averaging* the past makes' platform_y values, fit a small
+  weighted lstsq through them so the predictor captures the local
+  *slope* of the surface, not just the local height. Add as
+  `LoessPredictor` in `common/predictor.py` + `PREDICTOR_KIND="loess"`
+  switch in `minigames/hoops/main.py`. Uses the same `fetch_makes`
+  data — no new schema. Cheaper to land than GP.
 
 ## Someday
 
