@@ -33,9 +33,9 @@ disproved it.
       labelled `made=0` correctly thanks to OCR+trajectory validation.
       Adding a `experiment_label` column would let the predictor exclude
       them in case future false-positives slip through. Low priority.
-- [ ] **README / CLAUDE.md note** — record that click position has no
-      effect on aim, so future contributors don't burn cycles on that
-      hypothesis. Add a line to the "Architecture" section in CLAUDE.md.
+- [x] **CLAUDE.md note** — added a "Hoops: established findings" section
+      under Architecture covering click position, OCR + trajectory cross-
+      check, and pre-shot OCR flakiness.
 - [ ] **Tune `TRAJECTORY_MAKE_TOLERANCE` (currently 60px)** — only
       relevant if we see a real make get rejected because the ball
       detector mistracked. Worth revisiting after a few sessions of

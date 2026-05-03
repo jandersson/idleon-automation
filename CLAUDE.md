@@ -98,6 +98,33 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 This makes `from common...` and `from minigames...` work whether launched as a module, as a script, or via the `[project.scripts]` console_scripts entry. Keep it when adding new entry-point scripts.
 
+### Hoops: established findings
+
+A few things were settled empirically on 2026-05-03 — don't re-run these
+investigations:
+
+- **Click position has no measurable effect on aim.** Bot fires `click()`
+  at the hoop coordinates because that's a sane default, but it could
+  click anywhere with the same trajectory. The only thing that controls
+  where the ball lands is `platform_y` at click time (driven by `offset`).
+  Verified with `click_sweep` (varied click_y across 320px) and
+  `click_extreme` (window corners) experiments — both produced ball
+  trajectories within the ~20px noise floor. See `docs/cleanup_backlog.md`
+  for the deletion log.
+
+- **Score detection requires both OCR + trajectory cross-check.** Tesseract
+  occasionally misreads small score digits (`0` → `1`) producing false-
+  positive makes. The current `_log_shot_result` rejects any "OCR-said-make"
+  shot where `ball_x_at_rim_height` is more than `TRAJECTORY_MAKE_TOLERANCE`
+  (60px) from `hoop_x`. Don't drop the trajectory check just because OCR
+  multi-pass voting is on — they're complementary.
+
+- **Pre-shot OCR fails ~20-30% of the time** (animation residuals between
+  shots). Make detection anchors on `stats["session_score"]` (a running
+  high-water mark of post-shot OCR reads) instead of requiring per-shot
+  pre/post agreement. Confident make count and live session score are
+  reported as separate numbers.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
