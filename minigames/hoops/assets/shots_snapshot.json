@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-05-03T09:16:31",
-  "total_shots": 298,
-  "total_makes": 57,
+  "generated_at": "2026-05-03T09:21:25",
+  "total_shots": 303,
+  "total_makes": 58,
   "make_rate": 0.191,
   "sessions": [
     {
@@ -163,6 +163,11 @@
       "started": "2026-05-03T08:59:43",
       "shots": 7,
       "makes": 2
+    },
+    {
+      "started": "2026-05-03T09:20:38",
+      "shots": 5,
+      "makes": 1
     }
   ],
   "buckets": [
@@ -193,7 +198,7 @@
     {
       "hoop_x_bucket": 580,
       "hoop_y_bucket": 380,
-      "shots": 3,
+      "shots": 6,
       "makes": 0
     },
     {
@@ -313,8 +318,8 @@
     {
       "hoop_x_bucket": 650,
       "hoop_y_bucket": 330,
-      "shots": 3,
-      "makes": 0
+      "shots": 5,
+      "makes": 1
     },
     {
       "hoop_x_bucket": 650,
@@ -582,7 +587,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 587,
@@ -602,7 +609,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 593,
@@ -622,7 +631,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 594,
@@ -642,7 +653,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 607,
@@ -662,7 +675,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 607,
@@ -682,7 +697,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 609,
@@ -702,7 +719,9 @@
       "window_h": 572,
       "score_before_int": 1,
       "score_after_int": 2,
-      "score_increment": 2
+      "score_increment": 2,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 610,
@@ -722,7 +741,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 639,
@@ -742,7 +763,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 639,
@@ -762,7 +785,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 643,
@@ -782,7 +807,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 645,
@@ -802,7 +829,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 647,
@@ -822,7 +851,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 647,
@@ -842,7 +873,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 647,
@@ -862,7 +895,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 649,
@@ -882,7 +917,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 649,
@@ -902,7 +939,31 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
+    },
+    {
+      "hoop_x": 654,
+      "hoop_y": 337,
+      "platform_y": 338,
+      "offset": -3,
+      "target_y": 334,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": -8,
+      "lives_diff": null,
+      "ball_apex_y": 34,
+      "ball_x_at_rim_height": 637,
+      "ball_landing_x": 557,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": -5,
+      "code_commit": "d6c2730177d0-dirty"
     },
     {
       "hoop_x": 655,
@@ -922,7 +983,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 660,
@@ -942,7 +1005,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 661,
@@ -962,7 +1027,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 668,
@@ -982,7 +1049,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 668,
@@ -1002,7 +1071,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 669,
@@ -1022,7 +1093,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 671,
@@ -1042,7 +1115,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 674,
@@ -1062,7 +1137,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 677,
@@ -1082,7 +1159,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 677,
@@ -1102,7 +1181,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 677,
@@ -1122,7 +1203,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 681,
@@ -1142,7 +1225,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 687,
@@ -1162,7 +1247,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 692,
@@ -1182,7 +1269,9 @@
       "window_h": 572,
       "score_before_int": 1,
       "score_after_int": 2,
-      "score_increment": 1
+      "score_increment": 1,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 692,
@@ -1202,7 +1291,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 693,
@@ -1222,7 +1313,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 694,
@@ -1242,7 +1335,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 695,
@@ -1262,7 +1357,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 706,
@@ -1282,7 +1379,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 708,
@@ -1302,7 +1401,9 @@
       "window_h": 572,
       "score_before_int": 2,
       "score_after_int": 3,
-      "score_increment": 1
+      "score_increment": 1,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 708,
@@ -1322,7 +1423,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 710,
@@ -1342,7 +1445,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 710,
@@ -1362,7 +1467,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 710,
@@ -1382,7 +1489,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 710,
@@ -1402,7 +1511,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 710,
@@ -1422,7 +1533,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 712,
@@ -1442,7 +1555,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1462,7 +1577,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1482,7 +1599,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1502,7 +1621,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1522,7 +1643,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1542,7 +1665,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1562,7 +1687,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 715,
@@ -1582,7 +1709,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 716,
@@ -1602,7 +1731,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 724,
@@ -1622,7 +1753,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 726,
@@ -1642,7 +1775,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 733,
@@ -1662,7 +1797,9 @@
       "window_h": null,
       "score_before_int": null,
       "score_after_int": null,
-      "score_increment": null
+      "score_increment": null,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 738,
@@ -1682,7 +1819,9 @@
       "window_h": 572,
       "score_before_int": 0,
       "score_after_int": 2,
-      "score_increment": 2
+      "score_increment": 2,
+      "predicted_offset": null,
+      "code_commit": null
     },
     {
       "hoop_x": 763,
@@ -1702,7 +1841,9 @@
       "window_h": 572,
       "score_before_int": 11,
       "score_after_int": 13,
-      "score_increment": 2
+      "score_increment": 2,
+      "predicted_offset": null,
+      "code_commit": null
     }
   ]
 }
