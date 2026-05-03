@@ -208,6 +208,7 @@ def _log_shot_result(
     stats: dict,
     before,
     after,
+    score_before_int: int | None = None,
     score_after_int: int | None = None,
     ball_x_at_rim: int | None = None,
     hoop_x: int | None = None,
@@ -234,6 +235,12 @@ def _log_shot_result(
     if before is None or after is None:
         return None, None, None
     _, diff = score_changed(before, after)
+    # Re-anchor session_score from this shot's pre-OCR if it's higher
+    # than what we knew. Catches off-bot scoring (user manually clicks
+    # the game between shots, mid-session) so we don't credit the bot
+    # for the user's points on the next shot.
+    if score_before_int is not None and score_before_int > stats.get("session_score", 0):
+        stats["session_score"] = score_before_int
     session_score = stats.get("session_score", 0)
     inferred_increment: int | None = None
     if score_after_int is not None:
@@ -617,6 +624,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                         print(f"  [trajectory] analysis failed (non-fatal): {e}")
                 made, score_diff, score_increment = _log_shot_result(
                     shot_stats, score_before, score_after,
+                    score_before_int=score_before_int,
                     score_after_int=score_after_int,
                     ball_x_at_rim=trajectory["ball_x_at_rim_height"],
                     hoop_x=hoop_x,
