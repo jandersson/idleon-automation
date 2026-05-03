@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 from collections import deque
@@ -108,6 +109,10 @@ def _pick_click_position(
         return hoop_x, max(0, hoop_y - 80)
     if choice == "far_right":
         return min(width - 5, 800), height // 2
+    if CLICK_STRATEGY == "sweep_y":
+        # Vary click_y around hoop_y per shot; click_x stays at hoop_x.
+        dy = CLICK_SWEEP_Y_OFFSETS[(shot_idx - 1) % len(CLICK_SWEEP_Y_OFFSETS)]
+        return hoop_x, max(0, min(height - 1, hoop_y + dy))
     return hoop_x, hoop_y
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -137,6 +142,20 @@ REQUIRED_DIRECTION = "up"
 # - "center": click at window center
 # - "varied": cycle through [hoop, center, above_hoop, far_right] per shot
 CLICK_STRATEGY = "hoop"
+
+# Experiment mode, set by launcher via env var. "click_sweep" disables
+# offset perturbation and cycles click_y per shot to isolate the effect
+# of click position on ball trajectory. Empty string means normal play.
+EXPERIMENT_MODE = os.environ.get("HOOPS_EXPERIMENT", "")
+if EXPERIMENT_MODE:
+    print(f"[experiment] HOOPS_EXPERIMENT={EXPERIMENT_MODE!r}")
+if EXPERIMENT_MODE == "click_sweep":
+    CLICK_STRATEGY = "sweep_y"
+
+# Click_y offsets cycled through in sweep_y mode. Negative = above hoop.
+# Span chosen to test the "lower click_y → bigger ball range" hypothesis
+# observed in earlier varied-click data.
+CLICK_SWEEP_Y_OFFSETS = (0, -80, -160, +80, -240)
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
@@ -452,7 +471,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
-            perturbation = _perturbation_for(misses_at_current_hoop)
+            # In experiment mode, freeze perturbation at 0 — we want to
+            # isolate the effect of whatever the experiment varies.
+            perturbation = 0 if EXPERIMENT_MODE else _perturbation_for(misses_at_current_hoop)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
             tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""

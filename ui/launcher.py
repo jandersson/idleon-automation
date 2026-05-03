@@ -40,6 +40,10 @@ MINIGAMES = [
         "name": "hoops",
         "emoji": "🏀",
         "bot": "hoops",
+        "experiments": [
+            # (label, env_value) — spawns the bot with HOOPS_EXPERIMENT set
+            ("Click sweep", "click_sweep"),
+        ],
         "setup": [
             ("Capture", "hoops-capture"),
             ("Debug match", "hoops-debug"),
@@ -133,6 +137,17 @@ class Launcher:
             status = ttk.Label(top, text="stopped", foreground="grey")
             status.pack(side="left")
             self.status_labels[mg["name"]] = status
+
+            # Experiment buttons (e.g. "Click sweep" for hoops). Each spawns
+            # the same bot but with an env var set so the bot enters the
+            # corresponding test mode. Counts as a regular run for status.
+            for exp_label, exp_value in mg.get("experiments", []):
+                ttk.Button(
+                    top, text=exp_label, width=12,
+                    command=lambda m=mg, v=exp_value: self._start_bot(
+                        m, env={"HOOPS_EXPERIMENT": v},
+                    ),
+                ).pack(side="left", padx=(8, 0))
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
@@ -337,12 +352,12 @@ class Launcher:
                       foreground="#9cf").pack(side="left", anchor="n")
             tk.Label(row, image=photo, bd=0).pack(side="left")
 
-    def _start_bot(self, mg: dict):
+    def _start_bot(self, mg: dict, env: dict[str, str] | None = None):
         name = mg["name"]
         if self.processes.get(name) is not None:
             self._enqueue_log(f"[{name}] already running\n")
             return
-        self._spawn(mg["bot"], track_as=name)
+        self._spawn(mg["bot"], track_as=name, extra_env=env)
         self.status_labels[name].config(text="running", foreground="#3a3")
 
     def _stop_bot(self, mg: dict):
@@ -360,10 +375,15 @@ class Launcher:
     def _run_oneshot(self, cmd: str):
         self._spawn(cmd, track_as=None)
 
-    def _spawn(self, entry_point: str, track_as: str | None):
+    def _spawn(self, entry_point: str, track_as: str | None,
+               extra_env: dict[str, str] | None = None):
+        import os
         creationflags = 0
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
         try:
             # --no-sync: skip uv's implicit dependency-sync check. The launcher
             # itself is one of the entry points (idleon.exe), so a sync would
@@ -378,6 +398,7 @@ class Launcher:
                 bufsize=1,
                 cwd=str(PROJECT_ROOT),
                 creationflags=creationflags,
+                env=env,
             )
         except FileNotFoundError:
             self._enqueue_log(f"[{entry_point}] could not run — is `uv` on your PATH?\n")
