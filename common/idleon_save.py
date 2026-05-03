@@ -157,3 +157,20 @@ def load_save(save_dir: str = SAVE_DIR) -> dict | None:
     # Local Storage format); strip it.
     text = game_value[1:].decode("utf-8", errors="replace")
     return _decode_haxe(text)
+
+
+def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
+    """Read MinigamePlays per character from the save. Returns
+    {character_name: plays_remaining} or None if the save can't be read.
+
+    Chopping and catching share this counter in-game. Per-character
+    (each character has its own quota that resets daily)."""
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    out: dict[str, int] = {}
+    for name, info in (data.get("PlayerDATABASE") or {}).items():
+        plays = (info.get("PersonalValuesMap") or {}).get("MinigamePlays")
+        if isinstance(plays, (int, float)):
+            out[name] = int(plays)
+    return out

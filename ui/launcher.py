@@ -19,6 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from common import tries_counter
+from common.idleon_save import read_minigame_plays
 
 PROJECT_ROOT = Path(__file__).parent.parent
 MINIGAMES_DIR = PROJECT_ROOT / "minigames"
@@ -148,41 +149,43 @@ class Launcher:
         parent.rowconfigure(len(MINIGAMES) + 1, weight=1)
 
     def _build_tries_strip(self, parent: ttk.Frame) -> ttk.Frame:
-        """Strip with the shared chopping/catching tries counter and a Set
-        button so the user can update it after checking the in-game popup."""
+        """Strip showing the per-character minigame plays remaining
+        (chopping + catching share this counter in-game). Auto-reads from
+        the local Idleon save on launcher open; Refresh re-reads on demand."""
         strip = ttk.Frame(parent)
-        ttk.Label(strip, text="🪓 / 🪰 Global tries:").pack(side="left")
+        ttk.Label(strip, text="🪓 / 🪰 Tries:").pack(side="left")
 
-        current = tries_counter.read()
         self.tries_label = ttk.Label(
-            strip,
-            text=str(current) if current is not None else "—",
-            font=("Segoe UI", 10, "bold"),
+            strip, text="—", font=("Segoe UI", 10, "bold"),
         )
         self.tries_label.pack(side="left", padx=(6, 12))
 
-        ttk.Label(strip, text="Set:", foreground="grey").pack(side="left")
-        self.tries_entry = ttk.Entry(strip, width=5)
-        self.tries_entry.pack(side="left", padx=(4, 4))
-        self.tries_entry.bind("<Return>", lambda _e: self._save_tries())
-        ttk.Button(strip, text="Save", width=6, command=self._save_tries).pack(side="left")
+        ttk.Button(strip, text="Refresh", width=8,
+                   command=self._refresh_tries).pack(side="left")
+        # Read once at startup so the count is visible without a manual click.
+        self._refresh_tries(silent=True)
         return strip
 
-    def _save_tries(self) -> None:
-        raw = self.tries_entry.get().strip()
-        if not raw:
+    def _refresh_tries(self, silent: bool = False) -> None:
+        plays = read_minigame_plays()
+        if plays is None:
+            self.tries_label.config(text="(save not found)")
+            if not silent:
+                self._enqueue_log("[tries] couldn't read save (Idleon not installed, or plyvel missing)\n")
             return
-        try:
-            value = int(raw)
-            if value < 0:
-                raise ValueError
-        except ValueError:
-            self._enqueue_log(f"[tries] not a non-negative int: {raw!r}\n")
+        if not plays:
+            self.tries_label.config(text="0 (no chars)")
+            if not silent:
+                self._enqueue_log("[tries] save loaded but no characters with MinigamePlays found\n")
             return
-        tries_counter.write(value)
-        self.tries_label.config(text=str(value))
-        self.tries_entry.delete(0, "end")
-        self._enqueue_log(f"[tries] set to {value}\n")
+        total = sum(plays.values())
+        # Per-char breakdown after total.
+        per_char = ", ".join(f"{n}={c}" for n, c in plays.items())
+        self.tries_label.config(text=f"{total}  ({per_char})")
+        # Persist for any external consumer.
+        tries_counter.write(total)
+        if not silent:
+            self._enqueue_log(f"[tries] refreshed: {total} total ({per_char})\n")
 
     def _build_setup_tab(self, parent: ttk.Frame):
         """Per-minigame calibration / debug buttons. Lives in its own tab so
