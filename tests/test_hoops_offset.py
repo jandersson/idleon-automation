@@ -27,17 +27,24 @@ def test_predictor_uses_hoop_x():
     assert _compute_offset(450, 800, predictor) == 20
 
 
-def test_stuck_region_override():
-    """hoop_x < 620 + hoop_y > 380 always returns the hardcoded offset
-    regardless of predictor or cold-start, because the bivariate fit is
-    badly biased there."""
-    predictor = (1.0, 0.0, 0.0, 5)  # would otherwise predict offset=0
+def test_stuck_region_overrides():
+    """Hardcoded overrides for hoop_x<660 zones where the bivariate fit
+    is biased. Predictor below would otherwise return 0 for these inputs."""
+    predictor = (1.0, 0.0, 0.0, 5)
+    # hoop_x<620, hoop_y>380 → 95
     assert _compute_offset(410, 586, predictor) == 95
     assert _compute_offset(400, 600, predictor) == 95
-    assert _compute_offset(450, 615, None) == 95  # override beats cold-start
-    # Just outside the override box uses the predictor as normal.
-    assert _compute_offset(380, 586, predictor) == 0  # hoop_y on boundary
-    assert _compute_offset(410, 620, predictor) == 0  # hoop_x on boundary
+    assert _compute_offset(450, 615, None) == 95
+    # hoop_x<620, hoop_y<=380 → 0 (matches predictor here, but the rule
+    # short-circuits regardless of predictor output)
+    assert _compute_offset(330, 586, predictor) == 0
+    assert _compute_offset(380, 600, None) == 0  # override beats cold-start
+    # 620<=hoop_x<660, hoop_y<=380 → 5
+    assert _compute_offset(330, 625, predictor) == 5
+    assert _compute_offset(370, 655, None) == 5
+    # Just outside the boxes — predictor takes over.
+    assert _compute_offset(410, 660, predictor) == 0  # hoop_x on boundary
+    assert _compute_offset(381, 600, predictor) == 0  # hoop_y on the high boundary
 
 
 def test_perturbation_zero_on_first_attempt():

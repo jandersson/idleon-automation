@@ -55,14 +55,18 @@ def _compute_offset(
 
     Cold start: constant offset.
 
-    Two hardcoded overrides for low-hoop_x regions where the bivariate
-    fit is wildly off (training data is dominated by hoop_x in 645-720):
+    Hardcoded overrides for low-hoop_x regions where the bivariate fit
+    is wildly off (training data is dominated by hoop_x in 700+):
 
     - hoop_x<620, hoop_y>380 → offset=95. Past makes there used 95-100;
       predictor would say ~13. Verified at hoop=(586,410).
     - hoop_x<620, hoop_y<=380 → offset=0. Past makes (5 confirmed) used
       offsets in -41..+5 with fired_py very close to hoop_y itself
-      (target_y ≈ hoop_y). Predictor would say 3-13.
+      (target_y ≈ hoop_y). Verified at hoop=(609,332).
+    - 620<=hoop_x<660, hoop_y<=380 → offset=5. Past makes at hoop_x in
+      645-655 with hoop_y 316-375 used offsets in 4-6 (a few outliers
+      at 19-25 for higher hoop_y). Latest run shot 5-7 missed at
+      hoop=(654,337) with predictor offset=-4.
 
     Remove these once the predictor has enough makes in each region to
     learn it itself.
@@ -71,6 +75,8 @@ def _compute_offset(
         return 95
     if hoop_x < 620 and hoop_y <= 380:
         return 0
+    if hoop_x < 660 and hoop_y <= 380:
+        return 5
     if predictor is None:
         return COLD_START_OFFSET
     a, b, c, _n = predictor
