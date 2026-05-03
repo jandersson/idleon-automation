@@ -28,6 +28,7 @@ dependencies = [
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pillow" },
+    { name = "plyvel-ci", marker = "sys_platform == 'win32'" },
     { name = "pyautogui" },
     { name = "pytesseract" },
 ]
@@ -43,6 +44,7 @@ requires-dist = [
     { name = "numpy", specifier = "==1.26.4" },
     { name = "opencv-python", specifier = "==4.9.0.80" },
     { name = "pillow", specifier = "==10.3.0" },
+    { name = "plyvel-ci", marker = "sys_platform == 'win32'", specifier = ">=1.5.1" },
     { name = "pyautogui", specifier = "==0.9.54" },
     { name = "pytesseract", specifier = ">=0.3.10" },
 ]
@@ -166,6 +168,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "plyvel-ci"
+version = "1.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/15/2dd89d1ec81ea44a41e6f35ad1a8a7789e7345831646daf03c6501172396/plyvel-ci-1.5.1.tar.gz", hash = "sha256:c28d861c56911ae70f481864016301e2d526c6c923f6aa9aa3cdf2c053457e29", size = 36869, upload-time = "2024-04-07T06:00:42.296Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e9/3b/137760e2fdefeaa1931fe6a444b44ba9e431995e3b5511a68b08327e95da/plyvel_ci-1.5.1-cp311-cp311-win32.whl", hash = "sha256:2891c2ed6381dc3ee66ebde0e1f6557f27fe919eb535e3f19104a0529f210b8a", size = 363161, upload-time = "2024-04-07T05:59:42.701Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/ce/3a4386cac0352463fe8c579eb5a4333c1acdc1249c4119360d477e359998/plyvel_ci-1.5.1-cp311-cp311-win_amd64.whl", hash = "sha256:10b3e481210855747e07f3e15dd92c83c93903edc49688e8d4648ee13868b5ab", size = 449146, upload-time = "2024-04-07T05:59:44.399Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/a5/23703cdcad2d3b6a51c6e50fd1e3ecd6e92929e3e0d522fd7deaa31c124f/plyvel_ci-1.5.1-cp312-cp312-win32.whl", hash = "sha256:b765431aad19b85d922df39421198bd08bbd90f0a189d35e01e282ea4437bae5", size = 363563, upload-time = "2024-04-07T05:59:56.28Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/30/f64d0565cac63e23b6f3869539886be60c6ce830312f8abc2c1e8ce54ebc/plyvel_ci-1.5.1-cp312-cp312-win_amd64.whl", hash = "sha256:c177b6e533651f218140d657be9615bb42b94e43c455bf701cbbfee2a90c33ee", size = 448847, upload-time = "2024-04-07T05:59:57.942Z" },
 ]
 
 [[package]]

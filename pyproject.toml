@@ -9,6 +9,7 @@ dependencies = [
     "Pillow==10.3.0",
     "numpy==1.26.4",
     "pytesseract>=0.3.10",
+    "plyvel-ci>=1.5.1; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
