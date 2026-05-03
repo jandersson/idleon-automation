@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-03T05:03:24",
-  "total_shots": 127,
-  "total_makes": 31,
-  "make_rate": 0.244,
+  "generated_at": "2026-05-03T05:08:32",
+  "total_shots": 138,
+  "total_makes": 33,
+  "make_rate": 0.239,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -88,6 +88,11 @@
       "started": "2026-05-03T05:02:23",
       "shots": 9,
       "makes": 6
+    },
+    {
+      "started": "2026-05-03T05:07:30",
+      "shots": 11,
+      "makes": 2
     }
   ],
   "buckets": [
@@ -118,6 +123,12 @@
     {
       "hoop_x_bucket": 590,
       "hoop_y_bucket": 330,
+      "shots": 3,
+      "makes": 0
+    },
+    {
+      "hoop_x_bucket": 590,
+      "hoop_y_bucket": 390,
       "shots": 3,
       "makes": 0
     },
@@ -190,8 +201,8 @@
     {
       "hoop_x_bucket": 660,
       "hoop_y_bucket": 450,
-      "shots": 2,
-      "makes": 0
+      "shots": 10,
+      "makes": 2
     },
     {
       "hoop_x_bucket": 660,
@@ -387,6 +398,26 @@
       "platform_y": 328,
       "offset": 25,
       "target_y": 331,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up"
+    },
+    {
+      "hoop_x": 668,
+      "hoop_y": 451,
+      "platform_y": 451,
+      "offset": 9,
+      "target_y": 460,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up"
+    },
+    {
+      "hoop_x": 668,
+      "hoop_y": 451,
+      "platform_y": 467,
+      "offset": 33,
+      "target_y": 484,
       "clamped": 0,
       "direction": "up",
       "required_direction": "up"
