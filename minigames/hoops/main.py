@@ -94,6 +94,12 @@ def _pick_click_position(
 ) -> tuple[int, int]:
     """Decide where to click for this shot, based on CLICK_STRATEGY. Returns
     (x, y) window-relative."""
+    # sweep_y is its own thing — handle first so the varied/hoop branches
+    # below don't grab it.
+    if CLICK_STRATEGY == "sweep_y":
+        dy = CLICK_SWEEP_Y_OFFSETS[(shot_idx - 1) % len(CLICK_SWEEP_Y_OFFSETS)]
+        return hoop_x, max(0, min(height - 1, hoop_y + dy))
+
     if CLICK_STRATEGY == "varied":
         choice = VARIED_CLICK_POSITIONS[(shot_idx - 1) % len(VARIED_CLICK_POSITIONS)]
     elif CLICK_STRATEGY == "center":
@@ -109,10 +115,6 @@ def _pick_click_position(
         return hoop_x, max(0, hoop_y - 80)
     if choice == "far_right":
         return min(width - 5, 800), height // 2
-    if CLICK_STRATEGY == "sweep_y":
-        # Vary click_y around hoop_y per shot; click_x stays at hoop_x.
-        dy = CLICK_SWEEP_Y_OFFSETS[(shot_idx - 1) % len(CLICK_SWEEP_Y_OFFSETS)]
-        return hoop_x, max(0, min(height - 1, hoop_y + dy))
     return hoop_x, hoop_y
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
