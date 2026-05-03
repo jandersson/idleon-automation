@@ -33,7 +33,15 @@ cost vs payoff. Drop entries as they ship.
       wiki). Could nudge calibration toward swish-quality shots later.
       Implemented via pytesseract; requires the tesseract binary on PATH
       (`winget install --id=UB-Mannheim.TesseractOCR`). Falls back to
-      NULL when missing.
+      NULL when missing. Multi-pass voting (2025-05-03) cuts misreads.
+
+- [ ] **Replace tesseract with template-matched digits 0-9** — Idleon's
+      score font is fixed-pixel pixel-art, not what tesseract was trained
+      on. Pre-extract one PNG per digit and `cv2.matchTemplate` for
+      effectively-100% reliable score reads. Same pattern we use for the
+      rim. Currently we have data with scores up to 7, so 0-7 templates
+      could be auto-extracted; 8-9 would need samples. Drop pytesseract
+      dependency once done.
 - [ ] **Bob range snapshot** — `bob_ymin`, `bob_ymax` at fire time. Right
       now we assume ~290-510, but per the wiki the platform starts moving
       at score 10+ and the bob may shift in late game.
