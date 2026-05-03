@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-03T07:47:08",
+  "generated_at": "2026-05-03T07:52:49",
   "total_shots": 260,
-  "total_makes": 53,
-  "make_rate": 0.204,
+  "total_makes": 52,
+  "make_rate": 0.2,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -142,7 +142,7 @@
     {
       "started": "2026-05-03T07:44:50",
       "shots": 13,
-      "makes": 1
+      "makes": 0
     }
   ],
   "buckets": [
@@ -180,7 +180,7 @@
       "hoop_x_bucket": 580,
       "hoop_y_bucket": 410,
       "shots": 57,
-      "makes": 1
+      "makes": 0
     },
     {
       "hoop_x_bucket": 590,
@@ -475,28 +475,6 @@
       "score_before_int": null,
       "score_after_int": null,
       "score_increment": null
-    },
-    {
-      "hoop_x": 586,
-      "hoop_y": 410,
-      "platform_y": 416,
-      "offset": 13,
-      "target_y": 423,
-      "clamped": 0,
-      "direction": "up",
-      "required_direction": "up",
-      "click_x": 586,
-      "click_y": 490,
-      "perturbation": 0,
-      "lives_diff": null,
-      "ball_apex_y": 45,
-      "ball_x_at_rim_height": 735,
-      "ball_landing_x": 818,
-      "window_w": 960,
-      "window_h": 572,
-      "score_before_int": 0,
-      "score_after_int": 1,
-      "score_increment": 1
     },
     {
       "hoop_x": 587,

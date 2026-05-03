@@ -262,33 +262,46 @@ def _capture_lives_region(left: int, top: int, width: int, height: int):
     )
 
 
+TRAJECTORY_MAKE_TOLERANCE = 60  # px
+
+
 def _log_shot_result(
     stats: dict,
     before,
     after,
     ocr_increment: int | None = None,
+    ball_x_at_rim: int | None = None,
+    hoop_x: int | None = None,
 ) -> tuple[bool | None, float | None]:
     """Print the score diff line and update stats. Returns (changed, diff) or
     (None, None) if either snapshot was missing — caller can persist either way.
 
-    Only OCR can confirm a make. The diff-based heuristic on the widened
-    score region produced false positives (diff 6-30 on background variation
-    with the score actually unchanged), so we no longer trust it as a make
-    signal. When OCR fails on either pre or post (returns None), we record
-    the shot as a miss — under-counting a real make is preferable to
-    polluting the predictor with phantom makes that overshoot by 100+ px.
+    Make detection now requires BOTH:
+      1) OCR confirms score_increment > 0
+      2) trajectory plausible: ball was within TRAJECTORY_MAKE_TOLERANCE
+         of hoop_x at rim height (or trajectory data is missing — we
+         don't penalise shots where the ball detector lost track)
+
+    Without (2), tesseract's occasional misreads ("0" → "1") get logged
+    as makes even when the ball clearly overshot by 100+ px. The
+    trajectory cross-check rejects those.
     """
     if before is None or after is None:
         return None, None
     _, diff = score_changed(before, after)
-    if ocr_increment is None or ocr_increment <= 0:
-        changed = False
-    else:
-        changed = True
+    ocr_says_make = ocr_increment is not None and ocr_increment > 0
+    trajectory_plausible = (
+        ball_x_at_rim is None
+        or hoop_x is None
+        or abs(ball_x_at_rim - hoop_x) <= TRAJECTORY_MAKE_TOLERANCE
+    )
+    changed = ocr_says_make and trajectory_plausible
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
         label = "MAKE"
+    elif ocr_says_make and not trajectory_plausible:
+        label = "miss [OCR said make but ball overshot]"
     else:
         label = "miss"
     inc_str = f", inc={ocr_increment:+d}" if ocr_increment is not None else ", inc=?"
@@ -605,11 +618,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                     time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
-                # OCR the actual score numbers so we can distinguish 1pt
-                # rim-touched makes from 2pt swishes, and (more importantly)
-                # so the made/miss decision uses the actual digit value
-                # rather than the noise-prone score_diff heuristic. None if
-                # tesseract binary isn't installed (logged once, then silent).
+                # OCR the actual score numbers — used as the primary make
+                # signal (the diff-based heuristic was noisy on the wider
+                # score region). None if tesseract binary isn't installed.
                 score_before_int = read_score(score_before) if score_before is not None else None
                 score_after_int = read_score(score_after) if score_after is not None else None
                 score_increment = (
@@ -617,19 +628,10 @@ def _run_inner(session_started: str, shot_db, predictor):
                     if score_before_int is not None and score_after_int is not None
                     else None
                 )
-                made, score_diff = _log_shot_result(
-                    shot_stats, score_before, score_after, ocr_increment=score_increment,
-                )
-                # Compute lives_diff up-front so we can persist it on the
-                # shot row. Only meaningful when the lives region is visibly
-                # populated (during pre-game or "Make a shot to start"
-                # screens it's blank, std() near zero).
-                lives_diff_value: float | None = None
-                if lives_before is not None and lives_after is not None:
-                    if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
-                        _, lives_diff_value = score_changed(lives_before, lives_after)
-                # Ball trajectory metrics from the captured flight frames.
-                # All-None when MONITOR_FLIGHT was off or no ball detected.
+                # Ball trajectory metrics from the captured flight frames —
+                # done BEFORE _log_shot_result so we can cross-check OCR
+                # against physics: a "make" with the ball flying 100+ px
+                # past the hoop is almost certainly a tesseract misread.
                 trajectory: dict = {
                     "ball_apex_y": None,
                     "ball_x_at_rim_height": None,
@@ -640,6 +642,20 @@ def _run_inner(session_started: str, shot_db, predictor):
                         trajectory = analyse_shot_dir(shot_dir, hoop_x, hoop_y)
                     except Exception as e:
                         print(f"  [trajectory] analysis failed (non-fatal): {e}")
+                made, score_diff = _log_shot_result(
+                    shot_stats, score_before, score_after,
+                    ocr_increment=score_increment,
+                    ball_x_at_rim=trajectory["ball_x_at_rim_height"],
+                    hoop_x=hoop_x,
+                )
+                # Compute lives_diff up-front so we can persist it on the
+                # shot row. Only meaningful when the lives region is visibly
+                # populated (during pre-game or "Make a shot to start"
+                # screens it's blank, std() near zero).
+                lives_diff_value: float | None = None
+                if lives_before is not None and lives_after is not None:
+                    if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
+                        _, lives_diff_value = score_changed(lives_before, lives_after)
                 log_shot(
                     shot_db,
                     session_started=session_started,
