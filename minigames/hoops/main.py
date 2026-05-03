@@ -57,13 +57,14 @@ def _compute_offset(
 
     Override: for the low-hoop_x, low-hoop region (~hoop_x<620, hoop_y>380),
     the bivariate fit is dominated by high-hoop_x training data and
-    underpredicts the offset by 60-70px. The single past make in that
-    region (hoop=(593,390)) used offset=78. Hardcoding 70 here so we
-    actually fire near the right place; remove once we've accumulated
-    more makes in that region and the fit catches up.
+    underpredicts the offset by ~80px. Session 2026-05-03T08:16 showed
+    offset=102 missed by only 27px (ball_x_at_rim=559 vs hoop_x=586) at
+    hoop=(586,410); offset=70 missed by 270px. The make zone is near 95-100.
+    Override to 95 so the first shot lands in the make zone; remove once
+    we've accumulated more makes in that region and the fit catches up.
     """
     if hoop_x < 620 and hoop_y > 380:
-        return 70
+        return 95
     if predictor is None:
         return COLD_START_OFFSET
     a, b, c, _n = predictor

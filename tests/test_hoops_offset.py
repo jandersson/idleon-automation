@@ -32,9 +32,9 @@ def test_stuck_region_override():
     regardless of predictor or cold-start, because the bivariate fit is
     badly biased there."""
     predictor = (1.0, 0.0, 0.0, 5)  # would otherwise predict offset=0
-    assert _compute_offset(410, 586, predictor) == 70
-    assert _compute_offset(400, 600, predictor) == 70
-    assert _compute_offset(450, 615, None) == 70  # override beats cold-start
+    assert _compute_offset(410, 586, predictor) == 95
+    assert _compute_offset(400, 600, predictor) == 95
+    assert _compute_offset(450, 615, None) == 95  # override beats cold-start
     # Just outside the override box uses the predictor as normal.
     assert _compute_offset(380, 586, predictor) == 0  # hoop_y on boundary
     assert _compute_offset(410, 620, predictor) == 0  # hoop_x on boundary
