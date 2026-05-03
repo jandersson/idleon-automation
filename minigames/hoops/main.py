@@ -482,8 +482,11 @@ def _run_inner(session_started: str, shot_db, predictor):
                 # previous center-click, hoop_x ≤ 617 had 44 misses and zero
                 # makes (ball couldn't reach left); switching to hoop-aimed
                 # click landed the first ever make at hoop_x=607 in the very
-                # next session.
-                click(left + hoop_x, top + hoop_y)
+                # next session. Window-relative click coords are (hoop_x,
+                # hoop_y); we log those rather than the screen-absolute click
+                # for portability across window positions.
+                click_x_rel, click_y_rel = hoop_x, hoop_y
+                click(left + click_x_rel, top + click_y_rel)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
                     _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
@@ -522,6 +525,8 @@ def _run_inner(session_started: str, shot_db, predictor):
                     score_diff=float(score_diff) if score_diff is not None else None,
                     made=int(bool(made)) if made is not None else None,
                     shot_dir=str(shot_dir) if shot_dir is not None else None,
+                    click_x=int(click_x_rel),
+                    click_y=int(click_y_rel),
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

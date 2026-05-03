@@ -35,15 +35,36 @@ CREATE TABLE IF NOT EXISTS shots (
     required_direction TEXT,
     score_diff REAL,
     made INTEGER,
-    shot_dir TEXT
+    shot_dir TEXT,
+    click_x INTEGER,
+    click_y INTEGER
 )
 """
+
+# New columns added after the original schema. open_db() runs ALTER TABLE
+# for each on existing DBs (SQLite ignores duplicate-column errors). Keep
+# this list append-only.
+_LATE_COLUMNS = [
+    ("click_x", "INTEGER"),
+    ("click_y", "INTEGER"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any new columns to an existing shots table that didn't have them."""
+    for name, decl in _LATE_COLUMNS:
+        try:
+            conn.execute(f'ALTER TABLE shots ADD COLUMN {name} {decl}')
+        except sqlite3.OperationalError:
+            # Already exists — duplicate column error.
+            pass
 
 
 def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.execute(SCHEMA)
+    _migrate(conn)
     conn.commit()
     return conn
 

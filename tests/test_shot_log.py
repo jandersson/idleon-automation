@@ -39,6 +39,38 @@ def test_log_shot_handles_offset_keyword(tmp_path):
     assert val == 42
 
 
+def test_log_shot_records_click_coords(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, click_x=617, click_y=372)
+    row = conn.execute("SELECT click_x, click_y FROM shots").fetchone()
+    conn.close()
+    assert row == (617, 372)
+
+
+def test_open_db_migrates_existing_db_without_click_columns(tmp_path):
+    """An old DB created before click_x/click_y existed should pick them up
+    via _migrate when reopened, not error out."""
+    db_path = tmp_path / "old.db"
+    # Create an OLD-style table missing the new columns.
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        'CREATE TABLE shots ('
+        '  id INTEGER PRIMARY KEY, session_started TEXT, shot_idx INTEGER, '
+        '  hoop_x INTEGER, "offset" INTEGER, made INTEGER'
+        ')'
+    )
+    conn.execute("INSERT INTO shots (shot_idx, hoop_x) VALUES (1, 700)")
+    conn.commit()
+    conn.close()
+
+    # Now reopen via open_db — should ALTER TABLE to add click_x, click_y.
+    conn = open_db(db_path)
+    log_shot(conn, shot_idx=2, click_x=617, click_y=372)
+    rows = list(conn.execute("SELECT shot_idx, click_x, click_y FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [(1, None, None), (2, 617, 372)]
+
+
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
     for i in range(3):  # min_samples is 4 for bivariate
