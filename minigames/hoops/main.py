@@ -585,6 +585,8 @@ def _run_inner(session_started: str, shot_db, predictor):
                     ball_apex_y=trajectory["ball_apex_y"],
                     ball_x_at_rim_height=trajectory["ball_x_at_rim_height"],
                     ball_landing_x=trajectory["ball_landing_x"],
+                    window_w=int(width),
+                    window_h=int(height),
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

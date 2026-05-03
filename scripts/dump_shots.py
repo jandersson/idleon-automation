@@ -48,6 +48,7 @@ def main() -> None:
     has_perturbation = "perturbation" in cols
     has_lives = "lives_diff" in cols
     has_traj = "ball_apex_y" in cols
+    has_window = "window_w" in cols
     extra_cols = ""
     if has_click:
         extra_cols += ", click_x, click_y"
@@ -57,6 +58,8 @@ def main() -> None:
         extra_cols += ", lives_diff"
     if has_traj:
         extra_cols += ", ball_apex_y, ball_x_at_rim_height, ball_landing_x"
+    if has_window:
+        extra_cols += ", window_w, window_h"
 
     makes = []
     for row in conn.execute(
@@ -87,6 +90,9 @@ def main() -> None:
             rec["ball_apex_y"] = row["ball_apex_y"]
             rec["ball_x_at_rim_height"] = row["ball_x_at_rim_height"]
             rec["ball_landing_x"] = row["ball_landing_x"]
+        if has_window:
+            rec["window_w"] = row["window_w"]
+            rec["window_h"] = row["window_h"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

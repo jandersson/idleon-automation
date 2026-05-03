@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS shots (
     lives_diff REAL,
     ball_apex_y INTEGER,
     ball_x_at_rim_height INTEGER,
-    ball_landing_x INTEGER
+    ball_landing_x INTEGER,
+    window_w INTEGER,
+    window_h INTEGER
 )
 """
 
@@ -57,6 +59,8 @@ _LATE_COLUMNS = [
     ("ball_apex_y", "INTEGER"),
     ("ball_x_at_rim_height", "INTEGER"),
     ("ball_landing_x", "INTEGER"),
+    ("window_w", "INTEGER"),
+    ("window_h", "INTEGER"),
 ]
 
 

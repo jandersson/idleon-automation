@@ -93,6 +93,15 @@ def test_log_shot_records_lives_diff(tmp_path):
     assert rows == [(0.0,), (222.4,), (None,)]
 
 
+def test_log_shot_records_window_dims(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, window_w=960, window_h=572)
+    log_shot(conn, shot_idx=2, window_w=1280, window_h=720)  # user resized
+    rows = list(conn.execute("SELECT window_w, window_h FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [(960, 572), (1280, 720)]
+
+
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
     for i in range(3):  # min_samples is 4 for bivariate

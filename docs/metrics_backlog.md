@@ -8,7 +8,7 @@ cost vs payoff. Drop entries as they ship.
 - [x] **`click_x`, `click_y`** — actual click coordinates. We just confirmed
       click position affects aim; logging it lets us validate AND experiment
       with offsets from the hoop (above/below/relative).
-- [ ] **`window_w`, `window_h`** — detect mid-session resize. Fraction-based
+- [x] **`window_w`, `window_h`** — detect mid-session resize. Fraction-based
       regions silently shift if the user resizes the game window.
 - [x] **`perturbation`** — the explicit `±N` px we applied. Currently
       derivable from `offset - predicted_offset` but only if you know the
