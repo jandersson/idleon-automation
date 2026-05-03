@@ -16,6 +16,35 @@ Two implementations live here so they can be swapped at the call site:
 
 `fit_knn` / `fit_bivariate` are factory helpers that take the rows and
 return a fitted predictor (or None if too few samples).
+
+KNN refresher (for future-you a year out from ML class):
+- "K-Nearest Neighbors". K is just a hyperparameter — the count of
+  neighbors to consult. We use K=3 (set at the call site in
+  minigames/hoops/main.py).
+- For each new shot:
+    1. Take the current (hoop_y, hoop_x) you need to aim at.
+    2. Look up all past makes (already filtered by direction and
+       non-clamped in fetch_makes).
+    3. Find the K closest past makes by Euclidean distance in
+       (hoop_y, hoop_x) space.
+    4. Compute their offsets (platform_y - hoop_y) and average them
+       weighted by 1 / distance, so closer neighbors count more
+       (a tiny epsilon prevents division by zero on exact matches).
+    5. The weighted-average offset → predicted platform_y =
+       hoop_y + offset. Caller fires when actual platform_y crosses it.
+- Tradeoff on K: too small → noisy (one bad past make swings the
+  prediction); too large → over-smoothed (averages across regions
+  whose physics differ). K=3 was where it settled empirically — see
+  the comment in main.py near the fit_knn call.
+- No training step beyond storing the points; "fit" is a misnomer —
+  KNN is a lazy learner that just memorises and queries at predict
+  time.
+
+OLS refresher:
+- "Ordinary Least Squares". Closed-form linear regression: pick
+  (a, b, c) to minimise sum of (target_y - (a*hoop_y + b*hoop_x + c))^2
+  over the training points. Fast, interpretable, but assumes the
+  surface is globally planar — which the hoops physics isn't.
 """
 from typing import Protocol
 
