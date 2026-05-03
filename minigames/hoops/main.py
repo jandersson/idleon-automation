@@ -376,7 +376,12 @@ def run():
         try:
             rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
             if PREDICTOR_KIND == "knn":
-                predictor = fit_knn(rows, k=5)
+                # k=3 (was 5): smaller K is more local. With k=5 the
+                # predictor over-smoothed in regions with sparse training
+                # data — a single nearby make at hoop=(593,390) with
+                # offset=78 got diluted to offset=23 by 4 distant
+                # neighbours. k=3 lets the local data dominate more.
+                predictor = fit_knn(rows, k=3)
             elif PREDICTOR_KIND == "bivariate":
                 predictor = fit_bivariate(rows)
             else:
