@@ -17,6 +17,7 @@ from common.shot_log import open_db, log_shot, fit_target_predictor
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
+from common.score_ocr import read_score
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
@@ -547,6 +548,16 @@ def _run_inner(session_started: str, shot_db, predictor):
                 if lives_before is not None and lives_after is not None:
                     if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
                         _, lives_diff_value = score_changed(lives_before, lives_after)
+                # OCR the actual score numbers so we can distinguish 1pt
+                # rim-touched makes from 2pt swishes. None if tesseract
+                # binary isn't installed (logged once, then silent).
+                score_before_int = read_score(score_before) if score_before is not None else None
+                score_after_int = read_score(score_after) if score_after is not None else None
+                score_increment = (
+                    score_after_int - score_before_int
+                    if score_before_int is not None and score_after_int is not None
+                    else None
+                )
                 # Ball trajectory metrics from the captured flight frames.
                 # All-None when MONITOR_FLIGHT was off or no ball detected.
                 trajectory: dict = {
@@ -587,6 +598,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                     ball_landing_x=trajectory["ball_landing_x"],
                     window_w=int(width),
                     window_h=int(height),
+                    score_before_int=score_before_int,
+                    score_after_int=score_after_int,
+                    score_increment=score_increment,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

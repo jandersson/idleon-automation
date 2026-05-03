@@ -49,6 +49,7 @@ def main() -> None:
     has_lives = "lives_diff" in cols
     has_traj = "ball_apex_y" in cols
     has_window = "window_w" in cols
+    has_score_int = "score_after_int" in cols
     extra_cols = ""
     if has_click:
         extra_cols += ", click_x, click_y"
@@ -60,6 +61,8 @@ def main() -> None:
         extra_cols += ", ball_apex_y, ball_x_at_rim_height, ball_landing_x"
     if has_window:
         extra_cols += ", window_w, window_h"
+    if has_score_int:
+        extra_cols += ", score_before_int, score_after_int, score_increment"
 
     makes = []
     for row in conn.execute(
@@ -93,6 +96,10 @@ def main() -> None:
         if has_window:
             rec["window_w"] = row["window_w"]
             rec["window_h"] = row["window_h"]
+        if has_score_int:
+            rec["score_before_int"] = row["score_before_int"]
+            rec["score_after_int"] = row["score_after_int"]
+            rec["score_increment"] = row["score_increment"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

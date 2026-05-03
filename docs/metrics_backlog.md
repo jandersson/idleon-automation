@@ -28,9 +28,12 @@ cost vs payoff. Drop entries as they ship.
 
 ## Higher cost
 
-- [ ] **Absolute score (OCR'd)** — instead of `made` boolean, read the
+- [x] **Absolute score (OCR'd)** — instead of `made` boolean, read the
       actual score number. Tells us 1-pt vs 2-pt ("nothing but net" per
       wiki). Could nudge calibration toward swish-quality shots later.
+      Implemented via pytesseract; requires the tesseract binary on PATH
+      (`winget install --id=UB-Mannheim.TesseractOCR`). Falls back to
+      NULL when missing.
 - [ ] **Bob range snapshot** — `bob_ymin`, `bob_ymax` at fire time. Right
       now we assume ~290-510, but per the wiki the platform starts moving
       at score 10+ and the bob may shift in late game.

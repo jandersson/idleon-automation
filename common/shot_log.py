@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS shots (
     ball_x_at_rim_height INTEGER,
     ball_landing_x INTEGER,
     window_w INTEGER,
-    window_h INTEGER
+    window_h INTEGER,
+    score_before_int INTEGER,
+    score_after_int INTEGER,
+    score_increment INTEGER
 )
 """
 
@@ -61,6 +64,9 @@ _LATE_COLUMNS = [
     ("ball_landing_x", "INTEGER"),
     ("window_w", "INTEGER"),
     ("window_h", "INTEGER"),
+    ("score_before_int", "INTEGER"),
+    ("score_after_int", "INTEGER"),
+    ("score_increment", "INTEGER"),
 ]
 
 
