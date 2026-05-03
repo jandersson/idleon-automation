@@ -58,25 +58,16 @@ disproved it.
 - Launcher's general `experiments` config slot — useful framework for
   future tests (just not these specific ones).
 
-## Refactor: split predictors into their own module
+## Refactor: split predictors into their own module (done 2026-05-03)
 
-`KnnPredictor` + `fit_target_predictor` currently live in
-`common/shot_log.py` alongside the SQLite logging code. Two unrelated
-responsibilities. As we add more predictor variants (different K values,
-local regression, physics-based model), this file will grow.
-
-Proposed:
-
-- New `common/predictor.py` — holds `KnnPredictor` and any future
-  predictor classes. Could expose a `Predictor` protocol/ABC with
-  `predict(hoop_y, hoop_x) -> float` and a `n` property.
-- New `common/predictor_fit.py` (or merge into above) — holds the
-  `fit_target_predictor` function that pulls makes from a
-  `sqlite3.Connection` and returns a fitted predictor.
-- `common/shot_log.py` shrinks to just the schema + `log_shot` +
-  `current_code_commit` (or even split that helper out too).
-- Update imports in `minigames/hoops/main.py` and tests.
-
-No behavioural change, pure code organisation. Worth doing before we
-add a second predictor variant or before any other minigame wants to
-reuse the predictor pattern.
+- [x] New `common/predictor.py` holds `Predictor` protocol +
+      `KnnPredictor` + `BivariatePredictor` + `fit_knn` + `fit_bivariate`
+- [x] `common/shot_log.py` shrunk: removed `KnnPredictor` and
+      `fit_target_predictor`. Added `fetch_makes(conn, dir)` which
+      returns the rows; callers pick a predictor and fit themselves.
+- [x] `minigames/hoops/main.py` has a `PREDICTOR_KIND` constant
+      (`"knn"` or `"bivariate"`); call site picks the right `fit_*`.
+- [x] `predictor_kind` column added to `shots.db` so per-shot history
+      records which predictor produced the target_y.
+- [x] Tests split: `tests/test_predictor.py` for the new module,
+      `tests/test_shot_log.py` slimmed to just logging concerns.

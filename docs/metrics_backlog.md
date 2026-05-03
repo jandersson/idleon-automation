@@ -34,6 +34,9 @@ cost vs payoff. Drop entries as they ship.
 - [x] **`code_commit`** — short git hash of the working tree at session
       start, with `-dirty` suffix if uncommitted. Correlates make-rate
       changes with code changes.
+- [x] **`predictor_kind`** — which predictor produced this shot's
+      target_y (`"knn"`, `"bivariate"`, or NULL for cold-start). Lets
+      us A/B compare predictors on the same dataset.
 - [ ] **`override_applied`** (TEXT) — which override (if any) determined
       the offset for this shot. Values like `low_x_high_hoop`,
       `low_x_low_hoop`, `mid_x_low_hoop`, or NULL. Easier query than

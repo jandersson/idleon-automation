@@ -1,7 +1,7 @@
 """Round-trip test for the shot SQLite log."""
 import sqlite3
 
-from common.shot_log import open_db, log_shot, fit_target_predictor
+from common.shot_log import open_db, log_shot, fetch_makes
 
 
 def test_open_db_creates_schema(tmp_path):
@@ -101,69 +101,31 @@ def test_log_shot_records_predicted_offset_and_code_commit(tmp_path):
     assert rows == [(18, "abc123def456"), (22, "abc123def456-dirty")]
 
 
-def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
+def test_log_shot_records_predictor_kind(tmp_path):
     conn = open_db(tmp_path / "shots.db")
-    for i in range(3):  # min_samples is 4
-        log_shot(conn, hoop_y=400 + i, hoop_x=700, platform_y=420, made=1,
-                 clamped=0, required_direction="up")
-    assert fit_target_predictor(conn, "up") is None
+    log_shot(conn, shot_idx=1, predictor_kind="knn")
+    log_shot(conn, shot_idx=2, predictor_kind="bivariate")
+    log_shot(conn, shot_idx=3, predictor_kind=None)  # cold start
+    rows = list(conn.execute("SELECT predictor_kind FROM shots ORDER BY id"))
     conn.close()
+    assert rows == [("knn",), ("bivariate",), (None,)]
 
 
-def test_knn_predictor_picks_nearest_neighbours(tmp_path):
-    """Predictor returns the inverse-distance-weighted average platform_y
-    of the K nearest past makes."""
+def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
+    """fetch_makes only returns clean makes (made=1, clamped=0, matching
+    direction) so callers don't have to filter."""
     conn = open_db(tmp_path / "shots.db")
-    # Three makes, one near our query point and two far away.
-    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, made=1,
-             clamped=0, required_direction="up")
     log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, made=1,
              clamped=0, required_direction="up")
-    log_shot(conn, hoop_y=500, hoop_x=800, platform_y=520, made=1,
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, made=1,
              clamped=0, required_direction="up")
-    log_shot(conn, hoop_y=405, hoop_x=702, platform_y=425, made=1,
-             clamped=0, required_direction="up")
-    pred = fit_target_predictor(conn, "up", k=3)
-    assert pred is not None
-    assert pred.n == 4
-    # Querying near (400, 700): the two nearest are (400,700)→420 and
-    # (405,702)→425. Inverse-distance weighting will favour the exact
-    # match strongly, so result should be close to 420 (between 420
-    # and 425, not 320 or 520).
-    out = pred.predict(400, 700)
-    assert 419 <= out <= 425
-
-
-def test_knn_predictor_excludes_clamped_and_misses(tmp_path):
-    conn = open_db(tmp_path / "shots.db")
-    # Five clean makes
-    for hy, hx, py in [
-        (300, 600, 320), (400, 700, 420), (500, 800, 520),
-        (350, 650, 370), (450, 750, 470),
-    ]:
-        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=py, made=1,
-                 clamped=0, required_direction="up")
-    # Pollution that should be excluded
+    # Pollution
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
              clamped=1, required_direction="up")  # clamped
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=0,
              clamped=0, required_direction="up")  # miss
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
              clamped=0, required_direction="down")  # wrong direction
-    pred = fit_target_predictor(conn, "up", k=5)
-    assert pred is not None
-    assert pred.n == 5  # only the five clean makes
-    # Predict at the same point as the polluted rows; result should be
-    # nowhere near 9999 since clamped/miss/wrong-dir rows aren't in.
-    out = pred.predict(400, 700)
-    assert out < 600  # well below the polluted 9999
-
-
-def test_knn_predictor_clamps_k_to_dataset_size(tmp_path):
-    conn = open_db(tmp_path / "shots.db")
-    for hy, hx in [(300, 600), (400, 700), (500, 800), (450, 750)]:
-        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=hy + 20, made=1,
-                 clamped=0, required_direction="up")
-    pred = fit_target_predictor(conn, "up", k=10)  # k > n
-    assert pred is not None
-    assert pred.k == 4  # clamped to n
+    rows = fetch_makes(conn, "up")
+    conn.close()
+    assert sorted(rows) == [(300.0, 600.0, 320.0), (400.0, 700.0, 420.0)]

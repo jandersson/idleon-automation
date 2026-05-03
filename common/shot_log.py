@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS shots (
     score_after_int INTEGER,
     score_increment INTEGER,
     predicted_offset INTEGER,
-    code_commit TEXT
+    code_commit TEXT,
+    predictor_kind TEXT
 )
 """
 
@@ -89,6 +90,7 @@ _LATE_COLUMNS = [
     ("score_increment", "INTEGER"),
     ("predicted_offset", "INTEGER"),
     ("code_commit", "TEXT"),
+    ("predictor_kind", "TEXT"),
 ]
 
 
@@ -123,67 +125,24 @@ def log_shot(conn: sqlite3.Connection, **fields) -> None:
     conn.commit()
 
 
-class KnnPredictor:
-    """KNN-over-past-makes predictor. Each make is a point in
-    (hoop_y, hoop_x) space, and its `platform_y` is the optimal fire
-    position for that hoop. To predict for a new hoop, take the K
-    closest past makes and inverse-distance-weight their platform_y.
-
-    KNN replaces the previous bivariate linear fit so the model can
-    locally adapt to curvature without needing hardcoded overrides
-    for regions where the linear plane was a poor fit.
-    """
-
-    def __init__(self, points: list[tuple[float, float, float]], k: int = 5):
-        # points: list of (hoop_y, hoop_x, platform_y) for past makes
-        self.points = points
-        self.k = min(k, len(points))
-
-    @property
-    def n(self) -> int:
-        return len(self.points)
-
-    def predict(self, hoop_y: float, hoop_x: float) -> float:
-        """Return predicted optimal platform_y at this hoop position."""
-        distances = sorted(
-            (((py - hoop_y) ** 2 + (px - hoop_x) ** 2) ** 0.5, target)
-            for py, px, target in self.points
-        )
-        nearest = distances[: self.k]
-        # Inverse-distance weighting (clamped at 1.0 to avoid blow-up
-        # for exact-match hoops).
-        weights = [1.0 / max(d, 1.0) for d, _ in nearest]
-        total = sum(weights)
-        return sum(w * t for w, (_, t) in zip(weights, nearest)) / total
-
-
-def fit_target_predictor(
+def fetch_makes(
     conn: sqlite3.Connection,
     required_direction: str,
-    min_samples: int = 4,
-    k: int = 5,
-) -> KnnPredictor | None:
-    """Build a KnnPredictor from clean makes in the active direction.
+) -> list[tuple[float, float, float]]:
+    """Return [(hoop_y, hoop_x, platform_y), ...] for clean makes in the
+    requested required_direction. Excludes clamped shots — those fired at
+    the bob extreme regardless of nominal target_y, so they don't reflect
+    the predictor's signal.
 
-    Each make contributes one (hoop_y, hoop_x, platform_y) point. The
-    returned object's `predict(hoop_y, hoop_x)` returns the predicted
-    optimal platform_y at any hoop position.
-
-    Excludes clamped shots — those fired at the bob extreme regardless
-    of nominal target_y, so they don't reflect the predictor's signal.
-
-    Returns None when there aren't enough makes to fit yet.
+    Caller hands these to a `fit_*` factory in common.predictor.
     """
-    rows = list(
-        conn.execute(
+    return [
+        (float(r[0]), float(r[1]), float(r[2]))
+        for r in conn.execute(
             'SELECT hoop_y, hoop_x, platform_y FROM shots '
             'WHERE made = 1 AND clamped = 0 AND required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
             'AND platform_y IS NOT NULL',
             (required_direction,),
         )
-    )
-    if len(rows) < min_samples:
-        return None
-    points = [(float(r[0]), float(r[1]), float(r[2])) for r in rows]
-    return KnnPredictor(points, k=k)
+    ]

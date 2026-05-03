@@ -1,6 +1,6 @@
-"""Tests for hoops _compute_offset (uses KNN predictor) and the
-miss-driven perturbation sweep."""
-from common.shot_log import KnnPredictor
+"""Tests for hoops _compute_offset (uses a Predictor from common.predictor)
+and the miss-driven perturbation sweep."""
+from common.predictor import KnnPredictor
 from minigames.hoops.main import _compute_offset, COLD_START_OFFSET, _perturbation_for, PERTURBATION_SEQUENCE
 
 

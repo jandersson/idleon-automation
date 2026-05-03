@@ -51,6 +51,7 @@ def main() -> None:
     has_score_int = "score_after_int" in cols
     has_predicted_offset = "predicted_offset" in cols
     has_code_commit = "code_commit" in cols
+    has_predictor_kind = "predictor_kind" in cols
     extra_cols = ""
     if has_perturbation:
         extra_cols += ", perturbation"
@@ -66,6 +67,8 @@ def main() -> None:
         extra_cols += ", predicted_offset"
     if has_code_commit:
         extra_cols += ", code_commit"
+    if has_predictor_kind:
+        extra_cols += ", predictor_kind"
 
     makes = []
     for row in conn.execute(
@@ -104,6 +107,8 @@ def main() -> None:
             rec["predicted_offset"] = row["predicted_offset"]
         if has_code_commit:
             rec["code_commit"] = row["code_commit"]
+        if has_predictor_kind:
+            rec["predictor_kind"] = row["predictor_kind"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

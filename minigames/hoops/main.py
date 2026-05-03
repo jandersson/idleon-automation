@@ -13,7 +13,8 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fit_target_predictor, current_code_commit
+from common.shot_log import open_db, log_shot, fetch_makes, current_code_commit
+from common.predictor import fit_knn, fit_bivariate
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -96,6 +97,14 @@ def _perturbation_for(miss_count: int) -> int:
 # target. Wider in_window catches more shots near target with consistent
 # platform_y, reducing variance in fire timing.
 Y_TOLERANCE = 6
+
+# Which predictor implementation to use for the make-zone target_y:
+#   "knn"       — KNN over past makes, inverse-distance weighted (k=5).
+#                 Adapts to local curvature; recommended default.
+#   "bivariate" — linear OLS for target_y = a*hoop_y + b*hoop_x + c.
+#                 Faster but biased in regions far from the training-data
+#                 cluster (needed hardcoded overrides historically).
+PREDICTOR_KIND = "knn"
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
@@ -365,11 +374,17 @@ def run():
             print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
         try:
-            predictor = fit_target_predictor(shot_db, REQUIRED_DIRECTION)
-            if predictor is None:
-                print(f"No predictor fit — fewer than 4 confirmed makes in dir={REQUIRED_DIRECTION!r}; using cold-start offset={COLD_START_OFFSET}")
+            rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
+            if PREDICTOR_KIND == "knn":
+                predictor = fit_knn(rows, k=5)
+            elif PREDICTOR_KIND == "bivariate":
+                predictor = fit_bivariate(rows)
             else:
-                print(f"KNN target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} makes, k={predictor.k})")
+                raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
+            if predictor is None:
+                print(f"No predictor fit ({PREDICTOR_KIND!r}, fewer than 4 makes in dir={REQUIRED_DIRECTION!r}); using cold-start offset={COLD_START_OFFSET}")
+            else:
+                print(f"{PREDICTOR_KIND.upper()} target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} makes)")
             _run_inner(session_started, shot_db, predictor, code_commit)
         finally:
             shot_db.close()
@@ -640,6 +655,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     score_increment=score_increment,
                     predicted_offset=int(predicted_offset_value),
                     code_commit=code_commit,
+                    predictor_kind=PREDICTOR_KIND if predictor is not None else None,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.
