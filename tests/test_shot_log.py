@@ -111,6 +111,16 @@ def test_log_shot_records_predictor_kind(tmp_path):
     assert rows == [("knn",), ("bivariate",), (None,)]
 
 
+def test_log_shot_records_source(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, source="bot")
+    log_shot(conn, shot_idx=2, source="human")  # hoops-observe shot
+    log_shot(conn, shot_idx=3, source=None)  # legacy row
+    rows = list(conn.execute("SELECT source FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [("bot",), ("human",), (None,)]
+
+
 def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
     """fetch_makes only returns clean makes (made=1, clamped=0, matching
     direction) so callers don't have to filter."""

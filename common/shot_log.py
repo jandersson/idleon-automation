@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS shots (
     score_increment INTEGER,
     predicted_offset INTEGER,
     code_commit TEXT,
-    predictor_kind TEXT
+    predictor_kind TEXT,
+    source TEXT
 )
 """
 
@@ -91,6 +92,7 @@ _LATE_COLUMNS = [
     ("predicted_offset", "INTEGER"),
     ("code_commit", "TEXT"),
     ("predictor_kind", "TEXT"),
+    ("source", "TEXT"),  # "bot" (default) or "human" (hoops-observe mode)
 ]
 
 

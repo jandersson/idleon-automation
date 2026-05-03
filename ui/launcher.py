@@ -41,6 +41,7 @@ MINIGAMES = [
         "emoji": "🏀",
         "bot": "hoops",
         "setup": [
+            ("Observe (you play)", "hoops-observe"),
             ("Capture", "hoops-capture"),
             ("Debug match", "hoops-debug"),
             ("Ball calibrate", "hoops-ball-calibrate"),

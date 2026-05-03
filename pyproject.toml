@@ -10,6 +10,7 @@ dependencies = [
     "numpy==1.26.4",
     "pytesseract>=0.3.10",
     "plyvel-ci>=1.5.1; sys_platform == 'win32'",
+    "pynput>=1.7",
 ]
 
 [dependency-groups]
@@ -20,6 +21,7 @@ dev = [
 [project.scripts]
 idleon = "ui.launcher:run"
 hoops = "minigames.hoops.main:run"
+hoops-observe = "minigames.hoops.observe:run"
 hoops-capture = "minigames.hoops.capture:run"
 hoops-debug = "minigames.hoops.debug_match:run"
 hoops-ball-calibrate = "minigames.hoops.ball_calibrate:run"
