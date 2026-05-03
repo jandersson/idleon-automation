@@ -8,10 +8,15 @@ distinguish bot-derived data from observed-human data.
 
 Useful for seeding the predictor with makes in regions the bot can't
 reach yet (transition zones between training-data clusters).
+
+A small click-through overlay window shows when the bot is in
+cooldown vs ready, so the user knows when they can fire the next
+shot without losing data.
 """
 import sys
 import threading
 import time
+import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 
@@ -67,11 +72,13 @@ def _observe_inner(shot_db, session_started: str, code_commit: str | None):
     print(
         f"Hoops OBSERVE mode — tracking window {WINDOW_TITLE!r}.\n"
         "  Click on the game window to play; each click is recorded.\n"
+        "  Overlay shows GO (green) = ready, countdown (red) = wait.\n"
         "  Move mouse to a screen corner to abort.\n"
     )
     time.sleep(2)
 
     shot_idx = [0]  # mutable counter for the closure
+    cooldown_until = [0.0]  # shared with the overlay updater
 
     def on_click(screen_x: int, screen_y: int, button, pressed: bool) -> None:
         # Only react to LEFT-button presses (not releases, not other buttons).
@@ -102,6 +109,7 @@ def _observe_inner(shot_db, session_started: str, code_commit: str | None):
         idx = shot_idx[0]
         hoop_x, hoop_y = hoop_pos
         platform_x, platform_y = platform_pos
+        cooldown_until[0] = time.time() + POST_SHOT_COOLDOWN
         print(
             f"  click {idx}: hoop=({hoop_x},{hoop_y}) py={platform_y} "
             f"sb={score_before_int}  — waiting {POST_SHOT_COOLDOWN}s for score…"
@@ -151,9 +159,7 @@ def _observe_inner(shot_db, session_started: str, code_commit: str | None):
     listener = pynput.mouse.Listener(on_click=on_click)
     listener.start()
     try:
-        while True:
-            check_failsafe()
-            time.sleep(0.1)
+        _run_overlay(cooldown_until)
     except pyautogui.FailSafeException:
         print("Fail-safe triggered — exiting observe mode.")
     except KeyboardInterrupt:
@@ -162,6 +168,73 @@ def _observe_inner(shot_db, session_started: str, code_commit: str | None):
         listener.stop()
         listener.join(timeout=1)
         print(f"Observe session ended. Captured {shot_idx[0]} clicks.")
+
+
+def _run_overlay(cooldown_until: list[float]) -> None:
+    """Tk overlay window that shows cooldown state, click-through.
+
+    Window has no chrome, stays on top, and (on Windows) is set to
+    WS_EX_TRANSPARENT so mouse clicks pass through to the game
+    underneath. Repositions to the top-right corner of the game window
+    every tick so it follows window moves."""
+    root = tk.Tk()
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    # Slight transparency makes WS_EX_LAYERED work on Windows.
+    root.attributes("-alpha", 0.85)
+    size = 80
+    canvas = tk.Canvas(root, width=size, height=size,
+                       highlightthickness=0, bg="black")
+    canvas.pack()
+    root.update_idletasks()
+
+    if sys.platform == "win32":
+        import ctypes
+        # Make the window click-through so the user's click reaches the
+        # game and the pynput listener catches it.
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        GWL_EXSTYLE = -20
+        WS_EX_LAYERED = 0x00080000
+        WS_EX_TRANSPARENT = 0x00000020
+        ex_style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        ctypes.windll.user32.SetWindowLongW(
+            hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED | WS_EX_TRANSPARENT,
+        )
+
+    def tick() -> None:
+        try:
+            check_failsafe()
+        except pyautogui.FailSafeException:
+            root.destroy()
+            return
+        # Re-position relative to the game window each tick so the
+        # overlay follows if the user moves the window.
+        try:
+            left, top, w, h = get_bounds(WINDOW_TITLE)
+            x = left + w - size - 10
+            y = top + 10
+            root.geometry(f"{size}x{size}+{x}+{y}")
+        except WindowNotFoundError:
+            pass
+        now = time.time()
+        remaining = cooldown_until[0] - now
+        canvas.delete("all")
+        if remaining > 0:
+            canvas.create_oval(8, 8, size - 8, size - 8,
+                               fill="#c33", outline="")
+            canvas.create_text(size // 2, size // 2,
+                               text=f"{remaining:.1f}",
+                               fill="white", font=("Segoe UI", 16, "bold"))
+        else:
+            canvas.create_oval(8, 8, size - 8, size - 8,
+                               fill="#2a2", outline="")
+            canvas.create_text(size // 2, size // 2,
+                               text="GO", fill="white",
+                               font=("Segoe UI", 16, "bold"))
+        root.after(80, tick)
+
+    tick()
+    root.mainloop()
 
 
 if __name__ == "__main__":
