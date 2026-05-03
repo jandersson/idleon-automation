@@ -226,28 +226,28 @@ def _log_shot_result(
     """Print the score diff line and update stats. Returns (changed, diff) or
     (None, None) if either snapshot was missing — caller can persist either way.
 
-    OCR override: when the caller passes a non-None ocr_increment (the OCR'd
-    score_after - score_before), we trust that over the diff-based heuristic.
-    The diff metric is noisy on the wider score region (false positives 6-15
-    on background variation), but OCR'd ints are unambiguous when they parse.
+    Only OCR can confirm a make. The diff-based heuristic on the widened
+    score region produced false positives (diff 6-30 on background variation
+    with the score actually unchanged), so we no longer trust it as a make
+    signal. When OCR fails on either pre or post (returns None), we record
+    the shot as a miss — under-counting a real make is preferable to
+    polluting the predictor with phantom makes that overshoot by 100+ px.
     """
     if before is None or after is None:
         return None, None
-    diff_changed, diff = score_changed(before, after)
-    if ocr_increment is not None:
-        changed = ocr_increment > 0
-        marker = "OCR"
+    _, diff = score_changed(before, after)
+    if ocr_increment is None or ocr_increment <= 0:
+        changed = False
     else:
-        changed = diff_changed
-        marker = "diff"
+        changed = True
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
         label = "MAKE"
     else:
         label = "miss"
-    inc_str = f", inc={ocr_increment:+d}" if ocr_increment is not None else ""
-    print(f"  [score] {label} ({marker} diff={diff:.1f}{inc_str}) | session {stats['makes']}/{stats['attempts']}")
+    inc_str = f", inc={ocr_increment:+d}" if ocr_increment is not None else ", inc=?"
+    print(f"  [score] {label} (diff={diff:.1f}{inc_str}) | session {stats['makes']}/{stats['attempts']}")
     return changed, diff
 
 
