@@ -108,7 +108,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False so observe-mode's threading.Timer callbacks
+    # (post-shot OCR + log_shot, fired from a worker thread) can use the
+    # same connection. SQLite serialises writes internally so concurrent
+    # log_shot calls from multiple threads are safe.
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.execute(SCHEMA)
     _migrate(conn)
     conn.commit()
