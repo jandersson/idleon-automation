@@ -24,13 +24,16 @@ This file holds only items that don't fit those buckets.
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.
-- **Predictor: LOESS (locally-weighted linear regression)** — sits
-  between current KNN (local average, no slope) and Bivariate (global
-  slope, no locality). For each query, fit a small weighted lstsq on
-  the K nearest past makes with weights = 1/distance. Add as
-  `LoessPredictor` in `common/predictor.py` + `PREDICTOR_KIND="loess"`
-  switch in `minigames/hoops/main.py`. Uses the same `fetch_makes`
-  data — no new schema. Compare make-rate vs current `knn`.
+- **Predictor: LOESS / locally-weighted linear regression** — upgrade
+  on the current "KNN with inverse-distance" predictor, which is
+  basically Nadaraya-Watson kernel regression with a hard K-nearest
+  cutoff. Same weighted neighborhood, but instead of *averaging* the
+  past makes' platform_y values, fit a small weighted lstsq through
+  them so the predictor captures the local *slope* of the surface,
+  not just the local height. Add as `LoessPredictor` in
+  `common/predictor.py` + `PREDICTOR_KIND="loess"` switch in
+  `minigames/hoops/main.py`. Uses the same `fetch_makes` data — no
+  new schema. Compare make-rate vs current `knn`.
 
 ## Someday
 
