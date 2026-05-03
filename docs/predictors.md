@@ -5,12 +5,13 @@ explained for the reader who's a decade out of "machine learning
 school". Concepts are spelled out as a refresher, not first-time
 teaching.
 
-> **Companion visualisation:** open
-> [`docs/predictors.html`](predictors.html) directly in a browser
-> (no server, no build) for an interactive heatmap of each
-> predictor's predicted-offset surface over a synthetic 2D playfield.
-> Switch predictors, scrub K and noise, hover for point predictions
-> vs ground truth.
+> **Companion visualisation:**
+> [predictors.html](https://jandersson.github.io/idleon-automation/predictors.html)
+> on GitHub Pages — interactive heatmap of each predictor's
+> predicted-offset surface over a synthetic 2D playfield. Switch
+> predictors, scrub K and noise, hover for predicted vs ground truth.
+> (For local viewing, open `docs/predictors.html` directly in a
+> browser — no server or build.)
 
 The shared problem: given the current `(hoop_y, hoop_x)`, predict the
 optimal `platform_y` to fire at. Training data is a list of past makes
