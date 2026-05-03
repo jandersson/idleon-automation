@@ -84,9 +84,9 @@ under-fits sparse ones.
 
 ## Gaussian Process Regression — planned upgrade
 
-GP is the next predictor on TODO. The notes below skip the standard
-textbook motivation and focus on the conceptual moves that aren't
-always made explicit when the algorithm is first introduced.
+GP is the next predictor on TODO. This section is the refresher I wish
+I'd had in school — written for a reader who remembers being confused
+by it.
 
 ### The conceptual jump that makes GP click
 
