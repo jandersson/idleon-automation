@@ -17,7 +17,8 @@ Two implementations live here so they can be swapped at the call site:
 `fit_knn` / `fit_bivariate` are factory helpers that take the rows and
 return a fitted predictor (or None if too few samples).
 
-KNN refresher (for the reader who took ML class a decade ago):
+KNN refresher (for the reader who's a decade out of "machine
+learning school"):
 - "K-Nearest Neighbors". K is just a hyperparameter — the count of
   neighbors to consult. We use K=3 (set at the call site in
   minigames/hoops/main.py).
