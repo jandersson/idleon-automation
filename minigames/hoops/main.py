@@ -16,6 +16,7 @@ from common.session_log import session_log
 from common.shot_log import open_db, log_shot, fit_target_predictor
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
+from common.ball_trajectory import analyse_shot_dir
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
 
@@ -514,6 +515,18 @@ def _run_inner(session_started: str, shot_db, predictor):
                 if lives_before is not None and lives_after is not None:
                     if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
                         _, lives_diff_value = score_changed(lives_before, lives_after)
+                # Ball trajectory metrics from the captured flight frames.
+                # All-None when MONITOR_FLIGHT was off or no ball detected.
+                trajectory: dict = {
+                    "ball_apex_y": None,
+                    "ball_x_at_rim_height": None,
+                    "ball_landing_x": None,
+                }
+                if shot_dir is not None and MONITOR_FLIGHT:
+                    try:
+                        trajectory = analyse_shot_dir(shot_dir, hoop_x, hoop_y)
+                    except Exception as e:
+                        print(f"  [trajectory] analysis failed (non-fatal): {e}")
                 log_shot(
                     shot_db,
                     session_started=session_started,
@@ -537,6 +550,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                     click_y=int(click_y_rel),
                     perturbation=int(perturbation),
                     lives_diff=lives_diff_value,
+                    ball_apex_y=trajectory["ball_apex_y"],
+                    ball_x_at_rim_height=trajectory["ball_x_at_rim_height"],
+                    ball_landing_x=trajectory["ball_landing_x"],
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

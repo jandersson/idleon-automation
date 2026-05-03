@@ -20,7 +20,7 @@ cost vs payoff. Drop entries as they ship.
 
 ## Medium cost, high value
 
-- [ ] **Ball trajectory metrics** — extract `ball_x_at_rim_height`,
+- [x] **Ball trajectory metrics** — extract `ball_x_at_rim_height`,
       `ball_apex_y`, `ball_landing_x` from the per-shot flight frames.
       Lets us classify misses (undershoot/overshoot/vertically-off)
       automatically without grepping monitor folders. HSV mask + a tiny
