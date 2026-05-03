@@ -199,7 +199,15 @@ docs/
 3. **`minigames/hoops/STRATEGY.md`** — end-to-end pipeline for the
    hoops bot: detect → predict → fire → validate → log → snapshot.
 4. **`TODO.md`** — open work + scheduled-agent IDs.
-5. **`docs/cleanup_backlog.md`** + **`docs/metrics_backlog.md`** — small
-   improvements queued for later.
+5. **`docs/`** — longer-form notes and backlogs. Browseable on
+   GitHub Pages: <https://jandersson.github.io/idleon-automation/>.
+   Highlights:
+   - **`docs/predictors.md`** — refresher notes on KNN, OLS, and the
+     planned GP regression upgrade for the hoops predictor (renders
+     with proper LaTeX on Pages).
+   - **`docs/predictor_playground.html`** — interactive heatmap
+     visualisation of the predictors over a synthetic playfield.
+   - **`docs/cleanup_backlog.md`** + **`docs/metrics_backlog.md`** —
+     small improvements queued for later.
 
 `uv run pytest` should always pass — that's the executable spec.

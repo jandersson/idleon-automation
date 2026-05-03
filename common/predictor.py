@@ -18,7 +18,10 @@ Two implementations live here so they can be swapped at the call site:
 return a fitted predictor (or None if too few samples).
 
 For algorithm refreshers (KNN, OLS, planned GP), see
-`docs/predictors.md`. Keep that doc in sync when adding/removing
+`docs/predictors.md` (or
+https://jandersson.github.io/idleon-automation/predictors.html for
+the same content with rendered LaTeX + the interactive playground
+linked from the top). Keep the doc in sync when adding/removing
 predictors here.
 """
 from typing import Protocol
