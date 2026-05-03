@@ -1,93 +1,118 @@
 # Hoops strategy notes
 
-What the bot assumes about the game, why each tuning knob exists, and how
-to reason about changes to it. Living document — update as we learn more.
+What the bot assumes about the game and how each piece of the make-shot
+pipeline fits together. Living document — update as we learn more.
 
 ## Game-physics assumptions (empirical)
 
 - **Launch is fixed-power and fixed-direction.** Same platform Y at click +
-  same hoop position → same trajectory, every time. Tuning is therefore
-  deterministic per-shot, not statistical.
-- **Hoop template-center ≠ rim opening.** Our `hoop.png` was cropped to
-  include the backboard, so the matched-region center sits in the middle of
-  the backboard. The actual rim opening is **lower** (larger Y) than the
-  matched center. Positive `OFFSET_ANCHORS` values reflect this gap.
-- **Hoop respawns randomly between shots** at score 0-19 — only the Y
-  varies; X is essentially fixed.
-- **At score ≥10**, the platform starts moving horizontally too (we have
-  `home_x`/`X_TOLERANCE` machinery to wait for the platform to be at its
-  resting X before firing — currently disabled by setting tolerance=9999).
-- **At score ≥20**, the hoop also moves horizontally each frame — our
-  per-shot hoop position becomes stale by the time the ball arrives. Not
-  yet handled.
+  same hoop position → same trajectory. Tuning is therefore deterministic
+  per shot: for any given hoop, there's exactly one optimal `platform_y`.
+- **Click position has no measurable effect** on aim (verified May 3 with
+  the click_sweep and click_extreme experiments — both produced ball
+  trajectories within the ~20px noise floor regardless of click_x or
+  click_y). The bot clicks at the hoop position because that's a sane
+  default; it could click anywhere.
+- **Hoop respawns randomly between shots** at score 0–19 — both X and Y
+  vary across the playfield.
+- **At score ≥10**, the platform starts moving horizontally. We have
+  `home_x` / `X_TOLERANCE` machinery for this but it's currently disabled
+  (tolerance=9999) because we rarely get past score 10 today.
+- **At score ≥20**, the hoop also moves between frames. Not handled.
 - **At score ≥30**, the hoop moves both axes. Not handled.
 
 ## Scoring
 
-- Direct make = **1 pt**.
-- Nothing-but-net (ball through rim without touching rim or backboard) =
-  **2 pts**.
+- Direct rim-touched make = **1 pt**.
+- Nothing-but-net (ball through rim without touching rim or backboard) = **2 pts**.
 - Trophy at single-trial score **40+**.
 - Pet from combined score **66** across 3 trials.
 
-## Two switchable strategies
+## How a shot works (end to end)
 
-`SHOT_STRATEGY` in `main.py` toggles between two whole approaches.
+1. **Detect rim** — `find_rim` in `detector.py` template-matches `rim.png`
+   against the right half of the frame at multiple scales. Returns
+   (hoop_x, hoop_y) at conf ≥ 0.5.
+2. **Pick offset** — `_compute_offset` calls a fitted `Predictor` that
+   returns the predicted optimal `platform_y` for this hoop. Offset =
+   target_y − hoop_y. Plus a perturbation if previous shots at the same
+   hoop position missed (perturbation sweep, see below).
+3. **Wait for platform** — sample `find_platform` until the platform
+   crosses target_y going up (`REQUIRED_DIRECTION="up"`) within
+   `Y_TOLERANCE=6` px.
+4. **Fire** — `click(hoop_x, hoop_y)` (window-relative). 10–40 ms random
+   delay before, ±3 px positional jitter.
+5. **Capture flight** — frames written to
+   `assets/monitor/shot_NNN_<ts>/flight_*.png` for 4 seconds.
+6. **Detect make/miss** — three signals must agree:
+   - **OCR** (`common.score_ocr.read_score`) — multi-pass tesseract
+     voting on the score region, 4 passes (PSM 8, 10, inverted, dilated)
+     require ≥ 2 agreement.
+   - **Running score anchor** — make iff `score_after - session_score`
+     is 1 or 2 (a real per-shot increment). The anchor advances even on
+     ambiguous multi-shot OCR drops, so the live count stays accurate.
+   - **Trajectory cross-check** —
+     `abs(ball_x_at_rim_height - hoop_x) ≤ TRAJECTORY_MAKE_TOLERANCE (60 px)`.
+     Rejects tesseract misreads where the ball clearly missed.
+7. **Log** — one row to `assets/shots.db` with all the above plus
+   diagnostic columns (predicted_offset, perturbation, code_commit,
+   predictor_kind, ball_apex_y, etc.).
+8. **Update perturbation tracking** — if missed, increment
+   `misses_at_current_hoop` so the next shot at this same position
+   tries a different offset perturbation.
+9. **Snapshot + commit** — at session end, regenerate
+   `assets/shots_snapshot.json` (gitignored DB → tracked aggregate)
+   and auto-commit + push (within 09:00–22:00 Stockholm).
 
-### "direct" (default)
+## Predictor
 
-Tune `OFFSET_ANCHORS_DIRECT` so the ball arc passes through the rim
-naturally. Mid-flight rescue runs as a safety net for marginal overshoots
-but is not the primary make mechanism — `BALL_X_TOLERANCE=18` is wide
-enough not to interfere with shots that would have made on their own.
+`PREDICTOR_KIND` in `main.py` selects between two implementations in
+`common/predictor.py`:
 
-Empirically known to work (6/7 in an earlier session). Sensitive to small
-offset errors (a few pixels too high or low and shots miss).
+- **`"knn"` (default)** — `KnnPredictor`. Inverse-distance-weighted KNN
+  over past makes' (hoop_y, hoop_x, platform_y) tuples. K=5. Adapts to
+  local curvature in the optimal-py surface; recommended.
+- **`"bivariate"`** — `BivariatePredictor`. Closed-form OLS for
+  `target_y = a·hoop_y + b·hoop_x + c`. Faster but biased in regions
+  far from the training-data cluster — needed hardcoded overrides for
+  low-hoop_x regions before we switched. Kept as A/B baseline.
 
-### "overshoot"
+`fit_knn(rows, k)` / `fit_bivariate(rows)` are the factory functions;
+both take rows from `common.shot_log.fetch_makes(conn, direction)`.
 
+## Perturbation sweep
 
+Hoops only respawn after a make, so a stuck offset would burn every
+life. After each consecutive miss at the same (hoop_x, hoop_y), the
+next shot adds a perturbation to the predicted offset:
 
-We deliberately tune `OFFSET_ANCHORS` so the launched ball passes **above**
-the rim, not through it. The mid-flight rescue (`_try_rescue`) then clicks
-on the ball when it crosses the rim's X — per the wiki, that drops the ball
-straight down. Result: the drop goes through the rim cleanly = swish = 2 pts.
+```
+[0, -8, 8, -16, 16, -24, 24, -32, 32, -48, 48, -64, 64, -80, 80]
+```
 
-Why this beats "tune for direct make":
-- Single decision variable per shot (rescue trigger), not two (offset + rescue).
-- A swish is worth 2x a direct make → faster trophy progress.
-- Robust to small tuning errors: as long as the ball is *somewhere over* the
-  hoop X when rescue fires, it drops in.
-- Direct-make tuning was sensitive: 11 was good, 8 under-arced, 14 over.
-  Overshoot tuning is wider — anything that gets the ball ~30+px above the
-  rim works, so the offset window is much bigger.
+Make or hoop-position change resets the counter. Each perturbed shot
+gets logged with the perturbation, so makes from explored offsets feed
+back into the predictor on next session.
 
-What we need for this strategy to work:
-- Reliable ball detection (HSV mask + area filter; tuned via
-  `BALL_HSV_LOWER/UPPER` and `BALL_MIN_AREA/MAX_AREA`).
-- Tight `BALL_X_TOLERANCE` (currently 12) so the click drops the ball at
-  the rim opening, not on the backboard.
-- Long enough `RESCUE_WINDOW` (1.5s) to catch the ball during its descent.
+## Tuning knobs (rarely touched)
 
-## Tuning knobs
-
-| Knob | Purpose | Tune when |
-|--|--|--|
-| `OFFSET_ANCHORS` | Position-dependent platform launch Y | Misses are systematically over/under at a given hoop Y range |
-| `Y_TOLERANCE` | How close platform Y must be to target before firing | Bot fires too often (high) or never (very low) |
-| `BALL_X_TOLERANCE` | Rescue trigger window | Drops are off-rim (too wide) or rescue rarely fires (too tight) |
-| `BALL_MAX_AREA` | Filter for ball+nearby-pixel merged blobs | Ball detection vanishes near hoop (raise) or false-detects rim (lower) |
-| `BALL_HSV_LOWER/UPPER` | Color mask for the ball | Background or character orange is being matched as the ball |
-| `RESCUE_WINDOW` | How long to track the ball after launch | Rescue runs out before ball reaches hoop_x (raise) |
+| Constant | Purpose | When to revisit |
+|---|---|---|
+| `PREDICTOR_KIND` | "knn" or "bivariate" | A/B comparing predictor variants |
+| `Y_TOLERANCE` (6) | Px window around target_y to fire on `in_window` | If bot fires too often or never |
+| `REQUIRED_DIRECTION` ("up") | Platform direction at fire | Have not had reason to flip since the dir=up regime was found |
+| `PERTURBATION_SEQUENCE` | Miss-driven offset sweep | If stuck regions need wider exploration |
+| `TRAJECTORY_MAKE_TOLERANCE` (60) | Px window for ball-at-rim-x to count as a make | If real makes are getting rejected as overshoots |
+| `COLD_START_OFFSET` (20) | Used until ≥4 makes are in the DB for the predictor to fit | New install, or DB wiped |
 
 ## Open problems
 
-1. **Ball detection sometimes loses the ball** during the second half of
-   flight (near the rim). Likely cause: HSV mask catches both the ball and
-   the orange rim, merged blob exceeds `BALL_MAX_AREA`. Bumped MAX to 2500;
-   monitor folders save flight frames for offline debugging.
-2. **Score 20+ moving hoop** not handled — bot uses a stale hoop position.
-3. **Suspicious clamped MAKEs** with very high score-diff values (47, 18, 13)
-   when the shot was geometrically unmakeable. Either the shot really did
-   make (lucky bank) or score region picks up a UI animation. Worth
-   investigating with monitor screenshots.
+1. **Score ≥10 moving platform** — not handled. The `home_x` machinery
+   exists but is disabled. Will need re-enabling before we can clear
+   the trophy (40+ score requires playing through 10/20/30 thresholds).
+2. **Score ≥20 moving hoop** — bot uses a stale hoop position. Will
+   need per-shot re-detection right before the platform crosses target.
+3. **Tesseract is unreliable on tiny pixel-art digits.** Multi-pass
+   voting cuts most misreads but not all. The durable fix is template
+   matching against pre-extracted digit PNGs (see
+   `docs/metrics_backlog.md` "Higher cost").

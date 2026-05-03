@@ -12,7 +12,7 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 
 | Module   | Working | Notes |
 |----------|---------|-------|
-| hoops    | ~50%    | Resolution-agnostic (multi-scale templates + fraction-based regions). Real per-shot make detection via score-region diff (binarized), game-over detection, game-start prompt detection. Tuning is layout-dependent: known good in portrait window, current widescreen tuning still missing shots (peak too short of hoop). Two switchable strategies (`SHOT_STRATEGY = "direct"` or `"overshoot"`); overshoot relies on the click-on-ball drop trick which we have no proof works in this game version. |
+| hoops    | ~40%    | Rim-only template matching (multi-scale, fraction-based regions). Make detection requires multi-pass Tesseract OCR + ball-trajectory cross-check — false positives are rare. Predictor is swappable (`PREDICTOR_KIND` in `main.py`): KNN over past makes (default) or bivariate OLS. Shots logged to `assets/shots.db` with full diagnostics; predictor retrains from past makes on every session start. Per-shot perturbation sweep on consecutive misses at the same hoop. Auto-snapshot + auto-commit at session end. Score 10+ (moving platform) and 20+ (moving hoop) not yet handled — need re-enabling `home_x` machinery and per-shot hoop re-detection respectively. See `minigames/hoops/STRATEGY.md`. |
 | darts    | ~30%    | Release-pose template matching fires consistently. Wind region is captured, dedup-saving distinct states builds the wind library as you play. Score-region diff per throw. Multi-template per spawn-height (the dominant accuracy variable) not yet built. |
 | chopping | ~40%    | Region picking + dual-region (bar zones + leaf track above) + leaf HSV all working. Button click is suspect — first test closed the minigame. Needs verification of the button region and a single careful re-test. |
 | catching | Scaffold| Folder + entry points (`catching`, `catching-capture`, `catching-pick-play-region`). Flappy-Bird-style: click for altitude, navigate hoops. Need fly + hoop-gap detectors before this runs — currently the detectors return None. |
@@ -168,11 +168,38 @@ common/
   regions.py       load/save per-minigame regions.json
   templates.py     multi-scale matchTemplate helpers
   session_log.py   tee stdout to per-session log files
+  shot_log.py      SQLite schema + log_shot + fetch_makes
+  predictor.py     Predictor protocol, KnnPredictor, BivariatePredictor
+  ball_trajectory  HSV+motion ball tracker over flight frames
+  score_ocr.py     multi-pass tesseract score reader
+  idleon_save.py   read & decode the local Idleon save (Haxe format)
+  auto_commit.py   stage+commit+push a single file from inside a bot
+  review_nag.py    "you've played N sessions since last review" nudge
+  tries_counter.py persisted shared chopping/catching tries count
 minigames/
-  hoops/           basketball — multi-scale templates, score diff,
-                   game-over/start detection, ball-drop rescue
-  darts/           throwy darts — release-pose template, wind capture,
-                   per-throw monitor screenshots
+  hoops/           basketball — see minigames/hoops/STRATEGY.md
+  darts/           throwy darts — release-pose template, wind capture
   chopping/        leaf+zones HSV bot, separate leaf/bar regions
   catching/        scaffold — flappy-bird-style, detectors not built
+ui/
+  launcher.py      Tk launcher: Bots / Setup / Frames tabs
+scripts/
+  dump_shots.py    snapshot shots.db → tracked JSON
+  dump_idleon_save inspect the decoded Idleon save
+docs/
+  cleanup_backlog  refactors and dead-code removal
+  metrics_backlog  shots.db columns to add, OCR follow-ups
 ```
+
+## Where to start (coming back to this after a while)
+
+1. **`README.md`** (this file) — what works, what doesn't, how to install.
+2. **`CLAUDE.md`** — architecture conventions + the "Hoops: established
+   findings" section (settled experiments not to redo).
+3. **`minigames/hoops/STRATEGY.md`** — end-to-end pipeline for the
+   hoops bot: detect → predict → fire → validate → log → snapshot.
+4. **`TODO.md`** — open work + scheduled-agent IDs.
+5. **`docs/cleanup_backlog.md`** + **`docs/metrics_backlog.md`** — small
+   improvements queued for later.
+
+`uv run pytest` should always pass — that's the executable spec.
