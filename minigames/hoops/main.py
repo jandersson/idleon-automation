@@ -213,44 +213,67 @@ def _log_shot_result(
     stats: dict,
     before,
     after,
-    ocr_increment: int | None = None,
+    score_after_int: int | None = None,
     ball_x_at_rim: int | None = None,
     hoop_x: int | None = None,
-) -> tuple[bool | None, float | None]:
-    """Print the score diff line and update stats. Returns (changed, diff) or
-    (None, None) if either snapshot was missing — caller can persist either way.
+) -> tuple[bool | None, float | None, int | None]:
+    """Print the score diff line and update stats. Returns
+    (changed, diff, computed_increment) or (None, None, None) if either
+    score snapshot was missing.
 
-    Make detection now requires BOTH:
-      1) OCR confirms score_increment > 0
-      2) trajectory plausible: ball was within TRAJECTORY_MAKE_TOLERANCE
-         of hoop_x at rim height (or trajectory data is missing — we
-         don't penalise shots where the ball detector lost track)
+    Make detection now anchors on the running session score (in `stats`,
+    keys "session_score") rather than requiring a per-shot OCR'd `sb`.
+    Pre-shot OCR fails surprisingly often (animation residuals); but
+    post-shot OCR + the previous shot's confirmed `sa` is enough to
+    derive the increment.
 
-    Without (2), tesseract's occasional misreads ("0" → "1") get logged
-    as makes even when the ball clearly overshot by 100+ px. The
-    trajectory cross-check rejects those.
+    Rules:
+      - If `score_after_int` is None: count as miss (we can't confirm).
+      - If `score_after_int <= session_score`: miss (no progress).
+      - If `score_after_int - session_score` is 1 or 2 AND trajectory
+        plausible: MAKE (+1 or +2). Update session_score.
+      - If increment is >2 (e.g. OCR misread "8" as "17"): reject as
+        misread — almost certainly a tesseract error, since you can't
+        score >2 in a single shot.
     """
     if before is None or after is None:
-        return None, None
+        return None, None, None
     _, diff = score_changed(before, after)
-    ocr_says_make = ocr_increment is not None and ocr_increment > 0
+    session_score = stats.get("session_score", 0)
+    inferred_increment: int | None = None
+    if score_after_int is not None:
+        inferred_increment = score_after_int - session_score
+
+    plausible_inc = inferred_increment is not None and 1 <= inferred_increment <= 2
     trajectory_plausible = (
         ball_x_at_rim is None
         or hoop_x is None
         or abs(ball_x_at_rim - hoop_x) <= TRAJECTORY_MAKE_TOLERANCE
     )
-    changed = ocr_says_make and trajectory_plausible
+    # Strict per-shot make credit (this is what the predictor sees).
+    changed = plausible_inc and trajectory_plausible
+
+    # Always advance the session score anchor when sa is higher — even if
+    # the per-shot increment is too big to attribute to this single shot.
+    # This way the live score display matches the in-game score, and
+    # subsequent shots get accurate increment math, even when OCR dropped
+    # out for some shots in between.
+    if score_after_int is not None and score_after_int > session_score:
+        stats["session_score"] = score_after_int
+
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
-        label = "MAKE"
-    elif ocr_says_make and not trajectory_plausible:
+        label = f"MAKE (+{inferred_increment})"
+    elif plausible_inc and not trajectory_plausible:
         label = "miss [OCR said make but ball overshot]"
+    elif inferred_increment is not None and inferred_increment > 2:
+        label = f"miss [OCR jump +{inferred_increment} — multiple makes lost to OCR drop]"
     else:
         label = "miss"
-    inc_str = f", inc={ocr_increment:+d}" if ocr_increment is not None else ", inc=?"
-    print(f"  [score] {label} (diff={diff:.1f}{inc_str}) | session {stats['makes']}/{stats['attempts']}")
-    return changed, diff
+    sa_str = f", sa={score_after_int}" if score_after_int is not None else ", sa=?"
+    print(f"  [score] {label} (diff={diff:.1f}{sa_str}, score={stats['session_score']}) | confident makes {stats['makes']}/{stats['attempts']}")
+    return changed, diff, inferred_increment
 
 
 def _try_rescue(left: int, top: int, width: int, height: int,
@@ -399,7 +422,7 @@ def _run_inner(session_started: str, shot_db, predictor):
     range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
     last_range_log = time.time()
     prev_py: int | None = None
-    shot_stats: dict = {"makes": 0, "attempts": 0}
+    shot_stats: dict = {"makes": 0, "attempts": 0, "session_score": 0}
     # Misses at the current hoop position. Each consecutive miss bumps the
     # offset perturbation. Reset when the hoop position changes (after a
     # make, the game spawns a new hoop).
@@ -563,13 +586,12 @@ def _run_inner(session_started: str, shot_db, predictor):
                 # OCR the actual score numbers — used as the primary make
                 # signal (the diff-based heuristic was noisy on the wider
                 # score region). None if tesseract binary isn't installed.
+                # `score_increment` here is just the per-shot pre→post diff
+                # for diagnostic logging; the actual make-detection logic in
+                # _log_shot_result uses the running session_score anchor,
+                # which is much more robust to pre-shot OCR failures.
                 score_before_int = read_score(score_before) if score_before is not None else None
                 score_after_int = read_score(score_after) if score_after is not None else None
-                score_increment = (
-                    score_after_int - score_before_int
-                    if score_before_int is not None and score_after_int is not None
-                    else None
-                )
                 # Ball trajectory metrics from the captured flight frames —
                 # done BEFORE _log_shot_result so we can cross-check OCR
                 # against physics: a "make" with the ball flying 100+ px
@@ -584,9 +606,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                         trajectory = analyse_shot_dir(shot_dir, hoop_x, hoop_y)
                     except Exception as e:
                         print(f"  [trajectory] analysis failed (non-fatal): {e}")
-                made, score_diff = _log_shot_result(
+                made, score_diff, score_increment = _log_shot_result(
                     shot_stats, score_before, score_after,
-                    ocr_increment=score_increment,
+                    score_after_int=score_after_int,
                     ball_x_at_rim=trajectory["ball_x_at_rim_height"],
                     hoop_x=hoop_x,
                 )
