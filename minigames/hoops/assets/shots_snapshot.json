@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-03T06:31:23",
-  "total_shots": 203,
-  "total_makes": 52,
-  "make_rate": 0.256,
+  "generated_at": "2026-05-03T06:45:59",
+  "total_shots": 206,
+  "total_makes": 55,
+  "make_rate": 0.267,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -123,6 +123,11 @@
       "started": "2026-05-03T06:22:23",
       "shots": 4,
       "makes": 1
+    },
+    {
+      "started": "2026-05-03T06:45:30",
+      "shots": 3,
+      "makes": 3
     }
   ],
   "buckets": [
@@ -155,6 +160,12 @@
       "hoop_y_bucket": 380,
       "shots": 3,
       "makes": 0
+    },
+    {
+      "hoop_x_bucket": 580,
+      "hoop_y_bucket": 410,
+      "shots": 3,
+      "makes": 3
     },
     {
       "hoop_x_bucket": 590,
@@ -443,7 +454,78 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
+    },
+    {
+      "hoop_x": 586,
+      "hoop_y": 410,
+      "platform_y": 401,
+      "offset": 13,
+      "target_y": 423,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 586,
+      "click_y": 410,
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 44,
+      "ball_x_at_rim_height": 729,
+      "ball_landing_x": 809,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": null,
+      "score_after_int": 1,
+      "score_increment": null
+    },
+    {
+      "hoop_x": 586,
+      "hoop_y": 410,
+      "platform_y": 421,
+      "offset": 13,
+      "target_y": 423,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 586,
+      "click_y": 410,
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 51,
+      "ball_x_at_rim_height": 718,
+      "ball_landing_x": 796,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": null,
+      "score_after_int": 1,
+      "score_increment": null
+    },
+    {
+      "hoop_x": 586,
+      "hoop_y": 410,
+      "platform_y": 425,
+      "offset": 13,
+      "target_y": 423,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 586,
+      "click_y": 410,
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 55,
+      "ball_x_at_rim_height": 734,
+      "ball_landing_x": 813,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 1,
+      "score_after_int": 1,
+      "score_increment": 0
     },
     {
       "hoop_x": 587,
@@ -460,7 +542,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 593,
@@ -477,7 +564,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 594,
@@ -494,7 +586,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 607,
@@ -511,7 +608,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 607,
@@ -528,7 +630,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 610,
@@ -545,7 +652,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 639,
@@ -562,7 +674,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 639,
@@ -579,7 +696,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 643,
@@ -596,7 +718,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 645,
@@ -613,7 +740,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 647,
@@ -630,7 +762,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 647,
@@ -647,7 +784,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 647,
@@ -664,7 +806,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 649,
@@ -681,7 +828,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 649,
@@ -698,7 +850,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 655,
@@ -715,7 +872,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 660,
@@ -732,7 +894,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 661,
@@ -749,7 +916,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 668,
@@ -766,7 +938,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 668,
@@ -783,7 +960,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 669,
@@ -800,7 +982,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 671,
@@ -817,7 +1004,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 674,
@@ -834,7 +1026,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 677,
@@ -851,7 +1048,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 677,
@@ -868,7 +1070,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 677,
@@ -885,7 +1092,12 @@
       "lives_diff": null,
       "ball_apex_y": 186,
       "ball_x_at_rim_height": 660,
-      "ball_landing_x": 737
+      "ball_landing_x": 737,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 681,
@@ -902,7 +1114,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 687,
@@ -919,7 +1136,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 692,
@@ -936,7 +1158,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 693,
@@ -953,7 +1180,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 694,
@@ -970,7 +1202,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 695,
@@ -987,7 +1224,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 706,
@@ -1004,7 +1246,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 708,
@@ -1021,7 +1268,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 710,
@@ -1038,7 +1290,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 710,
@@ -1055,7 +1312,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 710,
@@ -1072,7 +1334,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 710,
@@ -1089,7 +1356,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 710,
@@ -1106,7 +1378,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 712,
@@ -1123,7 +1400,12 @@
       "lives_diff": 222.37864685058594,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1140,7 +1422,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1157,7 +1444,12 @@
       "lives_diff": null,
       "ball_apex_y": 71,
       "ball_x_at_rim_height": 687,
-      "ball_landing_x": 673
+      "ball_landing_x": 673,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1174,7 +1466,12 @@
       "lives_diff": null,
       "ball_apex_y": 71,
       "ball_x_at_rim_height": 689,
-      "ball_landing_x": 696
+      "ball_landing_x": 696,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1191,7 +1488,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1208,7 +1510,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1225,7 +1532,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 715,
@@ -1242,7 +1554,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 716,
@@ -1259,7 +1576,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 724,
@@ -1276,7 +1598,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 726,
@@ -1293,7 +1620,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     },
     {
       "hoop_x": 733,
@@ -1310,7 +1642,12 @@
       "lives_diff": null,
       "ball_apex_y": null,
       "ball_x_at_rim_height": null,
-      "ball_landing_x": null
+      "ball_landing_x": null,
+      "window_w": null,
+      "window_h": null,
+      "score_before_int": null,
+      "score_after_int": null,
+      "score_increment": null
     }
   ]
 }
