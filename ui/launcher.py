@@ -18,6 +18,8 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
+from common import tries_counter
+
 PROJECT_ROOT = Path(__file__).parent.parent
 MINIGAMES_DIR = PROJECT_ROOT / "minigames"
 
@@ -106,10 +108,17 @@ class Launcher:
         self._build_frames_tab(frames_tab)
 
     def _build_bots_tab(self, parent: ttk.Frame):
+        # Top strip: shared "global tries" counter (chopping + catching share
+        # one tries pool in-game; user updates manually since it isn't easily
+        # OCR-able — only visible on a pre-game popup).
+        self._build_tries_strip(parent).grid(
+            row=0, column=0, sticky="ew", padx=8, pady=(8, 0)
+        )
+
         for i, mg in enumerate(MINIGAMES):
             label = f"{mg.get('emoji', '')} {mg['name'].capitalize()}".strip()
             frame = ttk.LabelFrame(parent, text=label, padding=6)
-            frame.grid(row=i, column=0, sticky="ew", padx=8, pady=4)
+            frame.grid(row=i + 1, column=0, sticky="ew", padx=8, pady=4)
 
             top = ttk.Frame(frame)
             top.pack(fill="x")
@@ -131,7 +140,7 @@ class Launcher:
                 self.setup_buttons[cmd] = (btn, label)
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
-        log_frame.grid(row=len(MINIGAMES), column=0, sticky="nsew", padx=8, pady=(4, 8))
+        log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
         self.log_text = tk.Text(log_frame, height=10, wrap="none", state="disabled",
                                 bg="#111", fg="#ddd", insertbackground="#ddd",
                                 font=("Consolas", 9))
@@ -141,7 +150,45 @@ class Launcher:
         self.log_text.pack(side="left", fill="both", expand=True)
 
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(len(MINIGAMES), weight=1)
+        # Log row is len(MINIGAMES) + 1 (tries strip is row 0).
+        parent.rowconfigure(len(MINIGAMES) + 1, weight=1)
+
+    def _build_tries_strip(self, parent: ttk.Frame) -> ttk.Frame:
+        """Strip with the shared chopping/catching tries counter and a Set
+        button so the user can update it after checking the in-game popup."""
+        strip = ttk.Frame(parent)
+        ttk.Label(strip, text="🪓 / 🪰 Global tries:").pack(side="left")
+
+        current = tries_counter.read()
+        self.tries_label = ttk.Label(
+            strip,
+            text=str(current) if current is not None else "—",
+            font=("Segoe UI", 10, "bold"),
+        )
+        self.tries_label.pack(side="left", padx=(6, 12))
+
+        ttk.Label(strip, text="Set:", foreground="grey").pack(side="left")
+        self.tries_entry = ttk.Entry(strip, width=5)
+        self.tries_entry.pack(side="left", padx=(4, 4))
+        self.tries_entry.bind("<Return>", lambda _e: self._save_tries())
+        ttk.Button(strip, text="Save", width=6, command=self._save_tries).pack(side="left")
+        return strip
+
+    def _save_tries(self) -> None:
+        raw = self.tries_entry.get().strip()
+        if not raw:
+            return
+        try:
+            value = int(raw)
+            if value < 0:
+                raise ValueError
+        except ValueError:
+            self._enqueue_log(f"[tries] not a non-negative int: {raw!r}\n")
+            return
+        tries_counter.write(value)
+        self.tries_label.config(text=str(value))
+        self.tries_entry.delete(0, "end")
+        self._enqueue_log(f"[tries] set to {value}\n")
 
     def _build_frames_tab(self, parent: ttk.Frame):
         controls = ttk.Frame(parent, padding=6)

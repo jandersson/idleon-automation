@@ -15,6 +15,7 @@ minigames/*/assets/logs/
 minigames/*/assets/shots.db
 minigames/*/assets/diagnostics/
 minigames/*/calibration/
+data/
 
 # Editor / OS
 .vscode/
