@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-05-03T10:06:41",
-  "total_shots": 332,
-  "total_makes": 58,
+  "generated_at": "2026-05-03T10:14:25",
+  "total_shots": 338,
+  "total_makes": 59,
   "make_rate": 0.175,
   "sessions": [
     {
@@ -173,6 +173,11 @@
       "started": "2026-05-03T10:01:57",
       "shots": 29,
       "makes": 0
+    },
+    {
+      "started": "2026-05-03T10:13:28",
+      "shots": 6,
+      "makes": 1
     }
   ],
   "buckets": [
@@ -233,6 +238,12 @@
     {
       "hoop_x_bucket": 600,
       "hoop_y_bucket": 350,
+      "shots": 3,
+      "makes": 0
+    },
+    {
+      "hoop_x_bucket": 600,
+      "hoop_y_bucket": 360,
       "shots": 3,
       "makes": 0
     },
@@ -331,6 +342,12 @@
       "hoop_y_bucket": 360,
       "shots": 1,
       "makes": 1
+    },
+    {
+      "hoop_x_bucket": 650,
+      "hoop_y_bucket": 380,
+      "shots": 1,
+      "makes": 0
     },
     {
       "hoop_x_bucket": 650,
@@ -473,8 +490,8 @@
     {
       "hoop_x_bucket": 700,
       "hoop_y_bucket": 460,
-      "shots": 1,
-      "makes": 1
+      "shots": 2,
+      "makes": 2
     },
     {
       "hoop_x_bucket": 700,
@@ -503,7 +520,7 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 500,
-      "shots": 1,
+      "shots": 2,
       "makes": 1
     },
     {
@@ -1401,6 +1418,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 700,
+      "hoop_y": 464,
+      "platform_y": 473,
+      "offset": 15,
+      "target_y": 479,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 95,
+      "ball_x_at_rim_height": 674,
+      "ball_landing_x": 621,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": null,
+      "score_after_int": 5,
+      "score_increment": 2,
+      "predicted_offset": 15,
+      "code_commit": "9732eff6ff42-dirty",
+      "predictor_kind": "knn"
     },
     {
       "hoop_x": 706,
