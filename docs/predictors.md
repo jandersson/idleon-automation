@@ -45,7 +45,7 @@ In one line, the prediction is:
 $$\hat{y}(x_*) = \frac{\sum_{i \in N_K(x_*)} \frac{1}{d_i} \, y_i}{\sum_{i \in N_K(x_*)} \frac{1}{d_i}}$$
 
 where \\(N_K(x_\ast)\\) is the set of \\(K\\) nearest neighbours of the query and
-\\(d_i = \|x_\ast - x_i\|\\).
+\\(d_i = \\|x_\ast - x_i\\|\\).
 
 **Why \\(K=3\\):** smaller \\(K\\) is more local. With \\(K=5\\) the dense
 centre-of-court data drifted predictions in sparse corners. \\(K=3\\) lets
