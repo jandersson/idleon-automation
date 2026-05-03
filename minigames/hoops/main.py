@@ -217,18 +217,37 @@ def _capture_lives_region(left: int, top: int, width: int, height: int):
     )
 
 
-def _log_shot_result(stats: dict, before, after) -> tuple[bool | None, float | None]:
+def _log_shot_result(
+    stats: dict,
+    before,
+    after,
+    ocr_increment: int | None = None,
+) -> tuple[bool | None, float | None]:
     """Print the score diff line and update stats. Returns (changed, diff) or
-    (None, None) if either snapshot was missing — caller can persist either way."""
+    (None, None) if either snapshot was missing — caller can persist either way.
+
+    OCR override: when the caller passes a non-None ocr_increment (the OCR'd
+    score_after - score_before), we trust that over the diff-based heuristic.
+    The diff metric is noisy on the wider score region (false positives 6-15
+    on background variation), but OCR'd ints are unambiguous when they parse.
+    """
     if before is None or after is None:
         return None, None
-    changed, diff = score_changed(before, after)
+    diff_changed, diff = score_changed(before, after)
+    if ocr_increment is not None:
+        changed = ocr_increment > 0
+        marker = "OCR"
+    else:
+        changed = diff_changed
+        marker = "diff"
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
-        print(f"  [score] MAKE (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
+        label = "MAKE"
     else:
-        print(f"  [score] miss (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
+        label = "miss"
+    inc_str = f", inc={ocr_increment:+d}" if ocr_increment is not None else ""
+    print(f"  [score] {label} ({marker} diff={diff:.1f}{inc_str}) | session {stats['makes']}/{stats['attempts']}")
     return changed, diff
 
 
@@ -539,7 +558,21 @@ def _run_inner(session_started: str, shot_db, predictor):
                     time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
-                made, score_diff = _log_shot_result(shot_stats, score_before, score_after)
+                # OCR the actual score numbers so we can distinguish 1pt
+                # rim-touched makes from 2pt swishes, and (more importantly)
+                # so the made/miss decision uses the actual digit value
+                # rather than the noise-prone score_diff heuristic. None if
+                # tesseract binary isn't installed (logged once, then silent).
+                score_before_int = read_score(score_before) if score_before is not None else None
+                score_after_int = read_score(score_after) if score_after is not None else None
+                score_increment = (
+                    score_after_int - score_before_int
+                    if score_before_int is not None and score_after_int is not None
+                    else None
+                )
+                made, score_diff = _log_shot_result(
+                    shot_stats, score_before, score_after, ocr_increment=score_increment,
+                )
                 # Compute lives_diff up-front so we can persist it on the
                 # shot row. Only meaningful when the lives region is visibly
                 # populated (during pre-game or "Make a shot to start"
@@ -548,16 +581,6 @@ def _run_inner(session_started: str, shot_db, predictor):
                 if lives_before is not None and lives_after is not None:
                     if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
                         _, lives_diff_value = score_changed(lives_before, lives_after)
-                # OCR the actual score numbers so we can distinguish 1pt
-                # rim-touched makes from 2pt swishes. None if tesseract
-                # binary isn't installed (logged once, then silent).
-                score_before_int = read_score(score_before) if score_before is not None else None
-                score_after_int = read_score(score_after) if score_after is not None else None
-                score_increment = (
-                    score_after_int - score_before_int
-                    if score_before_int is not None and score_after_int is not None
-                    else None
-                )
                 # Ball trajectory metrics from the captured flight frames.
                 # All-None when MONITOR_FLIGHT was off or no ball detected.
                 trajectory: dict = {
