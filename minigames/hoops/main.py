@@ -506,6 +506,14 @@ def _run_inner(session_started: str, shot_db, predictor):
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
                 made, score_diff = _log_shot_result(shot_stats, score_before, score_after)
+                # Compute lives_diff up-front so we can persist it on the
+                # shot row. Only meaningful when the lives region is visibly
+                # populated (during pre-game or "Make a shot to start"
+                # screens it's blank, std() near zero).
+                lives_diff_value: float | None = None
+                if lives_before is not None and lives_after is not None:
+                    if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
+                        _, lives_diff_value = score_changed(lives_before, lives_after)
                 log_shot(
                     shot_db,
                     session_started=session_started,
@@ -528,6 +536,7 @@ def _run_inner(session_started: str, shot_db, predictor):
                     click_x=int(click_x_rel),
                     click_y=int(click_y_rel),
                     perturbation=int(perturbation),
+                    lives_diff=lives_diff_value,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.
@@ -536,17 +545,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                     current_hoop_key = None
                 else:
                     misses_at_current_hoop += 1
-                # Lives counter check: when the digit visibly changes between
-                # pre and post, log it. Doesn't reliably indicate "click didn't
-                # register" when unchanged (the lives counter doesn't always
-                # tick per shot — game-side semantics vary, and our diff
-                # threshold + region pick make the signal noisy).
-                if lives_before is not None and lives_after is not None:
-                    lives_visible = float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0
-                    if lives_visible:
-                        lives_changed_flag, lives_diff = score_changed(lives_before, lives_after)
-                        if lives_changed_flag:
-                            print(f"  [lives] counter ticked down (diff={lives_diff:.1f})")
+                # Print the lives tick if it happened (signal for bot watching).
+                if lives_diff_value is not None and lives_diff_value > 3:
+                    print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")
                 if shot_dir is not None:
                     post_frame = grab_region(left, top, width, height)
                     save_frame(shot_dir / "post_shot.png", post_frame)

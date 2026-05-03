@@ -14,7 +14,7 @@ cost vs payoff. Drop entries as they ship.
       derivable from `offset - predicted_offset` but only if you know the
       predictor at log time. Logging directly makes "did the sweep find the
       make zone?" a one-line query.
-- [ ] **`lives_diff`** — already detected (the "lives counter ticked down"
+- [x] **`lives_diff`** — already detected (the "lives counter ticked down"
       print), just not persisted. Cross-check on "did this shot really
       miss" — score and life count occasionally disagree.
 

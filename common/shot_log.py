@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS shots (
     shot_dir TEXT,
     click_x INTEGER,
     click_y INTEGER,
-    perturbation INTEGER
+    perturbation INTEGER,
+    lives_diff REAL
 )
 """
 
@@ -49,6 +50,7 @@ _LATE_COLUMNS = [
     ("click_x", "INTEGER"),
     ("click_y", "INTEGER"),
     ("perturbation", "INTEGER"),
+    ("lives_diff", "REAL"),
 ]
 
 

@@ -46,11 +46,14 @@ def main() -> None:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(shots)")}
     has_click = "click_x" in cols and "click_y" in cols
     has_perturbation = "perturbation" in cols
+    has_lives = "lives_diff" in cols
     extra_cols = ""
     if has_click:
         extra_cols += ", click_x, click_y"
     if has_perturbation:
         extra_cols += ", perturbation"
+    if has_lives:
+        extra_cols += ", lives_diff"
 
     makes = []
     for row in conn.execute(
@@ -75,6 +78,8 @@ def main() -> None:
             rec["click_y"] = row["click_y"]
         if has_perturbation:
             rec["perturbation"] = row["perturbation"]
+        if has_lives:
+            rec["lives_diff"] = row["lives_diff"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

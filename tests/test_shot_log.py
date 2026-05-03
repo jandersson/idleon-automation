@@ -83,6 +83,16 @@ def test_log_shot_records_perturbation(tmp_path):
     assert rows == [(0,), (-8,), (24,)]
 
 
+def test_log_shot_records_lives_diff(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, lives_diff=0.0)        # no tick
+    log_shot(conn, shot_idx=2, lives_diff=222.4)      # tick down
+    log_shot(conn, shot_idx=3, lives_diff=None)       # region invisible
+    rows = list(conn.execute("SELECT lives_diff FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [(0.0,), (222.4,), (None,)]
+
+
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
     for i in range(3):  # min_samples is 4 for bivariate
