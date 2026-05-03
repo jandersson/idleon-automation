@@ -24,6 +24,7 @@ MINIGAMES_DIR = PROJECT_ROOT / "minigames"
 MINIGAMES = [
     {
         "name": "chopping",
+        "emoji": "🪓",
         "bot": "chopping",
         "setup": [
             ("Pick bar", "chopping-pick-bar-region"),
@@ -34,6 +35,7 @@ MINIGAMES = [
     },
     {
         "name": "hoops",
+        "emoji": "🏀",
         "bot": "hoops",
         "setup": [
             ("Capture", "hoops-capture"),
@@ -47,6 +49,7 @@ MINIGAMES = [
     },
     {
         "name": "darts",
+        "emoji": "🎯",
         "bot": "darts",
         "setup": [
             ("Capture", "darts-capture"),
@@ -59,6 +62,7 @@ MINIGAMES = [
     },
     {
         "name": "catching",
+        "emoji": "🪰",
         "bot": "catching",
         "setup": [
             ("Capture", "catching-capture"),
@@ -103,7 +107,8 @@ class Launcher:
 
     def _build_bots_tab(self, parent: ttk.Frame):
         for i, mg in enumerate(MINIGAMES):
-            frame = ttk.LabelFrame(parent, text=mg["name"].capitalize(), padding=6)
+            label = f"{mg.get('emoji', '')} {mg['name'].capitalize()}".strip()
+            frame = ttk.LabelFrame(parent, text=label, padding=6)
             frame.grid(row=i, column=0, sticky="ew", padx=8, pady=4)
 
             top = ttk.Frame(frame)
