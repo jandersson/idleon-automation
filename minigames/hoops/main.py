@@ -83,6 +83,32 @@ def _perturbation_for(miss_count: int) -> int:
     through the sweep."""
     return PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
 
+
+VARIED_CLICK_POSITIONS = ("hoop", "center", "above_hoop", "far_right")
+
+
+def _pick_click_position(
+    hoop_x: int, hoop_y: int, width: int, height: int, shot_idx: int,
+) -> tuple[int, int]:
+    """Decide where to click for this shot, based on CLICK_STRATEGY. Returns
+    (x, y) window-relative."""
+    if CLICK_STRATEGY == "varied":
+        choice = VARIED_CLICK_POSITIONS[(shot_idx - 1) % len(VARIED_CLICK_POSITIONS)]
+    elif CLICK_STRATEGY == "center":
+        choice = "center"
+    else:
+        choice = "hoop"
+
+    if choice == "hoop":
+        return hoop_x, hoop_y
+    if choice == "center":
+        return width // 2, height // 2
+    if choice == "above_hoop":
+        return hoop_x, max(0, hoop_y - 80)
+    if choice == "far_right":
+        return min(width - 5, 800), height // 2
+    return hoop_x, hoop_y
+
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
 # bumped to 6 — at 2, the in_window branch almost never fires and we rely
 # entirely on "crossed", which catches the cross between samples and
@@ -99,6 +125,17 @@ Y_TOLERANCE = 6
 # Earlier "dir=up overshot" note was at hoop_y=337 (much higher hoop, easier
 # to overshoot); at lower hoops it should land closer to right.
 REQUIRED_DIRECTION = "up"
+
+# Where to click when firing the shot. The user's hypothesis is that click
+# position has no effect on aim. Set "varied" to test it: each shot cycles
+# through several click positions, and the ball trajectory metrics
+# (ball_x_at_rim_height, ball_landing_x) reveal whether the click position
+# correlates with where the ball goes for the same hoop_x/hoop_y.
+#
+# - "hoop":   click at (hoop_x, hoop_y)  — current default
+# - "center": click at window center
+# - "varied": cycle through [hoop, center, above_hoop, far_right] per shot
+CLICK_STRATEGY = "varied"
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
@@ -479,14 +516,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
                 fired_at = datetime.now().isoformat(timespec="seconds")
-                # Click at the hoop position — this DOES affect aim. With the
-                # previous center-click, hoop_x ≤ 617 had 44 misses and zero
-                # makes (ball couldn't reach left); switching to hoop-aimed
-                # click landed the first ever make at hoop_x=607 in the very
-                # next session. Window-relative click coords are (hoop_x,
-                # hoop_y); we log those rather than the screen-absolute click
-                # for portability across window positions.
-                click_x_rel, click_y_rel = hoop_x, hoop_y
+                click_x_rel, click_y_rel = _pick_click_position(
+                    hoop_x, hoop_y, width, height, shot_idx,
+                )
                 click(left + click_x_rel, top + click_y_rel)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
