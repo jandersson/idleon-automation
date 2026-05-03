@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-05-03T05:39:43",
-  "total_shots": 177,
-  "total_makes": 45,
+  "generated_at": "2026-05-03T05:47:08",
+  "total_shots": 193,
+  "total_makes": 49,
   "make_rate": 0.254,
   "sessions": [
     {
@@ -103,6 +103,11 @@
       "started": "2026-05-03T05:35:16",
       "shots": 10,
       "makes": 6
+    },
+    {
+      "started": "2026-05-03T05:45:28",
+      "shots": 16,
+      "makes": 4
     }
   ],
   "buckets": [
@@ -139,8 +144,8 @@
     {
       "hoop_x_bucket": 590,
       "hoop_y_bucket": 330,
-      "shots": 5,
-      "makes": 0
+      "shots": 15,
+      "makes": 1
     },
     {
       "hoop_x_bucket": 590,
@@ -175,7 +180,7 @@
     {
       "hoop_x_bucket": 610,
       "hoop_y_bucket": 340,
-      "shots": 2,
+      "shots": 5,
       "makes": 1
     },
     {
@@ -230,6 +235,12 @@
       "hoop_x_bucket": 640,
       "hoop_y_bucket": 370,
       "shots": 2,
+      "makes": 1
+    },
+    {
+      "hoop_x_bucket": 650,
+      "hoop_y_bucket": 360,
+      "shots": 1,
       "makes": 1
     },
     {
@@ -294,6 +305,12 @@
     },
     {
       "hoop_x_bucket": 690,
+      "hoop_y_bucket": 410,
+      "shots": 1,
+      "makes": 1
+    },
+    {
+      "hoop_x_bucket": 690,
       "hoop_y_bucket": 470,
       "shots": 1,
       "makes": 1
@@ -325,8 +342,8 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 440,
-      "shots": 10,
-      "makes": 4
+      "shots": 11,
+      "makes": 5
     },
     {
       "hoop_x_bucket": 710,
@@ -389,7 +406,8 @@
       "required_direction": "up",
       "click_x": 581,
       "click_y": 343,
-      "perturbation": -8
+      "perturbation": -8,
+      "lives_diff": null
     },
     {
       "hoop_x": 587,
@@ -402,7 +420,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 593,
@@ -415,7 +434,22 @@
       "required_direction": "up",
       "click_x": 593,
       "click_y": 390,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
+    },
+    {
+      "hoop_x": 594,
+      "hoop_y": 338,
+      "platform_y": 299,
+      "offset": -41,
+      "target_y": 297,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 594,
+      "click_y": 338,
+      "perturbation": -48,
+      "lives_diff": null
     },
     {
       "hoop_x": 607,
@@ -428,7 +462,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 607,
@@ -441,7 +476,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 610,
@@ -454,7 +490,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 639,
@@ -467,7 +504,8 @@
       "required_direction": "up",
       "click_x": 639,
       "click_y": 309,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 639,
@@ -480,7 +518,8 @@
       "required_direction": "up",
       "click_x": 639,
       "click_y": 339,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 643,
@@ -493,7 +532,8 @@
       "required_direction": "up",
       "click_x": 643,
       "click_y": 323,
-      "perturbation": 0
+      "perturbation": 0,
+      "lives_diff": null
     },
     {
       "hoop_x": 645,
@@ -506,7 +546,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 647,
@@ -519,7 +560,8 @@
       "required_direction": "up",
       "click_x": 647,
       "click_y": 346,
-      "perturbation": 0
+      "perturbation": 0,
+      "lives_diff": null
     },
     {
       "hoop_x": 647,
@@ -532,7 +574,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 647,
@@ -545,7 +588,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 649,
@@ -558,7 +602,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 649,
@@ -571,7 +616,22 @@
       "required_direction": "up",
       "click_x": 649,
       "click_y": 354,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
+    },
+    {
+      "hoop_x": 655,
+      "hoop_y": 362,
+      "platform_y": 347,
+      "offset": 4,
+      "target_y": 366,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 655,
+      "click_y": 362,
+      "perturbation": 0,
+      "lives_diff": null
     },
     {
       "hoop_x": 660,
@@ -584,7 +644,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 661,
@@ -597,7 +658,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 668,
@@ -610,7 +672,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 668,
@@ -623,7 +686,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 669,
@@ -636,7 +700,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 671,
@@ -649,7 +714,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 674,
@@ -662,7 +728,8 @@
       "required_direction": "up",
       "click_x": 674,
       "click_y": 473,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 677,
@@ -675,7 +742,8 @@
       "required_direction": "up",
       "click_x": 677,
       "click_y": 400,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 677,
@@ -688,7 +756,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 681,
@@ -701,7 +770,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 687,
@@ -714,7 +784,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 692,
@@ -727,7 +798,22 @@
       "required_direction": "up",
       "click_x": 692,
       "click_y": 495,
-      "perturbation": 0
+      "perturbation": 0,
+      "lives_diff": null
+    },
+    {
+      "hoop_x": 693,
+      "hoop_y": 414,
+      "platform_y": 400,
+      "offset": 7,
+      "target_y": 421,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 693,
+      "click_y": 414,
+      "perturbation": 0,
+      "lives_diff": null
     },
     {
       "hoop_x": 694,
@@ -740,7 +826,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 695,
@@ -753,7 +840,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 706,
@@ -766,7 +854,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 708,
@@ -779,7 +868,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 710,
@@ -792,7 +882,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 710,
@@ -805,7 +896,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 710,
@@ -818,7 +910,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 710,
@@ -831,7 +924,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 710,
@@ -844,7 +938,22 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
+    },
+    {
+      "hoop_x": 712,
+      "hoop_y": 449,
+      "platform_y": 449,
+      "offset": 9,
+      "target_y": 458,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "click_x": 712,
+      "click_y": 449,
+      "perturbation": 0,
+      "lives_diff": 222.37864685058594
     },
     {
       "hoop_x": 715,
@@ -857,7 +966,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 715,
@@ -870,7 +980,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 715,
@@ -883,7 +994,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 715,
@@ -896,7 +1008,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 715,
@@ -909,7 +1022,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 716,
@@ -922,7 +1036,8 @@
       "required_direction": "up",
       "click_x": 716,
       "click_y": 504,
-      "perturbation": 0
+      "perturbation": 0,
+      "lives_diff": null
     },
     {
       "hoop_x": 724,
@@ -935,7 +1050,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 726,
@@ -948,7 +1064,8 @@
       "required_direction": "up",
       "click_x": null,
       "click_y": null,
-      "perturbation": null
+      "perturbation": null,
+      "lives_diff": null
     },
     {
       "hoop_x": 733,
@@ -961,7 +1078,8 @@
       "required_direction": "up",
       "click_x": 733,
       "click_y": 501,
-      "perturbation": -8
+      "perturbation": -8,
+      "lives_diff": null
     }
   ]
 }
