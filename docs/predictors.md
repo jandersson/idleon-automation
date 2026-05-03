@@ -1,8 +1,9 @@
-# Predictors — algorithm notes
+# Predictors — refresher notes
 
-Prediction algorithms used (or planned) in `common/predictor.py`.
-Concepts are spelled out at refresher depth: the assumed reader has
-seen the material before but doesn't remember the specifics.
+Prediction algorithms used (or planned) in `common/predictor.py`,
+explained for the reader who's a decade out of "machine learning
+school". Concepts are spelled out as a refresher, not first-time
+teaching.
 
 > **Companion visualisation:**
 > [predictor_playground.html](https://jandersson.github.io/idleon-automation/predictor_playground.html)
@@ -84,9 +85,9 @@ under-fits sparse ones.
 
 ## Gaussian Process Regression — planned upgrade
 
-GP is the next predictor on TODO. The notes below skip the standard
-textbook motivation and focus on the conceptual moves that aren't
-always made explicit when the algorithm is first introduced.
+GP is the next predictor on TODO. This section is the refresher I wish
+I'd had in school — written for a reader who remembers being confused
+by it.
 
 ### The conceptual jump that makes GP click
 
