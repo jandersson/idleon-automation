@@ -361,9 +361,14 @@ class Launcher:
         self._spawn(cmd, track_as=None)
 
     def _spawn(self, entry_point: str, track_as: str | None):
+        import os
         creationflags = 0
         if sys.platform == "win32":
             creationflags = subprocess.CREATE_NO_WINDOW
+        # PYTHONUNBUFFERED=1 so the bot's stdout flushes line-by-line
+        # rather than block-buffering — keeps the launcher log live
+        # instead of dumping everything at session end.
+        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         try:
             # --no-sync: skip uv's implicit dependency-sync check. The launcher
             # itself is one of the entry points (idleon.exe), so a sync would
@@ -378,6 +383,7 @@ class Launcher:
                 bufsize=1,
                 cwd=str(PROJECT_ROOT),
                 creationflags=creationflags,
+                env=env,
             )
         except FileNotFoundError:
             self._enqueue_log(f"[{entry_point}] could not run — is `uv` on your PATH?\n")

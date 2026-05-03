@@ -21,6 +21,11 @@ class _Tee:
                 stream.write(s)
             except Exception:
                 pass
+        # Always flush after writing — otherwise the launcher's piped
+        # stdout block-buffers and the user sees the log only when the
+        # buffer fills (or the process exits). Per-write flush is fine
+        # given how rarely we print compared to the bot's main loop.
+        self.flush()
 
     def flush(self):
         for stream in self.streams:
