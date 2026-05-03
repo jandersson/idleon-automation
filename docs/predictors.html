@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Predictors — interactive visualisation</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 24px;
+    background: #1a1a1a;
+    color: #ddd;
+  }
+  h1 { font-weight: 500; margin-top: 0; }
+  .layout { display: flex; gap: 24px; align-items: flex-start; }
+  .controls {
+    width: 280px;
+    background: #242424;
+    padding: 16px;
+    border-radius: 8px;
+  }
+  .controls label {
+    display: block;
+    margin-top: 12px;
+    font-size: 13px;
+    color: #aaa;
+  }
+  .controls select, .controls input[type=range], .controls button {
+    width: 100%;
+    margin-top: 4px;
+    padding: 6px;
+    background: #333;
+    color: #ddd;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font: inherit;
+  }
+  .controls button { cursor: pointer; }
+  .controls button:hover { background: #3a3a3a; }
+  .value-display {
+    color: #6cf;
+    font-variant-numeric: tabular-nums;
+  }
+  canvas {
+    background: #000;
+    border-radius: 4px;
+    cursor: crosshair;
+  }
+  .legend {
+    margin-top: 12px;
+    height: 16px;
+    width: 100%;
+    background: linear-gradient(to right,
+      rgb(20, 30, 80),  rgb(40, 80, 180), rgb(80, 180, 220),
+      rgb(220, 220, 100), rgb(220, 120, 60), rgb(180, 40, 40));
+    border-radius: 2px;
+  }
+  .legend-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+  }
+  .hover-readout {
+    margin-top: 10px;
+    font-family: monospace;
+    font-size: 12px;
+    color: #aaa;
+  }
+  .explain {
+    margin-top: 18px;
+    font-size: 12px;
+    color: #888;
+    line-height: 1.5;
+  }
+  a { color: #6cf; }
+</style>
+</head>
+<body>
+<h1>Predictors over (hoop_y, hoop_x) → optimal platform_y</h1>
+<p style="color: #888; max-width: 760px;">
+  Companion to <a href="predictors.md">docs/predictors.md</a>. Pick a
+  predictor, scrub its hyperparameters, and watch the predicted-offset
+  surface change. Training points (white dots) are sampled from a
+  synthetic non-planar surface that mimics the rough shape of the
+  hoops physics — non-linear, smooth, denser in the centre.
+</p>
+
+<div class="layout">
+  <div class="controls">
+    <label>Predictor</label>
+    <select id="predictor">
+      <option value="knn">KNN (inverse-distance weighted)</option>
+      <option value="ols">Bivariate OLS</option>
+    </select>
+
+    <label>K (KNN only): <span class="value-display" id="kVal">3</span></label>
+    <input type="range" id="kSlider" min="1" max="20" value="3">
+
+    <label>Training points: <span class="value-display" id="nVal">60</span></label>
+    <input type="range" id="nSlider" min="5" max="200" value="60">
+
+    <label>Noise σ: <span class="value-display" id="noiseVal">5</span></label>
+    <input type="range" id="noiseSlider" min="0" max="30" value="5">
+
+    <label>&nbsp;</label>
+    <button id="regen">Regenerate training data</button>
+
+    <div class="legend"></div>
+    <div class="legend-labels">
+      <span id="legendLow">low</span>
+      <span>predicted offset</span>
+      <span id="legendHigh">high</span>
+    </div>
+
+    <div class="hover-readout" id="hover">
+      hover the canvas for prediction at a point
+    </div>
+
+    <div class="explain">
+      The "true" surface here is a synthetic non-planar function.
+      KNN's weighted-average ceiling is visible as flat plateaus
+      between training points. OLS finds the best-fit plane through
+      everything and ignores curvature.
+    </div>
+  </div>
+
+  <canvas id="cv" width="500" height="500"></canvas>
+</div>
+
+<script>
+  // Coordinate ranges — roughly match real hoops game data.
+  const HX_MIN = 550, HX_MAX = 750;
+  const HY_MIN = 300, HY_MAX = 550;
+
+  // The "true" surface we're trying to learn. Non-planar so KNN and
+  // OLS look visibly different. Returns the optimal *offset*
+  // (platform_y - hoop_y) for a given hoop position.
+  function trueOffset(hy, hx) {
+    const yc = (hy - 425) / 100;     // normalised
+    const xc = (hx - 650) / 100;
+    return 30 + 12 * yc + 8 * xc * xc - 5 * yc * yc + 6 * Math.sin(yc * 2);
+  }
+
+  // Mulberry32 — simple seeded PRNG so regen results are reproducible
+  // across slider changes.
+  function makeRng(seed) {
+    return function() {
+      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      let t = seed;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+
+  let trainingData = [];
+  let currentSeed = 1;
+
+  function regenerate(n, sigma, seed) {
+    const rng = makeRng(seed);
+    const pts = [];
+    for (let i = 0; i < n; i++) {
+      // Bias sampling toward centre to mimic real-game data density.
+      const hy = HY_MIN + (HY_MAX - HY_MIN) * (0.2 + 0.6 * rng() + 0.2 * rng());
+      const hx = HX_MIN + (HX_MAX - HX_MIN) * (0.2 + 0.6 * rng() + 0.2 * rng());
+      // Box-Muller for Gaussian noise.
+      const u1 = Math.max(rng(), 1e-9), u2 = rng();
+      const noise = sigma * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      const offset = trueOffset(hy, hx) + noise;
+      pts.push({ hy, hx, offset });
+    }
+    trainingData = pts;
+  }
+
+  // KNN with inverse-distance weighting. Same as common/predictor.py:KnnPredictor.
+  function predictKnn(hy, hx, k) {
+    if (trainingData.length === 0) return 0;
+    const dists = trainingData.map(p => {
+      const d = Math.hypot(p.hy - hy, p.hx - hx);
+      return { p, d };
+    });
+    dists.sort((a, b) => a.d - b.d);
+    const kk = Math.min(k, dists.length);
+    const nearest = dists.slice(0, kk);
+    let wSum = 0, vSum = 0;
+    for (const { p, d } of nearest) {
+      const w = 1 / (d + 1e-6);
+      wSum += w;
+      vSum += w * p.offset;
+    }
+    return vSum / wSum;
+  }
+
+  // Solve a 3x3 linear system using Gauss-Jordan with partial pivoting.
+  function solve3x3(A, b) {
+    const M = [
+      [A[0][0], A[0][1], A[0][2], b[0]],
+      [A[1][0], A[1][1], A[1][2], b[1]],
+      [A[2][0], A[2][1], A[2][2], b[2]],
+    ];
+    for (let i = 0; i < 3; i++) {
+      let pivot = i;
+      for (let r = i + 1; r < 3; r++)
+        if (Math.abs(M[r][i]) > Math.abs(M[pivot][i])) pivot = r;
+      [M[i], M[pivot]] = [M[pivot], M[i]];
+      const div = M[i][i];
+      if (Math.abs(div) < 1e-12) return null;
+      for (let c = i; c < 4; c++) M[i][c] /= div;
+      for (let r = 0; r < 3; r++) {
+        if (r === i) continue;
+        const f = M[r][i];
+        for (let c = i; c < 4; c++) M[r][c] -= f * M[i][c];
+      }
+    }
+    return [M[0][3], M[1][3], M[2][3]];
+  }
+
+  // Bivariate OLS via normal equations. offset = a*hy + b*hx + c.
+  // Returns a function (hy,hx) -> predicted offset.
+  let olsCache = null;
+  function fitOls() {
+    if (trainingData.length < 3) { olsCache = null; return; }
+    let Sxx = 0, Sxy = 0, Sx1 = 0, Syy = 0, Sy1 = 0, S11 = 0;
+    let Tx = 0, Ty = 0, T1 = 0;
+    for (const p of trainingData) {
+      Sxx += p.hy * p.hy;  Sxy += p.hy * p.hx;  Sx1 += p.hy;
+      Syy += p.hx * p.hx;  Sy1 += p.hx;
+      S11 += 1;
+      Tx += p.hy * p.offset;  Ty += p.hx * p.offset;  T1 += p.offset;
+    }
+    const A = [[Sxx, Sxy, Sx1], [Sxy, Syy, Sy1], [Sx1, Sy1, S11]];
+    const b = [Tx, Ty, T1];
+    olsCache = solve3x3(A, b);
+  }
+  function predictOls(hy, hx) {
+    if (!olsCache) return 0;
+    return olsCache[0] * hy + olsCache[1] * hx + olsCache[2];
+  }
+
+  // Heatmap colour ramp (low → high): cool blue → cyan → yellow → red.
+  function colourRamp(t) {
+    t = Math.max(0, Math.min(1, t));
+    const stops = [
+      [20,  30,  80],
+      [40,  80,  180],
+      [80,  180, 220],
+      [220, 220, 100],
+      [220, 120, 60],
+      [180, 40,  40],
+    ];
+    const f = t * (stops.length - 1);
+    const i = Math.floor(f);
+    const frac = f - i;
+    if (i >= stops.length - 1) return stops[stops.length - 1];
+    const a = stops[i], b = stops[i + 1];
+    return [
+      Math.round(a[0] + frac * (b[0] - a[0])),
+      Math.round(a[1] + frac * (b[1] - a[1])),
+      Math.round(a[2] + frac * (b[2] - a[2])),
+    ];
+  }
+
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+
+  function pixelToWorld(px, py) {
+    const hx = HX_MIN + (px / W) * (HX_MAX - HX_MIN);
+    const hy = HY_MIN + (py / H) * (HY_MAX - HY_MIN);
+    return { hy, hx };
+  }
+  function worldToPixel(hy, hx) {
+    const px = ((hx - HX_MIN) / (HX_MAX - HX_MIN)) * W;
+    const py = ((hy - HY_MIN) / (HY_MAX - HY_MIN)) * H;
+    return { px, py };
+  }
+
+  function render() {
+    const kind = document.getElementById('predictor').value;
+    const k = +document.getElementById('kSlider').value;
+    const predict = kind === 'knn'
+      ? (hy, hx) => predictKnn(hy, hx, k)
+      : (hy, hx) => predictOls(hy, hx);
+
+    // Step the heatmap in 4-pixel cells for speed.
+    const STEP = 4;
+    const cellsX = W / STEP, cellsY = H / STEP;
+    const grid = new Float32Array(cellsX * cellsY);
+    let lo = Infinity, hi = -Infinity;
+    for (let cy = 0; cy < cellsY; cy++) {
+      for (let cx = 0; cx < cellsX; cx++) {
+        const { hy, hx } = pixelToWorld(cx * STEP + STEP / 2, cy * STEP + STEP / 2);
+        const v = predict(hy, hx);
+        grid[cy * cellsX + cx] = v;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+    }
+    const range = Math.max(hi - lo, 1e-6);
+
+    const img = ctx.createImageData(W, H);
+    for (let cy = 0; cy < cellsY; cy++) {
+      for (let cx = 0; cx < cellsX; cx++) {
+        const v = grid[cy * cellsX + cx];
+        const t = (v - lo) / range;
+        const [r, g, b] = colourRamp(t);
+        for (let dy = 0; dy < STEP; dy++) {
+          for (let dx = 0; dx < STEP; dx++) {
+            const px = cx * STEP + dx, py = cy * STEP + dy;
+            const idx = (py * W + px) * 4;
+            img.data[idx] = r;
+            img.data[idx + 1] = g;
+            img.data[idx + 2] = b;
+            img.data[idx + 3] = 255;
+          }
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+
+    // Overlay training points.
+    for (const p of trainingData) {
+      const { px, py } = worldToPixel(p.hy, p.hx);
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    document.getElementById('legendLow').textContent = lo.toFixed(1);
+    document.getElementById('legendHigh').textContent = hi.toFixed(1);
+  }
+
+  function refresh() {
+    const n = +document.getElementById('nSlider').value;
+    const sigma = +document.getElementById('noiseSlider').value;
+    document.getElementById('nVal').textContent = n;
+    document.getElementById('noiseVal').textContent = sigma;
+    document.getElementById('kVal').textContent =
+      document.getElementById('kSlider').value;
+    regenerate(n, sigma, currentSeed);
+    fitOls();
+    render();
+  }
+
+  document.getElementById('predictor').addEventListener('change', render);
+  document.getElementById('kSlider').addEventListener('input', () => {
+    document.getElementById('kVal').textContent =
+      document.getElementById('kSlider').value;
+    render();
+  });
+  document.getElementById('nSlider').addEventListener('input', refresh);
+  document.getElementById('noiseSlider').addEventListener('input', refresh);
+  document.getElementById('regen').addEventListener('click', () => {
+    currentSeed = (Math.random() * 1e9) | 0;
+    refresh();
+  });
+
+  cv.addEventListener('mousemove', (e) => {
+    const rect = cv.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (W / rect.width);
+    const py = (e.clientY - rect.top) * (H / rect.height);
+    const { hy, hx } = pixelToWorld(px, py);
+    const kind = document.getElementById('predictor').value;
+    const k = +document.getElementById('kSlider').value;
+    const pred = kind === 'knn' ? predictKnn(hy, hx, k) : predictOls(hy, hx);
+    const truth = trueOffset(hy, hx);
+    document.getElementById('hover').textContent =
+      `(hy=${hy.toFixed(0)}, hx=${hx.toFixed(0)})  ` +
+      `predicted=${pred.toFixed(2)}  true=${truth.toFixed(2)}  ` +
+      `err=${(pred - truth).toFixed(2)}`;
+  });
+
+  refresh();
+</script>
+</body>
+</html>

@@ -5,6 +5,13 @@ explained for the reader who's a decade out of "machine learning
 school". Concepts are spelled out as a refresher, not first-time
 teaching.
 
+> **Companion visualisation:** open
+> [`docs/predictors.html`](predictors.html) directly in a browser
+> (no server, no build) for an interactive heatmap of each
+> predictor's predicted-offset surface over a synthetic 2D playfield.
+> Switch predictors, scrub K and noise, hover for point predictions
+> vs ground truth.
+
 The shared problem: given the current `(hoop_y, hoop_x)`, predict the
 optimal `platform_y` to fire at. Training data is a list of past makes
 — `(hoop_y, hoop_x, platform_y)` rows from `shots.db` filtered to
