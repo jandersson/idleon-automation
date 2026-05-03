@@ -54,7 +54,16 @@ def _compute_offset(
     reliably, target_y ≈ where we want the platform to be at fire.
 
     Cold start: constant offset.
+
+    Override: for the low-hoop_x, low-hoop region (~hoop_x<620, hoop_y>380),
+    the bivariate fit is dominated by high-hoop_x training data and
+    underpredicts the offset by 60-70px. The single past make in that
+    region (hoop=(593,390)) used offset=78. Hardcoding 70 here so we
+    actually fire near the right place; remove once we've accumulated
+    more makes in that region and the fit catches up.
     """
+    if hoop_x < 620 and hoop_y > 380:
+        return 70
     if predictor is None:
         return COLD_START_OFFSET
     a, b, c, _n = predictor
