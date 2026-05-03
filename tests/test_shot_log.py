@@ -1,5 +1,6 @@
 """Round-trip test for the shot SQLite log."""
 import sqlite3
+import threading
 
 from common.shot_log import open_db, log_shot, fetch_makes
 
@@ -119,6 +120,33 @@ def test_log_shot_records_source(tmp_path):
     rows = list(conn.execute("SELECT source FROM shots ORDER BY id"))
     conn.close()
     assert rows == [("bot",), ("human",), (None,)]
+
+
+def test_log_shot_works_from_a_background_thread(tmp_path):
+    """Regression: observe mode opens the DB on the main thread but logs
+    each shot from a threading.Timer worker thread (post-shot OCR fires
+    POST_SHOT_COOLDOWN seconds after the click). SQLite connections in
+    Python default to check_same_thread=True which raises
+    sqlite3.ProgrammingError on cross-thread use; that exception is
+    swallowed by threading.Timer and the row silently never gets written.
+    open_db must use check_same_thread=False so the worker thread can
+    write."""
+    conn = open_db(tmp_path / "shots.db")
+    error: list[BaseException] = []
+
+    def worker():
+        try:
+            log_shot(conn, shot_idx=99, source="human", made=1)
+        except BaseException as e:
+            error.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(timeout=2)
+    assert not error, f"log_shot from background thread raised: {error[0]!r}"
+    rows = list(conn.execute("SELECT shot_idx, source, made FROM shots"))
+    conn.close()
+    assert rows == [(99, "human", 1)]
 
 
 def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
