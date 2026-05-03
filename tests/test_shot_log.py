@@ -39,19 +39,10 @@ def test_log_shot_handles_offset_keyword(tmp_path):
     assert val == 42
 
 
-def test_log_shot_records_click_coords(tmp_path):
-    conn = open_db(tmp_path / "shots.db")
-    log_shot(conn, shot_idx=1, click_x=617, click_y=372)
-    row = conn.execute("SELECT click_x, click_y FROM shots").fetchone()
-    conn.close()
-    assert row == (617, 372)
-
-
-def test_open_db_migrates_existing_db_without_click_columns(tmp_path):
-    """An old DB created before click_x/click_y existed should pick them up
-    via _migrate when reopened, not error out."""
+def test_open_db_migrates_existing_db_with_late_columns(tmp_path):
+    """An old DB created before perturbation/lives_diff/etc. existed should
+    pick them up via _migrate when reopened, not error out."""
     db_path = tmp_path / "old.db"
-    # Create an OLD-style table missing the new columns.
     conn = sqlite3.connect(str(db_path))
     conn.execute(
         'CREATE TABLE shots ('
@@ -63,14 +54,13 @@ def test_open_db_migrates_existing_db_without_click_columns(tmp_path):
     conn.commit()
     conn.close()
 
-    # Now reopen via open_db — should ALTER TABLE to add the new columns.
     conn = open_db(db_path)
-    log_shot(conn, shot_idx=2, click_x=617, click_y=372, perturbation=-16)
+    log_shot(conn, shot_idx=2, perturbation=-16, lives_diff=222.4)
     rows = list(conn.execute(
-        "SELECT shot_idx, click_x, click_y, perturbation FROM shots ORDER BY id"
+        "SELECT shot_idx, perturbation, lives_diff FROM shots ORDER BY id"
     ))
     conn.close()
-    assert rows == [(1, None, None, None), (2, 617, 372, -16)]
+    assert rows == [(1, None, None), (2, -16, 222.4)]
 
 
 def test_log_shot_records_perturbation(tmp_path):

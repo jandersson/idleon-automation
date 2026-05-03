@@ -44,15 +44,12 @@ def main() -> None:
     # Defensively check which late-added columns exist — older DBs opened
     # before _migrate ran wouldn't have them.
     cols = {r[1] for r in conn.execute("PRAGMA table_info(shots)")}
-    has_click = "click_x" in cols and "click_y" in cols
     has_perturbation = "perturbation" in cols
     has_lives = "lives_diff" in cols
     has_traj = "ball_apex_y" in cols
     has_window = "window_w" in cols
     has_score_int = "score_after_int" in cols
     extra_cols = ""
-    if has_click:
-        extra_cols += ", click_x, click_y"
     if has_perturbation:
         extra_cols += ", perturbation"
     if has_lives:
@@ -82,9 +79,6 @@ def main() -> None:
             "direction": row["direction"],
             "required_direction": row["required_direction"],
         }
-        if has_click:
-            rec["click_x"] = row["click_x"]
-            rec["click_y"] = row["click_y"]
         if has_perturbation:
             rec["perturbation"] = row["perturbation"]
         if has_lives:

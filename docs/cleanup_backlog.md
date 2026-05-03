@@ -29,10 +29,6 @@ disproved it.
 
 ### Follow-ups (still open)
 
-- [ ] **Drop `click_x` / `click_y` columns from `shots.db`** — they're now
-      always equal to `hoop_x` / `hoop_y` so they carry zero new info.
-      Costs a `_LATE_COLUMNS` removal + DB migration (or just leave the
-      columns and stop logging). Low priority.
 - [ ] **DB rows from the click-sweep / click-extreme runs** — still
       labelled `made=0` correctly thanks to OCR+trajectory validation.
       Adding a `experiment_label` column would let the predictor exclude
@@ -50,6 +46,10 @@ disproved it.
 - [x] `_pick_click_position` inlined at the call site (was a one-liner)
 - [x] Launcher's `experiments` config slot removed (was empty, plus
       its `extra_env` plumbing in `_start_bot` / `_spawn`)
+- [x] Stopped logging `click_x` / `click_y` to `shots.db`. Removed from
+      schema, migration, dump_shots query, and tests. Old DBs still
+      have the columns sitting there harmlessly (no DROP COLUMN
+      migration — they take ~16 bytes per row, not worth the churn).
 
 ### Keep
 

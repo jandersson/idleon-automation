@@ -36,8 +36,6 @@ CREATE TABLE IF NOT EXISTS shots (
     score_diff REAL,
     made INTEGER,
     shot_dir TEXT,
-    click_x INTEGER,
-    click_y INTEGER,
     perturbation INTEGER,
     lives_diff REAL,
     ball_apex_y INTEGER,
@@ -55,8 +53,9 @@ CREATE TABLE IF NOT EXISTS shots (
 # for each on existing DBs (SQLite ignores duplicate-column errors). Keep
 # this list append-only.
 _LATE_COLUMNS = [
-    ("click_x", "INTEGER"),
-    ("click_y", "INTEGER"),
+    # click_x / click_y were here, dropped from the schema after click
+    # position was proven not to matter (May 3). Old DBs keep the
+    # columns harmlessly; new DBs don't get them.
     ("perturbation", "INTEGER"),
     ("lives_diff", "REAL"),
     ("ball_apex_y", "INTEGER"),

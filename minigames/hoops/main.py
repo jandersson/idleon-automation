@@ -565,11 +565,9 @@ def _run_inner(session_started: str, shot_db, predictor):
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
                 fired_at = datetime.now().isoformat(timespec="seconds")
-                # Click at the hoop position. Click coordinates have no
-                # measurable effect on aim (verified May 3); we keep
-                # logging them in case a future test needs to vary them.
-                click_x_rel, click_y_rel = hoop_x, hoop_y
-                click(left + click_x_rel, top + click_y_rel)
+                # Click at the hoop. Click coordinates have no measurable
+                # effect on aim (verified May 3) — could be anywhere.
+                click(left + hoop_x, top + hoop_y)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
                     _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
@@ -644,8 +642,6 @@ def _run_inner(session_started: str, shot_db, predictor):
                     score_diff=float(score_diff) if score_diff is not None else None,
                     made=int(bool(made)) if made is not None else None,
                     shot_dir=str(shot_dir) if shot_dir is not None else None,
-                    click_x=int(click_x_rel),
-                    click_y=int(click_y_rel),
                     perturbation=int(perturbation),
                     lives_diff=lives_diff_value,
                     ball_apex_y=trajectory["ball_apex_y"],
