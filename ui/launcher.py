@@ -30,6 +30,7 @@ MINIGAMES = [
         "emoji": "🪓",
         "bot": "chopping",
         "setup": [
+            ("Observe (you play)", "chopping-observe"),
             ("Pick bar", "chopping-pick-bar-region"),
             ("Pick leaf", "chopping-pick-leaf-region"),
             ("Pick button", "chopping-pick-button-region"),
@@ -56,6 +57,7 @@ MINIGAMES = [
         "emoji": "🎯",
         "bot": "darts",
         "setup": [
+            ("Observe (you play)", "darts-observe"),
             ("Capture", "darts-capture"),
             ("Pick release", "darts-pick-release"),
             ("Auto-crop release", "darts-auto-crop-release"),
@@ -69,6 +71,7 @@ MINIGAMES = [
         "emoji": "🪰",
         "bot": "catching",
         "setup": [
+            ("Observe (you play)", "catching-observe"),
             ("Capture", "catching-capture"),
             ("Pick play region", "catching-pick-play-region"),
             ("Extract fly", "catching-extract-fly"),
