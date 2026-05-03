@@ -135,7 +135,7 @@ REQUIRED_DIRECTION = "up"
 # - "hoop":   click at (hoop_x, hoop_y)  — current default
 # - "center": click at window center
 # - "varied": cycle through [hoop, center, above_hoop, far_right] per shot
-CLICK_STRATEGY = "varied"
+CLICK_STRATEGY = "hoop"
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
