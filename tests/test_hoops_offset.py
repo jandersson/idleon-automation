@@ -1,50 +1,41 @@
-"""Tests for hoops _compute_offset (uses bivariate predictor) and the
+"""Tests for hoops _compute_offset (uses KNN predictor) and the
 miss-driven perturbation sweep."""
+from common.shot_log import KnnPredictor
 from minigames.hoops.main import _compute_offset, COLD_START_OFFSET, _perturbation_for, PERTURBATION_SEQUENCE
 
 
 def test_cold_start_returns_constant_offset():
-    # Use hoops outside the stuck-region override.
     assert _compute_offset(300, 700, None) == COLD_START_OFFSET
     assert _compute_offset(450, 700, None) == COLD_START_OFFSET
 
 
 def test_predictor_drives_offset():
-    # target_y = 1.0*hoop_y + 0.0*hoop_x + 20 → offset = 20 everywhere
-    predictor = (1.0, 0.0, 20.0, 5)
-    assert _compute_offset(300, 700, predictor) == 20
-    assert _compute_offset(450, 700, predictor) == 20
+    # Past makes all at platform_y = hoop_y + 20. With k=1, the nearest
+    # neighbour wins outright and we get offset=20 exactly.
+    points = [
+        (400.0, 700.0, 420.0),
+        (410.0, 700.0, 430.0),
+        (390.0, 700.0, 410.0),
+        (400.0, 710.0, 420.0),
+    ]
+    predictor = KnnPredictor(points, k=1)
+    assert _compute_offset(400, 700, predictor) == 20
 
 
 def test_predictor_uses_hoop_x():
-    # target_y = 1.0*hoop_y - 0.1*hoop_x + 100
-    # → offset = -0.1*hoop_x + 100. Use hoop_x in 700+ range to avoid
-    # the stuck-region override (hoop_x<620, hoop_y>380).
-    predictor = (1.0, -0.1, 100.0, 5)
-    # hoop_x=700 → -70 + 100 = 30
-    assert _compute_offset(450, 700, predictor) == 30
-    # hoop_x=800 → -80 + 100 = 20
-    assert _compute_offset(450, 800, predictor) == 20
-
-
-def test_stuck_region_overrides():
-    """Hardcoded overrides for hoop_x<660 zones where the bivariate fit
-    is biased. Predictor below would otherwise return 0 for these inputs."""
-    predictor = (1.0, 0.0, 0.0, 5)
-    # hoop_x<620, hoop_y>380 → 95
-    assert _compute_offset(410, 586, predictor) == 95
-    assert _compute_offset(400, 600, predictor) == 95
-    assert _compute_offset(450, 615, None) == 95
-    # hoop_x<620, hoop_y<=380 → 0 (matches predictor here, but the rule
-    # short-circuits regardless of predictor output)
-    assert _compute_offset(330, 586, predictor) == 0
-    assert _compute_offset(380, 600, None) == 0  # override beats cold-start
-    # 620<=hoop_x<660, hoop_y<=380 → 5
-    assert _compute_offset(330, 625, predictor) == 5
-    assert _compute_offset(370, 655, None) == 5
-    # Just outside the boxes — predictor takes over.
-    assert _compute_offset(410, 660, predictor) == 0  # hoop_x on boundary
-    assert _compute_offset(381, 700, predictor) == 0  # hoop_x past all override bands
+    # Two clusters: low hoop_x → small offset, high hoop_x → bigger offset.
+    points = [
+        (400.0, 600.0, 400.0),  # offset 0
+        (400.0, 800.0, 440.0),  # offset 40
+    ]
+    predictor = KnnPredictor(points, k=1)  # k=1 — pure nearest
+    assert _compute_offset(400, 600, predictor) == 0
+    assert _compute_offset(400, 800, predictor) == 40
+    # Equidistant query: returns the average (both weight 1.0/dist=1.0/100).
+    # at (400, 700): nearest with k=1 is one of the two (tie-broken by sort).
+    # With k=2 (override), result is the average → predicted py ~420 → offset 20.
+    predictor_k2 = KnnPredictor(points, k=2)
+    assert _compute_offset(400, 700, predictor_k2) == 20
 
 
 def test_perturbation_zero_on_first_attempt():

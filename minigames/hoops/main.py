@@ -43,55 +43,26 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 # makes in dir=up data (platform_y at make ≈ hoop_y + 5..20).
 COLD_START_OFFSET = 20
 
-def _predicted_offset(
-    hoop_y: int, hoop_x: int,
-    predictor: tuple[float, float, float, int] | None,
-) -> int:
-    """Raw predictor output, ignoring overrides. Used as a diagnostic
-    column so we can track when the predictor catches up enough to
-    retire each override."""
+def _predicted_offset(hoop_y: int, hoop_x: int, predictor) -> int:
+    """KNN-predicted offset for the given hoop position. Cold-start
+    constant if no predictor is fitted yet."""
     if predictor is None:
         return COLD_START_OFFSET
-    a, b, c, _n = predictor
-    target_y = a * hoop_y + b * hoop_x + c
+    target_y = predictor.predict(hoop_y, hoop_x)
     return int(round(target_y - hoop_y))
 
 
-def _compute_offset(
-    hoop_y: int, hoop_x: int,
-    predictor: tuple[float, float, float, int] | None,
-) -> int:
-    """Compute the offset the bot will actually fire with.
+def _compute_offset(hoop_y: int, hoop_x: int, predictor) -> int:
+    """Compute the offset the bot will fire with.
 
-    With a predictor: target_y = a*hoop_y + b*hoop_x + c, fit on platform_y
-    of past makes. With Y_TOLERANCE wide enough that in_window fires
-    reliably, target_y ≈ where we want the platform to be at fire.
+    With a predictor: KNN over past makes returns the predicted optimal
+    platform_y; offset = target_y - hoop_y. The KNN approach naturally
+    adapts to local curvature in the (hoop_y, hoop_x) → optimal_py
+    surface, so we no longer need hardcoded overrides for regions
+    where a linear fit was wrong.
 
-    Cold start: constant offset.
-
-    Hardcoded overrides for low-hoop_x regions where the bivariate fit
-    is wildly off (training data is dominated by hoop_x in 700+):
-
-    - hoop_x<620, hoop_y>380 → offset=95. Past makes there used 95-100;
-      predictor would say ~13. Verified at hoop=(586,410).
-    - hoop_x<620, hoop_y<=380 → offset=0. Past makes (5 confirmed) used
-      offsets in -41..+5 with fired_py very close to hoop_y itself
-      (target_y ≈ hoop_y). Verified at hoop=(609,332).
-    - 620<=hoop_x<660, hoop_y<=380 → offset=5. Past makes at hoop_x in
-      645-655 with hoop_y 316-375 used offsets in 4-6 (a few outliers
-      at 19-25 for higher hoop_y). Latest run shot 5-7 missed at
-      hoop=(654,337) with predictor offset=-4.
-
-    Remove these once the predictor has enough makes in each region to
-    learn it itself — `predicted_offset` is logged separately so we can
-    monitor how close the raw predictor gets.
+    Cold start: constant offset until we have enough makes for KNN.
     """
-    if hoop_x < 620 and hoop_y > 380:
-        return 95
-    if hoop_x < 620 and hoop_y <= 380:
-        return 0
-    if hoop_x < 660 and hoop_y <= 380:
-        return 5
     return _predicted_offset(hoop_y, hoop_x, predictor)
 
 
@@ -398,8 +369,7 @@ def run():
             if predictor is None:
                 print(f"No predictor fit — fewer than 4 confirmed makes in dir={REQUIRED_DIRECTION!r}; using cold-start offset={COLD_START_OFFSET}")
             else:
-                a, b, c, n = predictor
-                print(f"Fitted target predictor (dir={REQUIRED_DIRECTION!r}, n={n}): target_y = {a:.3f}*hoop_y + {b:.3f}*hoop_x + {c:.1f}")
+                print(f"KNN target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} makes, k={predictor.k})")
             _run_inner(session_started, shot_db, predictor, code_commit)
         finally:
             shot_db.close()

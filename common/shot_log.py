@@ -123,22 +123,56 @@ def log_shot(conn: sqlite3.Connection, **fields) -> None:
     conn.commit()
 
 
+class KnnPredictor:
+    """KNN-over-past-makes predictor. Each make is a point in
+    (hoop_y, hoop_x) space, and its `platform_y` is the optimal fire
+    position for that hoop. To predict for a new hoop, take the K
+    closest past makes and inverse-distance-weight their platform_y.
+
+    KNN replaces the previous bivariate linear fit so the model can
+    locally adapt to curvature without needing hardcoded overrides
+    for regions where the linear plane was a poor fit.
+    """
+
+    def __init__(self, points: list[tuple[float, float, float]], k: int = 5):
+        # points: list of (hoop_y, hoop_x, platform_y) for past makes
+        self.points = points
+        self.k = min(k, len(points))
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def predict(self, hoop_y: float, hoop_x: float) -> float:
+        """Return predicted optimal platform_y at this hoop position."""
+        distances = sorted(
+            (((py - hoop_y) ** 2 + (px - hoop_x) ** 2) ** 0.5, target)
+            for py, px, target in self.points
+        )
+        nearest = distances[: self.k]
+        # Inverse-distance weighting (clamped at 1.0 to avoid blow-up
+        # for exact-match hoops).
+        weights = [1.0 / max(d, 1.0) for d, _ in nearest]
+        total = sum(weights)
+        return sum(w * t for w, (_, t) in zip(weights, nearest)) / total
+
+
 def fit_target_predictor(
     conn: sqlite3.Connection,
     required_direction: str,
     min_samples: int = 4,
-) -> tuple[float, float, float, int] | None:
-    """Bivariate regression `optimal_platform_y = a*hoop_y + b*hoop_x + c`.
+    k: int = 5,
+) -> KnnPredictor | None:
+    """Build a KnnPredictor from clean makes in the active direction.
 
-    Fits on the *observed* platform_y at fire time (what actually launched
-    successful shots). hoop_x matters because hoops closer to the player
-    need less horizontal range — pure hoop_y models extrapolate badly when
-    a near-spawn happens.
+    Each make contributes one (hoop_y, hoop_x, platform_y) point. The
+    returned object's `predict(hoop_y, hoop_x)` returns the predicted
+    optimal platform_y at any hoop position.
 
-    Excludes clamped shots.
+    Excludes clamped shots — those fired at the bob extreme regardless
+    of nominal target_y, so they don't reflect the predictor's signal.
 
-    Returns (a, b, c, n) where target_y = a*hoop_y + b*hoop_x + c, or None
-    when there isn't enough data.
+    Returns None when there aren't enough makes to fit yet.
     """
     rows = list(
         conn.execute(
@@ -149,52 +183,7 @@ def fit_target_predictor(
             (required_direction,),
         )
     )
-    n = len(rows)
-    if n < min_samples:
+    if len(rows) < min_samples:
         return None
-
-    # Closed-form OLS for y = a*x1 + b*x2 + c via normal equations
-    # [Σx1²  Σx1x2  Σx1] [a]   [Σx1y]
-    # [Σx1x2 Σx2²   Σx2] [b] = [Σx2y]
-    # [Σx1   Σx2    n  ] [c]   [Σy  ]
-    sx1 = sum(r[0] for r in rows)
-    sx2 = sum(r[1] for r in rows)
-    sy = sum(r[2] for r in rows)
-    sx1x1 = sum(r[0] * r[0] for r in rows)
-    sx2x2 = sum(r[1] * r[1] for r in rows)
-    sx1x2 = sum(r[0] * r[1] for r in rows)
-    sx1y = sum(r[0] * r[2] for r in rows)
-    sx2y = sum(r[1] * r[2] for r in rows)
-
-    M = [
-        [sx1x1, sx1x2, sx1],
-        [sx1x2, sx2x2, sx2],
-        [sx1, sx2, n],
-    ]
-    v = [sx1y, sx2y, sy]
-    sol = _solve_3x3(M, v)
-    if sol is None:
-        return None
-    a, b, c = sol
-    return a, b, c, n
-
-
-def _solve_3x3(M: list[list[float]], v: list[float]) -> tuple[float, float, float] | None:
-    """Solve a 3x3 linear system via Cramer's rule. Returns None if singular."""
-    def det3(m: list[list[float]]) -> float:
-        return (
-            m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-        )
-
-    D = det3(M)
-    if abs(D) < 1e-9:
-        return None
-    out = []
-    for i in range(3):
-        Mi = [row[:] for row in M]
-        for r in range(3):
-            Mi[r][i] = v[r]
-        out.append(det3(Mi) / D)
-    return out[0], out[1], out[2]
+    points = [(float(r[0]), float(r[1]), float(r[2])) for r in rows]
+    return KnnPredictor(points, k=k)

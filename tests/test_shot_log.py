@@ -103,50 +103,67 @@ def test_log_shot_records_predicted_offset_and_code_commit(tmp_path):
 
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
-    for i in range(3):  # min_samples is 4 for bivariate
+    for i in range(3):  # min_samples is 4
         log_shot(conn, hoop_y=400 + i, hoop_x=700, platform_y=420, made=1,
                  clamped=0, required_direction="up")
     assert fit_target_predictor(conn, "up") is None
     conn.close()
 
 
-def test_fit_target_predictor_fits_bivariate(tmp_path):
-    """Recovers a known bivariate function: platform_y = 0.5*hoop_y + 0.3*hoop_x + 10."""
+def test_knn_predictor_picks_nearest_neighbours(tmp_path):
+    """Predictor returns the inverse-distance-weighted average platform_y
+    of the K nearest past makes."""
     conn = open_db(tmp_path / "shots.db")
-    points = [
-        (300, 600), (300, 700), (400, 600), (400, 700), (500, 700), (500, 800)
-    ]
-    for hy, hx in points:
-        py = 0.5 * hy + 0.3 * hx + 10
-        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=py, made=1,
-                 clamped=0, required_direction="up")
-    fit = fit_target_predictor(conn, "up")
-    assert fit is not None
-    a, b, c, n = fit
-    assert n == 6
-    assert abs(a - 0.5) < 1e-6
-    assert abs(b - 0.3) < 1e-6
-    assert abs(c - 10.0) < 1e-6
+    # Three makes, one near our query point and two far away.
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, made=1,
+             clamped=0, required_direction="up")
+    log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, made=1,
+             clamped=0, required_direction="up")
+    log_shot(conn, hoop_y=500, hoop_x=800, platform_y=520, made=1,
+             clamped=0, required_direction="up")
+    log_shot(conn, hoop_y=405, hoop_x=702, platform_y=425, made=1,
+             clamped=0, required_direction="up")
+    pred = fit_target_predictor(conn, "up", k=3)
+    assert pred is not None
+    assert pred.n == 4
+    # Querying near (400, 700): the two nearest are (400,700)→420 and
+    # (405,702)→425. Inverse-distance weighting will favour the exact
+    # match strongly, so result should be close to 420 (between 420
+    # and 425, not 320 or 520).
+    out = pred.predict(400, 700)
+    assert 419 <= out <= 425
 
 
-def test_fit_target_predictor_excludes_clamped_and_misses(tmp_path):
+def test_knn_predictor_excludes_clamped_and_misses(tmp_path):
     conn = open_db(tmp_path / "shots.db")
-    # Non-collinear points so the 3-param fit is well-conditioned.
-    points = [(300, 600), (300, 700), (400, 600), (400, 700)]
-    for hy, hx in points:
-        py = 0.5 * hy + 0.3 * hx + 10
+    # Five clean makes
+    for hy, hx, py in [
+        (300, 600, 320), (400, 700, 420), (500, 800, 520),
+        (350, 650, 370), (450, 750, 470),
+    ]:
         log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=py, made=1,
                  clamped=0, required_direction="up")
-    # Pollution that should NOT be picked up
-    log_shot(conn, hoop_y=600, hoop_x=700, platform_y=999, made=1,
+    # Pollution that should be excluded
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
              clamped=1, required_direction="up")  # clamped
-    log_shot(conn, hoop_y=350, hoop_x=700, platform_y=999, made=0,
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=0,
              clamped=0, required_direction="up")  # miss
-    log_shot(conn, hoop_y=350, hoop_x=700, platform_y=999, made=1,
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
              clamped=0, required_direction="down")  # wrong direction
-    fit = fit_target_predictor(conn, "up")
-    assert fit is not None
-    a, b, c, n = fit
-    assert n == 4  # only the four clean makes
-    assert abs(a - 0.5) < 1e-6
-    assert abs(b - 0.3) < 1e-6
+    pred = fit_target_predictor(conn, "up", k=5)
+    assert pred is not None
+    assert pred.n == 5  # only the five clean makes
+    # Predict at the same point as the polluted rows; result should be
+    # nowhere near 9999 since clamped/miss/wrong-dir rows aren't in.
+    out = pred.predict(400, 700)
+    assert out < 600  # well below the polluted 9999
+
+
+def test_knn_predictor_clamps_k_to_dataset_size(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    for hy, hx in [(300, 600), (400, 700), (500, 800), (450, 750)]:
+        log_shot(conn, hoop_y=hy, hoop_x=hx, platform_y=hy + 20, made=1,
+                 clamped=0, required_direction="up")
+    pred = fit_target_predictor(conn, "up", k=10)  # k > n
+    assert pred is not None
+    assert pred.k == 4  # clamped to n
