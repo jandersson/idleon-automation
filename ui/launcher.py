@@ -43,6 +43,7 @@ MINIGAMES = [
         "experiments": [
             # (label, env_value) — spawns the bot with HOOPS_EXPERIMENT set
             ("Click sweep", "click_sweep"),
+            ("Click extreme", "click_extreme"),
         ],
         "setup": [
             ("Capture", "hoops-capture"),

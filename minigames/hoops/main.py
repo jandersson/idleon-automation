@@ -94,11 +94,21 @@ def _pick_click_position(
 ) -> tuple[int, int]:
     """Decide where to click for this shot, based on CLICK_STRATEGY. Returns
     (x, y) window-relative."""
-    # sweep_y is its own thing — handle first so the varied/hoop branches
-    # below don't grab it.
+    # sweep_y / extreme are their own things — handle first so the
+    # varied/hoop branches below don't grab them.
     if CLICK_STRATEGY == "sweep_y":
         dy = CLICK_SWEEP_Y_OFFSETS[(shot_idx - 1) % len(CLICK_SWEEP_Y_OFFSETS)]
         return hoop_x, max(0, min(height - 1, hoop_y + dy))
+    if CLICK_STRATEGY == "extreme":
+        pos = CLICK_EXTREME_POSITIONS[(shot_idx - 1) % len(CLICK_EXTREME_POSITIONS)]
+        edge = 10  # margin from window edges, stay clear of failsafe corners
+        if pos == "top_left":     return edge, edge
+        if pos == "top_right":    return width - edge, edge
+        if pos == "bottom_left":  return edge, height - edge
+        if pos == "bottom_right": return width - edge, height - edge
+        if pos == "center":       return width // 2, height // 2
+        # at_hoop control case
+        return hoop_x, hoop_y
 
     if CLICK_STRATEGY == "varied":
         choice = VARIED_CLICK_POSITIONS[(shot_idx - 1) % len(VARIED_CLICK_POSITIONS)]
@@ -153,11 +163,25 @@ if EXPERIMENT_MODE:
     print(f"[experiment] HOOPS_EXPERIMENT={EXPERIMENT_MODE!r}")
 if EXPERIMENT_MODE == "click_sweep":
     CLICK_STRATEGY = "sweep_y"
+if EXPERIMENT_MODE == "click_extreme":
+    CLICK_STRATEGY = "extreme"
 
 # Click_y offsets cycled through in sweep_y mode. Negative = above hoop.
 # Span chosen to test the "lower click_y → bigger ball range" hypothesis
 # observed in earlier varied-click data.
 CLICK_SWEEP_Y_OFFSETS = (0, -80, -160, +80, -240)
+
+# Extreme corner positions (relative to game window). Stay 10px in from
+# the edges so we don't trip pyautogui's corner fail-safe. Order is
+# rotation to maximise per-shot diversity.
+CLICK_EXTREME_POSITIONS = (
+    "top_left",
+    "top_right",
+    "bottom_left",
+    "bottom_right",
+    "center",
+    "at_hoop",  # control
+)
 
 # Wait after clicking so the ball can travel, land, and the score animation
 # completes. Was 2.0 — but observed ball arrival at the rim is ~2.9s and the
