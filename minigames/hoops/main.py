@@ -61,11 +61,19 @@ def _compute_offset(
 
 
 # When a hoop position is missed, sweep offsets around the predicted value
-# on subsequent shots. The hoop only respawns on makes, so without
-# perturbation the bot would burn every life trying the same wrong offset.
-# Sequence: predicted, then ±8, ±16, ±24, ±32 — covers a 64px window which
-# is wider than any observed make spread.
-PERTURBATION_SEQUENCE = [0, -8, 8, -16, 16, -24, 24, -32, 32]
+# on subsequent shots. Hoop only respawns on makes, so without perturbation
+# we'd burn every life trying the same wrong offset.
+#
+# First 9 entries: ±32 in 8px steps — dense around the predicted value
+# (where most makes live). Beyond that: jump to ±48, ±64, ±80 in larger
+# steps to cover stuck regions whose make zone is outside the predicted
+# neighborhood. (617, 372) has been swept across 56px of fired_py without
+# a make — the make zone there is genuinely far from where the regression
+# predicts.
+PERTURBATION_SEQUENCE = [
+    0, -8, 8, -16, 16, -24, 24, -32, 32,
+    -48, 48, -64, 64, -80, 80,
+]
 
 
 def _perturbation_for(miss_count: int) -> int:
