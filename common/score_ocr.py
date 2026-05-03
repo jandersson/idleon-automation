@@ -15,6 +15,10 @@ returns None and the bot keeps going (we just don't log score ints).
 This module is intentionally minigame-agnostic — anything with a numeric
 readout (hoops, darts, future minigames) can call read_score(crop_gray).
 """
+import os
+import shutil
+import sys
+
 import cv2
 import numpy as np
 
@@ -30,6 +34,33 @@ except ImportError:
 # Print the missing-binary warning at most once per process so logs aren't
 # spammed for every shot in a session.
 _BINARY_WARNED = False
+
+
+def _find_tesseract_binary() -> str | None:
+    """Locate tesseract.exe even if it isn't on PATH. winget installs to
+    Program Files but doesn't always update the user's PATH; this saves the
+    user from having to fiddle with system env vars."""
+    # PATH first — the easy case.
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    # Common Windows install locations.
+    if sys.platform == "win32":
+        for path in (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        ):
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+# Configure pytesseract to use whatever tesseract binary we can find.
+if _HAVE_PYTESSERACT:
+    _binary = _find_tesseract_binary()
+    if _binary:
+        pytesseract.pytesseract.tesseract_cmd = _binary
 
 
 def read_score(crop_gray: np.ndarray, scale: int = 6) -> int | None:
