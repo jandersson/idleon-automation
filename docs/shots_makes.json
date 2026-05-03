@@ -1,0 +1,266 @@
+{
+  "makes": [
+    {
+      "hoop_x": 710,
+      "hoop_y": 448,
+      "platform_y": 477
+    },
+    {
+      "hoop_x": 671,
+      "hoop_y": 464,
+      "platform_y": 489
+    },
+    {
+      "hoop_x": 708,
+      "hoop_y": 464,
+      "platform_y": 481
+    },
+    {
+      "hoop_x": 710,
+      "hoop_y": 448,
+      "platform_y": 470
+    },
+    {
+      "hoop_x": 694,
+      "hoop_y": 474,
+      "platform_y": 495
+    },
+    {
+      "hoop_x": 710,
+      "hoop_y": 448,
+      "platform_y": 463
+    },
+    {
+      "hoop_x": 710,
+      "hoop_y": 448,
+      "platform_y": 475
+    },
+    {
+      "hoop_x": 647,
+      "hoop_y": 367,
+      "platform_y": 388
+    },
+    {
+      "hoop_x": 661,
+      "hoop_y": 306,
+      "platform_y": 328
+    },
+    {
+      "hoop_x": 677,
+      "hoop_y": 429,
+      "platform_y": 432
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 456
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 475
+    },
+    {
+      "hoop_x": 660,
+      "hoop_y": 383,
+      "platform_y": 389
+    },
+    {
+      "hoop_x": 645,
+      "hoop_y": 364,
+      "platform_y": 361
+    },
+    {
+      "hoop_x": 726,
+      "hoop_y": 439,
+      "platform_y": 441
+    },
+    {
+      "hoop_x": 647,
+      "hoop_y": 375,
+      "platform_y": 373
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 453
+    },
+    {
+      "hoop_x": 681,
+      "hoop_y": 495,
+      "platform_y": 500
+    },
+    {
+      "hoop_x": 607,
+      "hoop_y": 338,
+      "platform_y": 347
+    },
+    {
+      "hoop_x": 607,
+      "hoop_y": 338,
+      "platform_y": 318
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 442
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 452
+    },
+    {
+      "hoop_x": 687,
+      "hoop_y": 421,
+      "platform_y": 427
+    },
+    {
+      "hoop_x": 610,
+      "hoop_y": 341,
+      "platform_y": 328
+    },
+    {
+      "hoop_x": 649,
+      "hoop_y": 316,
+      "platform_y": 311
+    },
+    {
+      "hoop_x": 587,
+      "hoop_y": 303,
+      "platform_y": 305
+    },
+    {
+      "hoop_x": 668,
+      "hoop_y": 451,
+      "platform_y": 451
+    },
+    {
+      "hoop_x": 668,
+      "hoop_y": 451,
+      "platform_y": 467
+    },
+    {
+      "hoop_x": 593,
+      "hoop_y": 390,
+      "platform_y": 467
+    },
+    {
+      "hoop_x": 674,
+      "hoop_y": 473,
+      "platform_y": 480
+    },
+    {
+      "hoop_x": 677,
+      "hoop_y": 400,
+      "platform_y": 401
+    },
+    {
+      "hoop_x": 639,
+      "hoop_y": 339,
+      "platform_y": 347
+    },
+    {
+      "hoop_x": 649,
+      "hoop_y": 354,
+      "platform_y": 351
+    },
+    {
+      "hoop_x": 639,
+      "hoop_y": 309,
+      "platform_y": 310
+    },
+    {
+      "hoop_x": 733,
+      "hoop_y": 501,
+      "platform_y": 500
+    },
+    {
+      "hoop_x": 581,
+      "hoop_y": 343,
+      "platform_y": 331
+    },
+    {
+      "hoop_x": 647,
+      "hoop_y": 346,
+      "platform_y": 342
+    },
+    {
+      "hoop_x": 643,
+      "hoop_y": 323,
+      "platform_y": 326
+    },
+    {
+      "hoop_x": 594,
+      "hoop_y": 338,
+      "platform_y": 299
+    },
+    {
+      "hoop_x": 693,
+      "hoop_y": 414,
+      "platform_y": 400
+    },
+    {
+      "hoop_x": 655,
+      "hoop_y": 362,
+      "platform_y": 347
+    },
+    {
+      "hoop_x": 712,
+      "hoop_y": 449,
+      "platform_y": 449
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 444
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 451
+    },
+    {
+      "hoop_x": 692,
+      "hoop_y": 450,
+      "platform_y": 453
+    },
+    {
+      "hoop_x": 763,
+      "hoop_y": 481,
+      "platform_y": 480
+    },
+    {
+      "hoop_x": 738,
+      "hoop_y": 407,
+      "platform_y": 381
+    },
+    {
+      "hoop_x": 609,
+      "hoop_y": 332,
+      "platform_y": 308
+    },
+    {
+      "hoop_x": 708,
+      "hoop_y": 442,
+      "platform_y": 444
+    },
+    {
+      "hoop_x": 654,
+      "hoop_y": 337,
+      "platform_y": 338
+    },
+    {
+      "hoop_x": 700,
+      "hoop_y": 464,
+      "platform_y": 473
+    },
+    {
+      "hoop_x": 660,
+      "hoop_y": 407,
+      "platform_y": 397
+    }
+  ],
+  "frame_w": 960,
+  "frame_h": 572
+}

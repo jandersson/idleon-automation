@@ -12,7 +12,7 @@
     color: #ddd;
   }
   h1 { font-weight: 500; margin-top: 0; }
-  .layout { display: flex; gap: 24px; align-items: flex-start; }
+  .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
   .controls {
     width: 280px;
     background: #242424;
@@ -25,7 +25,9 @@
     font-size: 13px;
     color: #aaa;
   }
-  .controls select, .controls input[type=range], .controls button {
+  .controls select,
+  .controls input[type=range],
+  .controls button {
     width: 100%;
     margin-top: 4px;
     padding: 6px;
@@ -37,14 +39,28 @@
   }
   .controls button { cursor: pointer; }
   .controls button:hover { background: #3a3a3a; }
+  .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 13px;
+  }
   .value-display {
     color: #6cf;
     font-variant-numeric: tabular-nums;
   }
-  canvas {
+  .canvas-wrap {
+    position: relative;
     background: #000;
     border-radius: 4px;
+  }
+  canvas {
+    display: block;
+    border-radius: 4px;
     cursor: crosshair;
+    max-width: 100%;
+    height: auto;
   }
   .legend {
     margin-top: 12px;
@@ -67,6 +83,7 @@
     font-family: monospace;
     font-size: 12px;
     color: #aaa;
+    line-height: 1.4;
   }
   .explain {
     margin-top: 18px;
@@ -78,14 +95,16 @@
 </style>
 </head>
 <body>
-<h1>Predictors over (hoop_y, hoop_x) → optimal platform_y</h1>
+<h1>Predictors over the actual hoops game frame</h1>
 <p style="color: #888; max-width: 760px;">
-  Companion to <a href="predictors.html">predictors.md</a> (rendered
-  as predictors.html on Pages, predictors.md locally). Pick a
-  predictor, scrub its hyperparameters, and watch the predicted-offset
-  surface change. Training points (white dots) are sampled from a
-  synthetic non-planar surface that mimics the rough shape of the
-  hoops physics — non-linear, smooth, denser in the centre.
+  Companion to <a href="predictors.html">predictors.md</a>. The
+  background is a real frame from the game with the platform (left)
+  and rim (right) detection boxes drawn on. Each white dot is a
+  recorded clean make from <code>shots.db</code> placed at the hoop
+  position when that shot was fired. The colour heatmap shows what
+  the selected predictor would advise the platform's optimal
+  vertical position to be — read off the colour at any hoop
+  candidate location.
 </p>
 
 <div class="layout">
@@ -99,102 +118,87 @@
     <label>K (KNN only): <span class="value-display" id="kVal">3</span></label>
     <input type="range" id="kSlider" min="1" max="20" value="3">
 
-    <label>Training points: <span class="value-display" id="nVal">60</span></label>
-    <input type="range" id="nSlider" min="5" max="200" value="60">
+    <label>Heatmap opacity: <span class="value-display" id="alphaVal">0.55</span></label>
+    <input type="range" id="alphaSlider" min="0" max="100" value="55">
 
-    <label>Noise σ: <span class="value-display" id="noiseVal">5</span></label>
-    <input type="range" id="noiseSlider" min="0" max="30" value="5">
-
-    <label>&nbsp;</label>
-    <button id="regen">Regenerate training data</button>
+    <div class="checkbox-row">
+      <input type="checkbox" id="showFrame" checked>
+      <label for="showFrame" style="margin: 0;">show game frame</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="showPoints" checked>
+      <label for="showPoints" style="margin: 0;">show training makes</label>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="clipToData">
+      <label for="clipToData" style="margin: 0;">clip heatmap to data area</label>
+    </div>
 
     <div class="legend"></div>
     <div class="legend-labels">
       <span id="legendLow">low</span>
-      <span>predicted offset</span>
+      <span>predicted platform_y</span>
       <span id="legendHigh">high</span>
     </div>
 
     <div class="hover-readout" id="hover">
-      hover the canvas for prediction at a point
+      hover the canvas to read prediction at a point
     </div>
 
     <div class="explain">
-      The "true" surface here is a synthetic non-planar function.
-      KNN's weighted-average ceiling is visible as flat plateaus
-      between training points. OLS finds the best-fit plane through
-      everything and ignores curvature.
+      The heatmap value at pixel <em>(x, y)</em> answers: "if the
+      hoop appears here, where should the platform's centre be at
+      fire time?" Look at how KNN forms local plateaus around real
+      makes, while OLS fits one global plane that mostly tracks
+      platform_y ≈ hoop_y plus a small offset.
     </div>
   </div>
 
-  <canvas id="cv" width="500" height="500"></canvas>
+  <div class="canvas-wrap">
+    <canvas id="cv" width="960" height="572"></canvas>
+  </div>
 </div>
 
 <script>
-  // Coordinate ranges — roughly match real hoops game data.
-  const HX_MIN = 550, HX_MAX = 750;
-  const HY_MIN = 300, HY_MAX = 550;
-
-  // The "true" surface we're trying to learn. Non-planar so KNN and
-  // OLS look visibly different. Returns the optimal *offset*
-  // (platform_y - hoop_y) for a given hoop position.
-  function trueOffset(hy, hx) {
-    const yc = (hy - 425) / 100;     // normalised
-    const xc = (hx - 650) / 100;
-    return 30 + 12 * yc + 8 * xc * xc - 5 * yc * yc + 6 * Math.sin(yc * 2);
-  }
-
-  // Mulberry32 — simple seeded PRNG so regen results are reproducible
-  // across slider changes.
-  function makeRng(seed) {
-    return function() {
-      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-      let t = seed;
-      t = Math.imul(t ^ t >>> 15, t | 1);
-      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
-      return ((t ^ t >>> 14) >>> 0) / 4294967296;
-    };
-  }
+  const FRAME_W = 960;
+  const FRAME_H = 572;
 
   let trainingData = [];
-  let currentSeed = 1;
+  let dataBounds = null;
 
-  function regenerate(n, sigma, seed) {
-    const rng = makeRng(seed);
-    const pts = [];
-    for (let i = 0; i < n; i++) {
-      // Bias sampling toward centre to mimic real-game data density.
-      const hy = HY_MIN + (HY_MAX - HY_MIN) * (0.2 + 0.6 * rng() + 0.2 * rng());
-      const hx = HX_MIN + (HX_MAX - HX_MIN) * (0.2 + 0.6 * rng() + 0.2 * rng());
-      // Box-Muller for Gaussian noise.
-      const u1 = Math.max(rng(), 1e-9), u2 = rng();
-      const noise = sigma * Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-      const offset = trueOffset(hy, hx) + noise;
-      pts.push({ hy, hx, offset });
+  async function loadData() {
+    const r = await fetch('shots_makes.json', { cache: 'no-cache' });
+    const blob = await r.json();
+    trainingData = blob.makes;
+    if (trainingData.length > 0) {
+      let xs = trainingData.map(p => p.hoop_x);
+      let ys = trainingData.map(p => p.hoop_y);
+      dataBounds = {
+        xMin: Math.min(...xs), xMax: Math.max(...xs),
+        yMin: Math.min(...ys), yMax: Math.max(...ys),
+      };
     }
-    trainingData = pts;
   }
 
-  // KNN with inverse-distance weighting. Same as common/predictor.py:KnnPredictor.
+  // KNN with inverse-distance weighting in (hoop_y, hoop_x) space.
+  // Predicts platform_y at the queried hoop position.
   function predictKnn(hy, hx, k) {
     if (trainingData.length === 0) return 0;
-    const dists = trainingData.map(p => {
-      const d = Math.hypot(p.hy - hy, p.hx - hx);
-      return { p, d };
-    });
+    const dists = trainingData.map(p => ({
+      p, d: Math.hypot(p.hoop_y - hy, p.hoop_x - hx),
+    }));
     dists.sort((a, b) => a.d - b.d);
     const kk = Math.min(k, dists.length);
-    const nearest = dists.slice(0, kk);
     let wSum = 0, vSum = 0;
-    for (const { p, d } of nearest) {
+    for (let i = 0; i < kk; i++) {
+      const { p, d } = dists[i];
       const w = 1 / (d + 1e-6);
       wSum += w;
-      vSum += w * p.offset;
+      vSum += w * p.platform_y;
     }
     return vSum / wSum;
   }
 
-  // Solve a 3x3 linear system using Gauss-Jordan with partial pivoting.
   function solve3x3(A, b) {
     const M = [
       [A[0][0], A[0][1], A[0][2], b[0]],
@@ -218,18 +222,22 @@
     return [M[0][3], M[1][3], M[2][3]];
   }
 
-  // Bivariate OLS via normal equations. offset = a*hy + b*hx + c.
-  // Returns a function (hy,hx) -> predicted offset.
+  // Bivariate OLS: platform_y = a*hoop_y + b*hoop_x + c.
   let olsCache = null;
   function fitOls() {
     if (trainingData.length < 3) { olsCache = null; return; }
     let Sxx = 0, Sxy = 0, Sx1 = 0, Syy = 0, Sy1 = 0, S11 = 0;
     let Tx = 0, Ty = 0, T1 = 0;
     for (const p of trainingData) {
-      Sxx += p.hy * p.hy;  Sxy += p.hy * p.hx;  Sx1 += p.hy;
-      Syy += p.hx * p.hx;  Sy1 += p.hx;
+      Sxx += p.hoop_y * p.hoop_y;
+      Sxy += p.hoop_y * p.hoop_x;
+      Sx1 += p.hoop_y;
+      Syy += p.hoop_x * p.hoop_x;
+      Sy1 += p.hoop_x;
       S11 += 1;
-      Tx += p.hy * p.offset;  Ty += p.hx * p.offset;  T1 += p.offset;
+      Tx += p.hoop_y * p.platform_y;
+      Ty += p.hoop_x * p.platform_y;
+      T1 += p.platform_y;
     }
     const A = [[Sxx, Sxy, Sx1], [Sxy, Syy, Sy1], [Sx1, Sy1, S11]];
     const b = [Tx, Ty, T1];
@@ -240,7 +248,6 @@
     return olsCache[0] * hy + olsCache[1] * hx + olsCache[2];
   }
 
-  // Heatmap colour ramp (low → high): cool blue → cyan → yellow → red.
   function colourRamp(t) {
     t = Math.max(0, Math.min(1, t));
     const stops = [
@@ -265,34 +272,59 @@
 
   const cv = document.getElementById('cv');
   const ctx = cv.getContext('2d');
-  const W = cv.width, H = cv.height;
 
-  function pixelToWorld(px, py) {
-    const hx = HX_MIN + (px / W) * (HX_MAX - HX_MIN);
-    const hy = HY_MIN + (py / H) * (HY_MAX - HY_MIN);
-    return { hy, hx };
-  }
-  function worldToPixel(hy, hx) {
-    const px = ((hx - HX_MIN) / (HX_MAX - HX_MIN)) * W;
-    const py = ((hy - HY_MIN) / (HY_MAX - HY_MIN)) * H;
-    return { px, py };
-  }
+  // Load the game frame as a static image.
+  const frameImg = new Image();
+  let frameLoaded = false;
+  frameImg.onload = () => { frameLoaded = true; render(); };
+  frameImg.src = 'hoops_game_frame.png';
 
   function render() {
     const kind = document.getElementById('predictor').value;
     const k = +document.getElementById('kSlider').value;
+    const alpha = +document.getElementById('alphaSlider').value / 100;
+    const showFrame = document.getElementById('showFrame').checked;
+    const showPoints = document.getElementById('showPoints').checked;
+    const clipToData = document.getElementById('clipToData').checked;
+
     const predict = kind === 'knn'
       ? (hy, hx) => predictKnn(hy, hx, k)
       : (hy, hx) => predictOls(hy, hx);
 
-    // Step the heatmap in 4-pixel cells for speed.
+    ctx.clearRect(0, 0, FRAME_W, FRAME_H);
+
+    // Background frame.
+    if (showFrame && frameLoaded) {
+      ctx.drawImage(frameImg, 0, 0, FRAME_W, FRAME_H);
+    } else {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, FRAME_W, FRAME_H);
+    }
+
+    // Heatmap region. Right half by default (where the rim lives in
+    // the game). Optionally clipped tighter to the actual data
+    // bounding box.
+    let xLo = FRAME_W / 2, xHi = FRAME_W;
+    let yLo = 0, yHi = FRAME_H;
+    if (clipToData && dataBounds) {
+      const pad = 30;
+      xLo = Math.max(xLo, dataBounds.xMin - pad);
+      xHi = Math.min(xHi, dataBounds.xMax + pad);
+      yLo = Math.max(yLo, dataBounds.yMin - pad);
+      yHi = Math.min(yHi, dataBounds.yMax + pad);
+    }
+
+    // Paint heatmap into an offscreen ImageData so we can apply alpha
+    // cleanly over the frame.
     const STEP = 4;
-    const cellsX = W / STEP, cellsY = H / STEP;
-    const grid = new Float32Array(cellsX * cellsY);
+    const cellsX = Math.ceil((xHi - xLo) / STEP);
+    const cellsY = Math.ceil((yHi - yLo) / STEP);
     let lo = Infinity, hi = -Infinity;
+    const grid = new Float32Array(cellsX * cellsY);
     for (let cy = 0; cy < cellsY; cy++) {
       for (let cx = 0; cx < cellsX; cx++) {
-        const { hy, hx } = pixelToWorld(cx * STEP + STEP / 2, cy * STEP + STEP / 2);
+        const hx = xLo + cx * STEP + STEP / 2;
+        const hy = yLo + cy * STEP + STEP / 2;
         const v = predict(hy, hx);
         grid[cy * cellsX + cx] = v;
         if (v < lo) lo = v;
@@ -301,83 +333,77 @@
     }
     const range = Math.max(hi - lo, 1e-6);
 
-    const img = ctx.createImageData(W, H);
+    const overlay = ctx.createImageData(
+      Math.ceil(xHi - xLo), Math.ceil(yHi - yLo));
+    const ow = overlay.width;
     for (let cy = 0; cy < cellsY; cy++) {
       for (let cx = 0; cx < cellsX; cx++) {
         const v = grid[cy * cellsX + cx];
         const t = (v - lo) / range;
         const [r, g, b] = colourRamp(t);
+        const a = Math.round(alpha * 255);
         for (let dy = 0; dy < STEP; dy++) {
           for (let dx = 0; dx < STEP; dx++) {
-            const px = cx * STEP + dx, py = cy * STEP + dy;
-            const idx = (py * W + px) * 4;
-            img.data[idx] = r;
-            img.data[idx + 1] = g;
-            img.data[idx + 2] = b;
-            img.data[idx + 3] = 255;
+            const px = cx * STEP + dx;
+            const py = cy * STEP + dy;
+            if (px >= ow || py >= overlay.height) continue;
+            const idx = (py * ow + px) * 4;
+            overlay.data[idx] = r;
+            overlay.data[idx + 1] = g;
+            overlay.data[idx + 2] = b;
+            overlay.data[idx + 3] = a;
           }
         }
       }
     }
-    ctx.putImageData(img, 0, 0);
+    ctx.putImageData(overlay, Math.round(xLo), Math.round(yLo));
 
-    // Overlay training points.
-    for (const p of trainingData) {
-      const { px, py } = worldToPixel(p.hy, p.hx);
-      ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
+    // Training-make dots.
+    if (showPoints) {
+      for (const p of trainingData) {
+        ctx.beginPath();
+        ctx.arc(p.hoop_x, p.hoop_y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
     }
 
-    document.getElementById('legendLow').textContent = lo.toFixed(1);
-    document.getElementById('legendHigh').textContent = hi.toFixed(1);
+    document.getElementById('legendLow').textContent = lo.toFixed(0);
+    document.getElementById('legendHigh').textContent = hi.toFixed(0);
   }
 
   function refresh() {
-    const n = +document.getElementById('nSlider').value;
-    const sigma = +document.getElementById('noiseSlider').value;
-    document.getElementById('nVal').textContent = n;
-    document.getElementById('noiseVal').textContent = sigma;
+    document.getElementById('alphaVal').textContent =
+      (document.getElementById('alphaSlider').value / 100).toFixed(2);
     document.getElementById('kVal').textContent =
       document.getElementById('kSlider').value;
-    regenerate(n, sigma, currentSeed);
     fitOls();
     render();
   }
 
-  document.getElementById('predictor').addEventListener('change', render);
-  document.getElementById('kSlider').addEventListener('input', () => {
-    document.getElementById('kVal').textContent =
-      document.getElementById('kSlider').value;
-    render();
-  });
-  document.getElementById('nSlider').addEventListener('input', refresh);
-  document.getElementById('noiseSlider').addEventListener('input', refresh);
-  document.getElementById('regen').addEventListener('click', () => {
-    currentSeed = (Math.random() * 1e9) | 0;
-    refresh();
-  });
+  for (const id of ['predictor', 'kSlider', 'alphaSlider',
+                    'showFrame', 'showPoints', 'clipToData']) {
+    document.getElementById(id).addEventListener('input', refresh);
+    document.getElementById(id).addEventListener('change', refresh);
+  }
 
   cv.addEventListener('mousemove', (e) => {
     const rect = cv.getBoundingClientRect();
-    const px = (e.clientX - rect.left) * (W / rect.width);
-    const py = (e.clientY - rect.top) * (H / rect.height);
-    const { hy, hx } = pixelToWorld(px, py);
+    const px = (e.clientX - rect.left) * (FRAME_W / rect.width);
+    const py = (e.clientY - rect.top) * (FRAME_H / rect.height);
+    const hx = px, hy = py;
     const kind = document.getElementById('predictor').value;
     const k = +document.getElementById('kSlider').value;
     const pred = kind === 'knn' ? predictKnn(hy, hx, k) : predictOls(hy, hx);
-    const truth = trueOffset(hy, hx);
+    const offset = pred - hy;
     document.getElementById('hover').textContent =
-      `(hy=${hy.toFixed(0)}, hx=${hx.toFixed(0)})  ` +
-      `predicted=${pred.toFixed(2)}  true=${truth.toFixed(2)}  ` +
-      `err=${(pred - truth).toFixed(2)}`;
+      `hoop@(${hx.toFixed(0)}, ${hy.toFixed(0)})  → predicted platform_y = ${pred.toFixed(1)}  (offset = ${offset.toFixed(1)})`;
   });
 
-  refresh();
+  loadData().then(() => { fitOls(); render(); });
 </script>
 </body>
 </html>
