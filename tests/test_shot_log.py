@@ -63,12 +63,24 @@ def test_open_db_migrates_existing_db_without_click_columns(tmp_path):
     conn.commit()
     conn.close()
 
-    # Now reopen via open_db — should ALTER TABLE to add click_x, click_y.
+    # Now reopen via open_db — should ALTER TABLE to add the new columns.
     conn = open_db(db_path)
-    log_shot(conn, shot_idx=2, click_x=617, click_y=372)
-    rows = list(conn.execute("SELECT shot_idx, click_x, click_y FROM shots ORDER BY id"))
+    log_shot(conn, shot_idx=2, click_x=617, click_y=372, perturbation=-16)
+    rows = list(conn.execute(
+        "SELECT shot_idx, click_x, click_y, perturbation FROM shots ORDER BY id"
+    ))
     conn.close()
-    assert rows == [(1, None, None), (2, 617, 372)]
+    assert rows == [(1, None, None, None), (2, 617, 372, -16)]
+
+
+def test_log_shot_records_perturbation(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, perturbation=0)
+    log_shot(conn, shot_idx=2, perturbation=-8)
+    log_shot(conn, shot_idx=3, perturbation=24)
+    rows = list(conn.execute("SELECT perturbation FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [(0,), (-8,), (24,)]
 
 
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):

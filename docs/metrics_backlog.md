@@ -5,12 +5,12 @@ cost vs payoff. Drop entries as they ship.
 
 ## Cheap, high value
 
-- [ ] **`click_x`, `click_y`** — actual click coordinates. We just confirmed
+- [x] **`click_x`, `click_y`** — actual click coordinates. We just confirmed
       click position affects aim; logging it lets us validate AND experiment
       with offsets from the hoop (above/below/relative).
 - [ ] **`window_w`, `window_h`** — detect mid-session resize. Fraction-based
       regions silently shift if the user resizes the game window.
-- [ ] **`perturbation`** — the explicit `±N` px we applied. Currently
+- [x] **`perturbation`** — the explicit `±N` px we applied. Currently
       derivable from `offset - predicted_offset` but only if you know the
       predictor at log time. Logging directly makes "did the sweep find the
       make zone?" a one-line query.

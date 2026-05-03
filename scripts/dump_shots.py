@@ -41,11 +41,16 @@ def main() -> None:
             "makes": int(row["makes"] or 0),
         })
 
-    # Defensively check whether click_x/click_y columns exist — older DBs
-    # opened before _migrate ran wouldn't have them.
+    # Defensively check which late-added columns exist — older DBs opened
+    # before _migrate ran wouldn't have them.
     cols = {r[1] for r in conn.execute("PRAGMA table_info(shots)")}
     has_click = "click_x" in cols and "click_y" in cols
-    extra_cols = ", click_x, click_y" if has_click else ""
+    has_perturbation = "perturbation" in cols
+    extra_cols = ""
+    if has_click:
+        extra_cols += ", click_x, click_y"
+    if has_perturbation:
+        extra_cols += ", perturbation"
 
     makes = []
     for row in conn.execute(
@@ -68,6 +73,8 @@ def main() -> None:
         if has_click:
             rec["click_x"] = row["click_x"]
             rec["click_y"] = row["click_y"]
+        if has_perturbation:
+            rec["perturbation"] = row["perturbation"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

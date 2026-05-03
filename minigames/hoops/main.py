@@ -527,6 +527,7 @@ def _run_inner(session_started: str, shot_db, predictor):
                     shot_dir=str(shot_dir) if shot_dir is not None else None,
                     click_x=int(click_x_rel),
                     click_y=int(click_y_rel),
+                    perturbation=int(perturbation),
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

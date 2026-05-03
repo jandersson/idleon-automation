@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS shots (
     made INTEGER,
     shot_dir TEXT,
     click_x INTEGER,
-    click_y INTEGER
+    click_y INTEGER,
+    perturbation INTEGER
 )
 """
 
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS shots (
 _LATE_COLUMNS = [
     ("click_x", "INTEGER"),
     ("click_y", "INTEGER"),
+    ("perturbation", "INTEGER"),
 ]
 
 
