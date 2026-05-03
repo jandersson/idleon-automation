@@ -49,6 +49,8 @@ def main() -> None:
     has_traj = "ball_apex_y" in cols
     has_window = "window_w" in cols
     has_score_int = "score_after_int" in cols
+    has_predicted_offset = "predicted_offset" in cols
+    has_code_commit = "code_commit" in cols
     extra_cols = ""
     if has_perturbation:
         extra_cols += ", perturbation"
@@ -60,6 +62,10 @@ def main() -> None:
         extra_cols += ", window_w, window_h"
     if has_score_int:
         extra_cols += ", score_before_int, score_after_int, score_increment"
+    if has_predicted_offset:
+        extra_cols += ", predicted_offset"
+    if has_code_commit:
+        extra_cols += ", code_commit"
 
     makes = []
     for row in conn.execute(
@@ -94,6 +100,10 @@ def main() -> None:
             rec["score_before_int"] = row["score_before_int"]
             rec["score_after_int"] = row["score_after_int"]
             rec["score_increment"] = row["score_increment"]
+        if has_predicted_offset:
+            rec["predicted_offset"] = row["predicted_offset"]
+        if has_code_commit:
+            rec["code_commit"] = row["code_commit"]
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck

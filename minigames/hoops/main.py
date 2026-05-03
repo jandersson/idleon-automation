@@ -13,7 +13,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fit_target_predictor
+from common.shot_log import open_db, log_shot, fit_target_predictor, current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -43,11 +43,25 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 # makes in dir=up data (platform_y at make ≈ hoop_y + 5..20).
 COLD_START_OFFSET = 20
 
+def _predicted_offset(
+    hoop_y: int, hoop_x: int,
+    predictor: tuple[float, float, float, int] | None,
+) -> int:
+    """Raw predictor output, ignoring overrides. Used as a diagnostic
+    column so we can track when the predictor catches up enough to
+    retire each override."""
+    if predictor is None:
+        return COLD_START_OFFSET
+    a, b, c, _n = predictor
+    target_y = a * hoop_y + b * hoop_x + c
+    return int(round(target_y - hoop_y))
+
+
 def _compute_offset(
     hoop_y: int, hoop_x: int,
     predictor: tuple[float, float, float, int] | None,
 ) -> int:
-    """Compute offset for the given hoop position.
+    """Compute the offset the bot will actually fire with.
 
     With a predictor: target_y = a*hoop_y + b*hoop_x + c, fit on platform_y
     of past makes. With Y_TOLERANCE wide enough that in_window fires
@@ -69,7 +83,8 @@ def _compute_offset(
       hoop=(654,337) with predictor offset=-4.
 
     Remove these once the predictor has enough makes in each region to
-    learn it itself.
+    learn it itself — `predicted_offset` is logged separately so we can
+    monitor how close the raw predictor gets.
     """
     if hoop_x < 620 and hoop_y > 380:
         return 95
@@ -77,11 +92,7 @@ def _compute_offset(
         return 0
     if hoop_x < 660 and hoop_y <= 380:
         return 5
-    if predictor is None:
-        return COLD_START_OFFSET
-    a, b, c, _n = predictor
-    target_y = a * hoop_y + b * hoop_x + c
-    return int(round(target_y - hoop_y))
+    return _predicted_offset(hoop_y, hoop_x, predictor)
 
 
 # When a hoop position is missed, sweep offsets around the predicted value
@@ -378,6 +389,9 @@ def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
+        code_commit = current_code_commit(REPO_ROOT)
+        if code_commit:
+            print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
         try:
             predictor = fit_target_predictor(shot_db, REQUIRED_DIRECTION)
@@ -386,7 +400,7 @@ def run():
             else:
                 a, b, c, n = predictor
                 print(f"Fitted target predictor (dir={REQUIRED_DIRECTION!r}, n={n}): target_y = {a:.3f}*hoop_y + {b:.3f}*hoop_x + {c:.1f}")
-            _run_inner(session_started, shot_db, predictor)
+            _run_inner(session_started, shot_db, predictor, code_commit)
         finally:
             shot_db.close()
             _refresh_and_commit_snapshot()
@@ -411,7 +425,7 @@ def _refresh_and_commit_snapshot() -> None:
     maybe_print_nag(REPO_ROOT, SHOT_DB_PATH, SNAPSHOT_REL)
 
 
-def _run_inner(session_started: str, shot_db, predictor):
+def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None):
     print(f"Hoops bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -481,11 +495,13 @@ def _run_inner(session_started: str, shot_db, predictor):
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
+            predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
             perturbation = _perturbation_for(misses_at_current_hoop)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
             tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}, target launch y={target_y}")
+            override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}{override_tag}, target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
@@ -652,6 +668,8 @@ def _run_inner(session_started: str, shot_db, predictor):
                     score_before_int=score_before_int,
                     score_after_int=score_after_int,
                     score_increment=score_increment,
+                    predicted_offset=int(predicted_offset_value),
+                    code_commit=code_commit,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

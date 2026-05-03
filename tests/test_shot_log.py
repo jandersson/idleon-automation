@@ -92,6 +92,15 @@ def test_log_shot_records_window_dims(tmp_path):
     assert rows == [(960, 572), (1280, 720)]
 
 
+def test_log_shot_records_predicted_offset_and_code_commit(tmp_path):
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, predicted_offset=18, code_commit="abc123def456")
+    log_shot(conn, shot_idx=2, predicted_offset=22, code_commit="abc123def456-dirty")
+    rows = list(conn.execute("SELECT predicted_offset, code_commit FROM shots ORDER BY id"))
+    conn.close()
+    assert rows == [(18, "abc123def456"), (22, "abc123def456-dirty")]
+
+
 def test_fit_target_predictor_returns_none_with_too_few_samples(tmp_path):
     conn = open_db(tmp_path / "shots.db")
     for i in range(3):  # min_samples is 4 for bivariate

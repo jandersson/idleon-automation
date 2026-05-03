@@ -26,6 +26,35 @@ cost vs payoff. Drop entries as they ship.
       automatically without grepping monitor folders. HSV mask + a tiny
       tracking script over the existing flight frame sequence.
 
+## Diagnostic columns (open)
+
+- [x] **`predicted_offset`** — what the predictor would have returned,
+      separate from the override-applied `offset`. Lets us track when
+      the predictor catches up enough to retire each override.
+- [x] **`code_commit`** — short git hash of the working tree at session
+      start, with `-dirty` suffix if uncommitted. Correlates make-rate
+      changes with code changes.
+- [ ] **`override_applied`** (TEXT) — which override (if any) determined
+      the offset for this shot. Values like `low_x_high_hoop`,
+      `low_x_low_hoop`, `mid_x_low_hoop`, or NULL. Easier query than
+      reconstructing the override conditions every time.
+- [ ] **`rim_match_scale`** (REAL) — the scale that
+      `match_multiscale_center` picked for the rim template. Currently
+      the `_scale` return value is discarded. Catches silent window-
+      resize regressions (a sudden shift in scale across shots in one
+      session means the window changed size).
+- [ ] **`time_since_last_shot_ms`** (INTEGER) — derivable from `fired_at`
+      but explicit avoids parsing in queries. Useful for "was this shot
+      in the post-make-respawn window or after a stuck-hoop sequence?"
+- [ ] **`bob_period_ms`** (INTEGER) — time between consecutive `py`
+      peaks in the platform sample buffer. Once score ≥ 10 the
+      platform starts moving and the bob shape changes; this would let
+      us see when.
+- [ ] **`ball_flight_ms`** (INTEGER) — first-detected to last-detected
+      time across flight frames. A real make has a longer flight than
+      an undershoot (ball passes through net vs disappears off-screen).
+      Could be a third make signal alongside OCR + trajectory x.
+
 ## Higher cost
 
 - [x] **Absolute score (OCR'd)** — instead of `made` boolean, read the

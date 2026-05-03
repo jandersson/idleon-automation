@@ -13,8 +13,27 @@ Usage:
 
 Querying: `sqlite3 minigames/hoops/assets/shots.db` and run SQL.
 """
+import subprocess
 import sqlite3
 from pathlib import Path
+
+
+def current_code_commit(repo_root: Path) -> str | None:
+    """Return the short git commit hash of HEAD, with "-dirty" suffix if
+    the working tree has uncommitted changes. None if not in a git repo
+    or git isn't available."""
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return f"{sha}-dirty" if dirty else sha
+    except Exception:
+        return None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shots (
@@ -45,7 +64,9 @@ CREATE TABLE IF NOT EXISTS shots (
     window_h INTEGER,
     score_before_int INTEGER,
     score_after_int INTEGER,
-    score_increment INTEGER
+    score_increment INTEGER,
+    predicted_offset INTEGER,
+    code_commit TEXT
 )
 """
 
@@ -66,6 +87,8 @@ _LATE_COLUMNS = [
     ("score_before_int", "INTEGER"),
     ("score_after_int", "INTEGER"),
     ("score_increment", "INTEGER"),
+    ("predicted_offset", "INTEGER"),
+    ("code_commit", "TEXT"),
 ]
 
 
