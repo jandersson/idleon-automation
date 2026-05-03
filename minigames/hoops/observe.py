@@ -52,8 +52,9 @@ def run():
         if code_commit:
             print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
+        pending_timers: list[threading.Timer] = []
         try:
-            on_click = _make_handler(shot_db, session_started, code_commit)
+            on_click = _make_handler(shot_db, session_started, code_commit, pending_timers)
             print(
                 f"Hoops OBSERVE — click on {WINDOW_TITLE!r} to record shots.\n"
                 "  Overlay: GO (green) = ready, countdown (red) = wait.\n"
@@ -69,6 +70,15 @@ def run():
             )
             print(f"Observe session ended. Captured {n} clicks.")
         finally:
+            # Wait for any post_shot timers still in flight before
+            # closing the DB. Without this, click N's row never gets
+            # written if the session ends within POST_SHOT_COOLDOWN
+            # seconds of the click (game-over auto-exit, fail-safe).
+            in_flight = [t for t in pending_timers if t.is_alive()]
+            if in_flight:
+                print(f"  Waiting for {len(in_flight)} pending post-shot timer(s) to finish…")
+                for t in in_flight:
+                    t.join(timeout=POST_SHOT_COOLDOWN + 2)
             shot_db.close()
 
 
@@ -85,7 +95,8 @@ def _check_game_over() -> bool:
     return is_over
 
 
-def _make_handler(shot_db, session_started: str, code_commit: str | None):
+def _make_handler(shot_db, session_started: str, code_commit: str | None,
+                  pending_timers: list[threading.Timer]):
     def on_click(idx: int, click_x_rel: int, click_y_rel: int,
                  frame: np.ndarray) -> None:
         # Re-fetch bounds for post-shot work (they shouldn't change but
@@ -144,7 +155,9 @@ def _make_handler(shot_db, session_started: str, code_commit: str | None):
             label = f"MAKE +{inc}" if made else "miss"
             print(f"  click {idx} → {label} (sa={score_after_int}, inc={inc})")
 
-        threading.Timer(POST_SHOT_COOLDOWN, post_shot).start()
+        timer = threading.Timer(POST_SHOT_COOLDOWN, post_shot)
+        pending_timers.append(timer)
+        timer.start()
 
     return on_click
 
