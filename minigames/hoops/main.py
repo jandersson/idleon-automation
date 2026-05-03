@@ -55,16 +55,22 @@ def _compute_offset(
 
     Cold start: constant offset.
 
-    Override: for the low-hoop_x, low-hoop region (~hoop_x<620, hoop_y>380),
-    the bivariate fit is dominated by high-hoop_x training data and
-    underpredicts the offset by ~80px. Session 2026-05-03T08:16 showed
-    offset=102 missed by only 27px (ball_x_at_rim=559 vs hoop_x=586) at
-    hoop=(586,410); offset=70 missed by 270px. The make zone is near 95-100.
-    Override to 95 so the first shot lands in the make zone; remove once
-    we've accumulated more makes in that region and the fit catches up.
+    Two hardcoded overrides for low-hoop_x regions where the bivariate
+    fit is wildly off (training data is dominated by hoop_x in 645-720):
+
+    - hoop_x<620, hoop_y>380 → offset=95. Past makes there used 95-100;
+      predictor would say ~13. Verified at hoop=(586,410).
+    - hoop_x<620, hoop_y<=380 → offset=0. Past makes (5 confirmed) used
+      offsets in -41..+5 with fired_py very close to hoop_y itself
+      (target_y ≈ hoop_y). Predictor would say 3-13.
+
+    Remove these once the predictor has enough makes in each region to
+    learn it itself.
     """
     if hoop_x < 620 and hoop_y > 380:
         return 95
+    if hoop_x < 620 and hoop_y <= 380:
+        return 0
     if predictor is None:
         return COLD_START_OFFSET
     a, b, c, _n = predictor
@@ -94,14 +100,6 @@ def _perturbation_for(miss_count: int) -> int:
     through the sweep."""
     return PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
 
-
-def _pick_click_position(
-    hoop_x: int, hoop_y: int, width: int, height: int, shot_idx: int,
-) -> tuple[int, int]:
-    """Window-relative click position. Always at the hoop — click position
-    has no measurable effect on aim (verified May 3); kept as a function
-    so future experiments can branch here cleanly if needed."""
-    return hoop_x, hoop_y
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
 # bumped to 6 — at 2, the in_window branch almost never fires and we rely
@@ -561,9 +559,10 @@ def _run_inner(session_started: str, shot_db, predictor):
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
                 fired_at = datetime.now().isoformat(timespec="seconds")
-                click_x_rel, click_y_rel = _pick_click_position(
-                    hoop_x, hoop_y, width, height, shot_idx,
-                )
+                # Click at the hoop position. Click coordinates have no
+                # measurable effect on aim (verified May 3); we keep
+                # logging them in case a future test needs to vary them.
+                click_x_rel, click_y_rel = hoop_x, hoop_y
                 click(left + click_x_rel, top + click_y_rel)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:

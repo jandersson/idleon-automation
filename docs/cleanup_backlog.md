@@ -33,17 +33,10 @@ disproved it.
       always equal to `hoop_x` / `hoop_y` so they carry zero new info.
       Costs a `_LATE_COLUMNS` removal + DB migration (or just leave the
       columns and stop logging). Low priority.
-- [ ] **Drop the launcher's `experiments` config slot** — currently unused
-      since both click experiments are gone. Keep as dead code for now in
-      case we add a new test mode. Re-evaluate if it's still empty in a
-      month.
 - [ ] **DB rows from the click-sweep / click-extreme runs** — still
       labelled `made=0` correctly thanks to OCR+trajectory validation.
       Adding a `experiment_label` column would let the predictor exclude
       them in case future false-positives slip through. Low priority.
-- [ ] **`_pick_click_position` is now a one-liner** — could inline at the
-      call site and drop the function. Trivial. Skipping for now in case
-      we add per-shot variations later.
 - [ ] **README / CLAUDE.md note** — record that click position has no
       effect on aim, so future contributors don't burn cycles on that
       hypothesis. Add a line to the "Architecture" section in CLAUDE.md.
@@ -51,6 +44,12 @@ disproved it.
       relevant if we see a real make get rejected because the ball
       detector mistracked. Worth revisiting after a few sessions of
       data with the new validation.
+
+### Done 2026-05-03
+
+- [x] `_pick_click_position` inlined at the call site (was a one-liner)
+- [x] Launcher's `experiments` config slot removed (was empty, plus
+      its `extra_env` plumbing in `_start_bot` / `_spawn`)
 
 ### Keep
 
