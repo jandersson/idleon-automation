@@ -44,7 +44,7 @@ def test_stuck_region_overrides():
     assert _compute_offset(370, 655, None) == 5
     # Just outside the boxes — predictor takes over.
     assert _compute_offset(410, 660, predictor) == 0  # hoop_x on boundary
-    assert _compute_offset(381, 600, predictor) == 0  # hoop_y on the high boundary
+    assert _compute_offset(381, 700, predictor) == 0  # hoop_x past all override bands
 
 
 def test_perturbation_zero_on_first_attempt():
