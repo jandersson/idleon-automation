@@ -100,11 +100,14 @@ class Launcher:
         nb.pack(fill="both", expand=True, padx=4, pady=4)
 
         bots_tab = ttk.Frame(nb)
+        setup_tab = ttk.Frame(nb)
         frames_tab = ttk.Frame(nb)
         nb.add(bots_tab, text="Bots")
+        nb.add(setup_tab, text="Setup")
         nb.add(frames_tab, text="Frames")
 
         self._build_bots_tab(bots_tab)
+        self._build_setup_tab(setup_tab)
         self._build_frames_tab(frames_tab)
 
     def _build_bots_tab(self, parent: ttk.Frame):
@@ -129,15 +132,6 @@ class Launcher:
             status = ttk.Label(top, text="stopped", foreground="grey")
             status.pack(side="left")
             self.status_labels[mg["name"]] = status
-
-            tools = ttk.Frame(frame)
-            tools.pack(fill="x", pady=(4, 0))
-            ttk.Label(tools, text="Setup:", foreground="grey").pack(side="left", padx=(0, 4))
-            for label, cmd in mg["setup"]:
-                btn = ttk.Button(tools, text=label,
-                                 command=lambda c=cmd: self._run_oneshot(c))
-                btn.pack(side="left", padx=2)
-                self.setup_buttons[cmd] = (btn, label)
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
@@ -189,6 +183,21 @@ class Launcher:
         self.tries_label.config(text=str(value))
         self.tries_entry.delete(0, "end")
         self._enqueue_log(f"[tries] set to {value}\n")
+
+    def _build_setup_tab(self, parent: ttk.Frame):
+        """Per-minigame calibration / debug buttons. Lives in its own tab so
+        the Bots tab stays focused on starting/stopping; setup tools are used
+        rarely (mostly during initial calibration)."""
+        for i, mg in enumerate(MINIGAMES):
+            label = f"{mg.get('emoji', '')} {mg['name'].capitalize()}".strip()
+            frame = ttk.LabelFrame(parent, text=label, padding=6)
+            frame.grid(row=i, column=0, sticky="ew", padx=8, pady=4)
+            for label, cmd in mg["setup"]:
+                btn = ttk.Button(frame, text=label,
+                                 command=lambda c=cmd: self._run_oneshot(c))
+                btn.pack(side="left", padx=2)
+                self.setup_buttons[cmd] = (btn, label)
+        parent.columnconfigure(0, weight=1)
 
     def _build_frames_tab(self, parent: ttk.Frame):
         controls = ttk.Frame(parent, padding=6)
