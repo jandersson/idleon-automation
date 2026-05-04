@@ -13,8 +13,12 @@ pipeline fits together. Living document — update as we learn more.
   trajectories within the ~20px noise floor regardless of click_x or
   click_y). The bot clicks at the hoop position because that's a sane
   default; it could click anywhere.
-- **Hoop respawns randomly between shots** at score 0–19 — both X and Y
-  vary across the playfield.
+- **Hoop respawns only on a make**, at a random new (X, Y) for score
+  0–19. Misses don't move it. This means every miss at the current
+  hoop is "free" data (we'd be sitting on the same target anyway), and
+  any strategy that *reduces* shot frequency is counterproductive —
+  the bot has to fire something to make progress. Build the predictor
+  by firing and logging, not by holding back when uncertain.
 - **At score ≥10**, the platform starts moving horizontally. We have
   `home_x` / `X_TOLERANCE` machinery for this but it's currently disabled
   (tolerance=9999) because we rarely get past score 10 today.
