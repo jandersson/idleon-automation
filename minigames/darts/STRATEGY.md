@@ -171,31 +171,31 @@ Limitations:
 Open ideas for raising the per-session hit rate, ordered by expected
 value-per-effort. Drop entries as they ship.
 
-- **Trajectory module: dart-landing-x extraction.** Flight frames are
-  now recorded (2026-05-05). Next step is a `common.dart_trajectory`
-  helper analogous to `common.ball_trajectory` that runs over a throw
-  folder and extracts where the dart visually lands relative to the
-  bullseye. Without this the recorded frames are dead weight.
-- **Score OCR / template-matched digits.** Replaces the binary "did it
-  change" signal with the actual score number. Tells us +1 / +2 / +3
-  per throw, which is the label any release-angle predictor would
-  train against. Same path as the hoops `metrics_backlog.md` "Higher
-  cost" item — pixel-art digits favor template matching over
-  Tesseract.
-- **shot_log SQLite parity with hoops.** Darts currently logs only to
-  meta.txt and console. A `darts.db` with one row per throw (release
-  pose, conf, wind hash, score_increment, dart_landing_x once
-  extracted, code_commit, session_started) would let the same kind of
-  per-shot queries we run for hoops, and is the prerequisite for
-  fitting any predictor.
-- **Wind-conditioned release angle.** Once score increment + dart
-  landing offset + wind state are all logged, fit a predictor like
-  hoops' GP that maps `(wind_state) → optimal_release_pose_offset`.
-  Existing release pose template gives the centre; predictor outputs
-  a delta. Unlike hoops there's no continuous knob to turn — release
-  pose is a discrete frame match — so this likely takes the form of
-  picking *which* of several pre-captured release-pose templates to
-  match against given the current wind.
+- ~~**Trajectory module**~~ — shipped 2026-05-05 as
+  `common.dart_trajectory`. Extracts `launch_angle_deg`, `apex_y`,
+  `landing_x`, and `frames_seen` from a throw folder's flight frames
+  via gray-pixel HSV mask + motion mask. Tested on synthetic frames;
+  spot-checked on 3 real throws (angles -22.2°, +23.1°, -31.3°).
+- ~~**Score OCR**~~ — now wired via `common.score_ocr.read_score`.
+  Per-throw `score_increment` (the +1/+2/+3/+5 magnitude) is logged
+  alongside the binary hit/miss diff. Template-matched digits would
+  still be more reliable than tesseract; tracked under hoops'
+  `metrics_backlog.md` "Higher cost" — same upgrade path applies here.
+- ~~**shot_log SQLite parity with hoops**~~ — shipped 2026-05-05 as
+  `minigames/darts/shot_log.py` writing to `assets/darts.db`. Schema
+  has release pose, launch_angle/apex/landing, score increment, hit/
+  bullseye flags, streak, code_commit. fetch_hits() returns the
+  trajectory-and-outcome triples ready for predictor training.
+- **Wind-conditioned release angle.** Score increment, launch angle,
+  and landing x are all logged per throw now (via dart_trajectory +
+  shot_log, 2026-05-05). What's still missing: a stable wind-state
+  identifier per throw (currently we save deduplicated wind crops to
+  disk but don't tag throws with which one was active). Once that's
+  in, fit a predictor like hoops' GP mapping
+  `(wind_state) → optimal_release_pose`. The release pose is a
+  discrete frame match rather than a continuous knob, so this likely
+  takes the form of picking *which* of several pre-captured release-
+  pose templates to match against given the current wind state.
 - **Click-timing audit on every minigame** — done for hoops and darts
   (2026-05-04 / 05). When adding a new minigame, audit the path from
   trigger detection to click landing for any disk writes or full-
