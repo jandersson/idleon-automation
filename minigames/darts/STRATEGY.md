@@ -3,6 +3,51 @@
 What the bot assumes about the game and how each piece of the throw
 pipeline fits together. Living document — update as we learn more.
 
+## What this minigame is
+
+In-game title: **"THROWY DARTS"** (visible top-right of the playfield).
+On the wiki this is the **Nine Darter** minigame — the trophy goal is
+**Nine Dart Finish: 9 bullseyes in a row**, awarding +50 Defence,
++9 Weapon Power, +9% Drop Rate Multi.
+[wiki](https://idleon.wiki/wiki/Nine_Dart_Finish)
+
+Visual layout (verified from `assets/monitor/throw_*/pre_throw.png`):
+
+- Player stands on a small wooden platform, dart held high, arm
+  sweeping vertically.
+- Wall behind the player is divided into vertical colored **stripes**
+  (not concentric rings — the wiki summary that says "rings" is
+  wrong for this game).
+- Right side of the playfield has a **column of 9 pole indicators** —
+  presumably the Nine Dart Finish progress / consecutive-bullseye
+  counter, but unverified.
+- Top-left readout shows current "Throws" / "Now" totals; bot's
+  `score` region targets the "Now" digits (the running point total).
+- Top-right has a "Current Reward" number that ticks down over time
+  or per non-bullseye — distinct from the score we read; not
+  currently used by the bot.
+
+Wind indicator (from `assets/wind_samples/`): a small blue arrow on a
+wooden panel, with multiple discrete directional states observed
+(up-left, up-right, down-right). Some samples are blank wood — wind
+either disabled in those moments or the region drifts during scene
+transitions.
+
+## Open questions (in-game verification needed)
+
+These can be answered by playing a session and watching, faster than
+trawling wiki/Reddit:
+
+- **Per-stripe scoring**: how many points each colored stripe gives,
+  and whether the centre stripe is the "bullseye" the trophy counts.
+- **Wind effect magnitude**: does each discrete wind state offset the
+  dart's flight by a fixed pixel amount, and in which direction
+  relative to the arrow?
+- **Wind state cycle**: deterministic (every N throws) or random; how
+  often it changes.
+- **Sweep-speed escalation**: wiki says "sweep speed increases over
+  time" — within a single session, or only across milestone scores?
+
 ## Game-physics assumptions (empirical)
 
 - **Throw is fixed-power; aim is determined by the player's arm angle
