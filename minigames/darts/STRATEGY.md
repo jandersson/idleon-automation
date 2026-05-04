@@ -166,6 +166,30 @@ Limitations:
    scene is replaced. False fires possible during slow cycles; false
    negatives if the scene happens to keep matching.
 
+## Bootstrapping order (2026-05-05)
+
+The bot is currently in a chicken-and-egg state for any predictor
+work. Hits drive variation; without hits there's no signal:
+
+- **Bot misses → no teleport, no wind change → all `darts.db` rows
+  share `(default_player_x, default_wind)` → predictor has nothing to
+  fit on.**
+
+So the priority order is forced:
+
+1. **Get hit rate up.** Tight shaft+tip release template (shipped
+   2026-05-05) was the first move — old wide template lost matches
+   after the post-hit teleport, killing sessions after 1–2 throws.
+   Validate with a real session: pre-fix runs were 1–2 throws then
+   bail; the fix should keep sessions going for ≥10 throws.
+2. **First predictor: 1D `(player_x) → optimal_release_angle`.**
+   Player position varies after every successful hit. As soon as
+   sessions produce 20–30 hits across varied teleport positions, fit
+   a simple GP/KNN on this single feature. Wind not needed yet.
+3. **Add wind as 2nd/3rd feature** when hit rate is high enough that
+   wind actually changes within sessions. Until then the wind state
+   is mostly the constant default and adds noise.
+
 ## Aim-quality backlog
 
 Open ideas for raising the per-session hit rate, ordered by expected
@@ -186,16 +210,50 @@ value-per-effort. Drop entries as they ship.
   has release pose, launch_angle/apex/landing, score increment, hit/
   bullseye flags, streak, code_commit. fetch_hits() returns the
   trajectory-and-outcome triples ready for predictor training.
-- **Wind-conditioned release angle.** Score increment, launch angle,
-  and landing x are all logged per throw now (via dart_trajectory +
-  shot_log, 2026-05-05). What's still missing: a stable wind-state
-  identifier per throw (currently we save deduplicated wind crops to
-  disk but don't tag throws with which one was active). Once that's
-  in, fit a predictor like hoops' GP mapping
-  `(wind_state) → optimal_release_pose`. The release pose is a
-  discrete frame match rather than a continuous knob, so this likely
-  takes the form of picking *which* of several pre-captured release-
-  pose templates to match against given the current wind state.
+- **Validate the new tight release template in a real session.**
+  Auto-extracted shaft+tip template shipped 2026-05-05; we've tested
+  it against 30 capture frames (clean separation: 0.79–1.00 at
+  release angle, 0.61 elsewhere) but not yet in a live session. Run
+  `uv run darts` and confirm sessions go ≥10 throws instead of
+  bailing after 1–2. This is the single biggest hit-rate factor on
+  the table right now.
+- **1D `(player_x) → optimal_release_angle` predictor.** First
+  useful predictor for darts because player position varies on every
+  hit, even before wind matters. Reuses `common.predictor.GpPredictor`
+  / `KnnPredictor` directly — they're 2D-input but a constant
+  second arg works fine. Train against `darts.db` once we have ~20+
+  hits with varied teleport positions. Doesn't need wind.
+- **Continuous wind centroid features.** When wind starts changing
+  within sessions (i.e. hit rate is high enough), encode wind as
+  `(wind_blue_centroid_x, wind_blue_centroid_y)` — centroid of blue
+  pixels in the wind crop, normalised to [-1, 1]. Plus
+  `wind_blue_pixel_count` for "is wind active at all". Avoids
+  enumerating discrete wind states (we don't know how many exist).
+  GP interpolates naturally between observed centroids, including
+  wind directions never seen before.
+- **Wind-conditioned release angle.** Final form once both player_x
+  and wind features are flowing. Predictor input becomes 3D:
+  `(player_x, wind_centroid_x, wind_centroid_y) → optimal_release_angle`.
+  Release pose is template-discrete rather than a continuous knob,
+  so consuming the predicted angle takes one of:
+    - (a) Multiple pre-captured templates at different angles; pick
+      the closest match to predicted angle and fire on that template.
+    - (b) Capture a single template at the predicted angle, swap it
+      in, fire from there. Manual loop per prediction update.
+- **Multi-template release matching.** Independent of predictors —
+  capture release templates at e.g. 5 different sweep angles, fire
+  on whichever matches first. Even before any predictor is fitted
+  this gives the bot a wider effective firing window per sweep
+  cycle, increasing throws-per-session and therefore data flow.
+  Pairs with (a) above as the consumption path for a future
+  predicted-angle output.
+- **Variance-scaled adjustments** (port from hoops). When a darts
+  predictor is fitted, use GP σ to decide how aggressive to be: high
+  σ → either skip-the-shot-and-pick-a-different-angle or fall back
+  to the captured default; low σ → trust the prediction. Less
+  applicable in darts than hoops since darts lacks hoops' "hoop
+  doesn't move on miss" constraint — players reset position on
+  hits, so being picky about shots is less self-defeating here.
 - **Click-timing audit on every minigame** — done for hoops and darts
   (2026-05-04 / 05). When adding a new minigame, audit the path from
   trigger detection to click landing for any disk writes or full-
