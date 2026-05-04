@@ -90,31 +90,64 @@ score-magnitude approach for distinguishing bullseyes from regular
 hits is viable: a bullseye throw should leave a notably larger
 post-throw score increment than a +1 / +2 / +3 hit.
 
-### Wall layout (verified from session 2026-05-05 01:25)
+### Wall layout (corrected 2026-05-05 02:00 after misreading landing_x)
 
-The wall is **vertical alternating dark/light stripes**, each a
-different scoring tier, with **thin dividers between stripes that
-count as a miss** (and cost a life — 3 lives = 3 dividers = game
-over).
+The actual scoring wall is the **vertical colored column on the
+right side of the playfield**, around x ≈ 850-960, with horizontal
+colored stripes:
 
-Empirical bullseye (+5) location at the standard player platform:
+  - **Blue** (top) — some +N value
+  - **Yellow**
+  - **Green**
+  - **Red** = **bullseye (+5)**, middle of the column
+  - **Green** (bottom)
 
-- **Bullseye stripe**: window x ≈ **400-415** (center near 406).
-  Confirmed from a +5 throw whose flight ended at landing_x=414, plus
-  two probable bullseyes at landing_x=399/405. The lighter-coloured
-  central stripe in `assets/monitor/throw_001_012546/post_throw.png`.
-- **Divider (miss)**: window x ≈ 370-390. Three misses in that
-  session all landed there (landing_x=370/387/390) and all reported
-  score_increment=0 exactly — i.e. didn't score even +1. Consistent
-  with hitting the divider between bullseye stripe and the adjacent
-  +3 stripe.
+Between stripes are thin **dividers** that count as a miss and cost a
+life. The brown vertical-striped wall behind the player is **background
+decor**, NOT the scoring wall — earlier analysis mistakenly treated it
+as such.
 
-Caveat: this is at one player platform position. After a hit the
-player teleports, which shifts the wall's *relative* position from
-the player but not its absolute window coords (the wall is fixed UI).
-So the bullseye stripe stays at x ≈ 400-415 regardless of teleport.
-What changes per-teleport is the launch trajectory needed to land
-there, which is what the future predictor learns.
+#### What `trajectory.landing_x` actually means
+
+The trajectory module's `landing_x` is the **last detected MOTION
+frame's x** — it's roughly where the dart was a frame before it stuck
+in the wall, not where it stuck. Once the dart sticks, motion masking
+filters it out. So `landing_x ≈ 400-420` for *all* hits doesn't mean
+"the bullseye is at x=410" — it means "we lose sight of the dart at
+roughly the same x for any successful hit, which is just before
+impact". The actual stick location is x ≈ 850-960 (the wall column).
+
+#### What actually determines the stripe hit
+
+The dart's **vertical position** (Y) at impact determines which stripe
+it sticks in. That's a function of launch angle and arc shape —
+**`apex_y` is the strongest signal** for which stripe was hit:
+
+  - **Low apex_y** (very high arc, e.g. apex_y=188) → dart lands in
+    upper stripes (blue / yellow)
+  - **Higher apex_y** (flatter arc, e.g. apex_y=299) → dart lands in
+    lower-middle stripes (**red bullseye** at apex_y ≈ 280-310)
+
+Cross-checked: session 2026-05-05 01:45 had two hits — apex=188 went
+into the yellow stripe (user-observed); apex=299 was OCR-confirmed
++5 bullseye (red stripe).
+
+#### Misses vs hits (in landing_x terms)
+
+`landing_x` IS still a useful proxy for hit-vs-miss because misses
+fall short before reaching the wall:
+
+  - Hits: `landing_x` ≈ 400-420 (dart reached the wall vicinity)
+  - Misses: `landing_x` ≈ 370-390 (dart fell short, hit divider /
+    ground / off-screen). All misses observed had
+    `score_increment=0`, consistent with the "miss costs a life"
+    mechanic.
+
+So the predictor's feature stack is:
+  - Hit-or-miss: predictable from landing_x / launch_angle
+  - Bullseye-or-not: predictable from apex_y conditional on hit
+  - Optimal release for bullseye: lower apex (~280-310), positive
+    launch angle is bad (dart drops short), negative ~-10° good
 
 ## Open questions (in-game verification needed)
 
