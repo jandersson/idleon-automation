@@ -150,20 +150,71 @@ def test_log_shot_works_from_a_background_thread(tmp_path):
 
 
 def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
-    """fetch_makes only returns clean makes (made=1, clamped=0, matching
-    direction) so callers don't have to filter."""
+    """fetch_makes only returns clean makes (clean_make=1, clamped=0,
+    matching direction) so callers don't have to filter."""
     conn = open_db(tmp_path / "shots.db")
     log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, made=1,
-             clamped=0, required_direction="up")
+             clean_make=1, clamped=0, required_direction="up")
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, made=1,
-             clamped=0, required_direction="up")
+             clean_make=1, clamped=0, required_direction="up")
     # Pollution
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
-             clamped=1, required_direction="up")  # clamped
+             clean_make=1, clamped=1, required_direction="up")  # clamped
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=0,
-             clamped=0, required_direction="up")  # miss
+             clean_make=0, clamped=0, required_direction="up")  # miss
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
-             clamped=0, required_direction="down")  # wrong direction
+             clean_make=1, clamped=0, required_direction="down")  # wrong direction
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
+             clean_make=0, clamped=0, required_direction="up")  # rattle-in
     rows = fetch_makes(conn, "up")
     conn.close()
     assert sorted(rows) == [(300.0, 600.0, 320.0), (400.0, 700.0, 420.0)]
+
+
+def test_migrate_backfills_clean_make_for_existing_rows(tmp_path):
+    """Old DB rows without clean_make get backfilled at open_db time:
+    - made=0 → clean_make=0
+    - made=1, no trajectory → clean_make=1 (trust historical data)
+    - made=1, ball_landing_x within tolerance → clean_make=1
+    - made=1, ball_landing_x outside tolerance → clean_make=0 (rattle)
+    """
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        'CREATE TABLE shots ('
+        '  id INTEGER PRIMARY KEY, shot_idx INTEGER, hoop_x INTEGER, '
+        '  made INTEGER, ball_landing_x INTEGER'
+        ')'
+    )
+    conn.executemany(
+        "INSERT INTO shots (shot_idx, hoop_x, made, ball_landing_x) VALUES (?,?,?,?)",
+        [
+            (1, 700, 0, 500),       # miss
+            (2, 700, 1, None),      # historical make, no trajectory → trust
+            (3, 700, 1, 720),       # clean make (20px past)
+            (4, 700, 1, 900),       # rattle-in (200px past)
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_db(db_path)
+    rows = list(conn.execute(
+        "SELECT shot_idx, made, clean_make FROM shots ORDER BY shot_idx"
+    ))
+    conn.close()
+    assert rows == [(1, 0, 0), (2, 1, 1), (3, 1, 1), (4, 1, 0)]
+
+
+def test_migrate_does_not_overwrite_explicit_clean_make(tmp_path):
+    """If clean_make is already set on a row, the migration leaves it
+    alone — only NULL rows get backfilled."""
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, shot_idx=1, hoop_x=700, made=1,
+             ball_landing_x=900, clean_make=1)  # caller asserted clean despite distance
+    conn.close()
+    # Reopen — _migrate runs again, must not flip clean_make to 0.
+    conn = open_db(tmp_path / "shots.db")
+    val = conn.execute("SELECT clean_make FROM shots").fetchone()[0]
+    conn.close()
+    assert val == 1

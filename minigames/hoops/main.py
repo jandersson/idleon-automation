@@ -13,7 +13,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fetch_makes, current_code_commit
+from common.shot_log import open_db, log_shot, fetch_makes, current_code_commit, CLEAN_MAKE_TOLERANCE
 from common.predictor import fit_knn, fit_bivariate, fit_gp
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
@@ -641,6 +641,24 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     ball_x_at_rim=trajectory["ball_x_at_rim_height"],
                     hoop_x=hoop_x,
                 )
+                # Clean-make filter for predictor training. A make is
+                # "clean" only if the ball landed reasonably close to
+                # hoop_x — rattle-ins land far past after bouncing off
+                # the backboard. None landing → trust the make (no
+                # trajectory data to evaluate against).
+                clean_make_value: int | None = None
+                if made is not None:
+                    if not made:
+                        clean_make_value = 0
+                    else:
+                        landing = trajectory.get("ball_landing_x")
+                        if landing is None:
+                            clean_make_value = 1
+                        elif abs(landing - hoop_x) <= CLEAN_MAKE_TOLERANCE:
+                            clean_make_value = 1
+                        else:
+                            clean_make_value = 0
+                            print(f"  [clean] make rejected for predictor: ball_landing_x={landing} vs hoop_x={hoop_x} (Δ={abs(landing - hoop_x)}px > {CLEAN_MAKE_TOLERANCE}px) — likely rattle-in")
                 # Compute lives_diff up-front so we can persist it on the
                 # shot row. Only meaningful when the lives region is visibly
                 # populated (during pre-game or "Make a shot to start"
@@ -678,6 +696,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     score_before_int=score_before_int,
                     score_after_int=score_after_int,
                     score_increment=score_increment,
+                    clean_make=clean_make_value,
                     predicted_offset=int(predicted_offset_value),
                     code_commit=code_commit,
                     predictor_kind=PREDICTOR_KIND if predictor is not None else None,
