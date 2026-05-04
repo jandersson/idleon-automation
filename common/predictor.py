@@ -5,7 +5,7 @@ platform_y)` tuples — and exposes a `predict(hoop_y, hoop_x) -> float`
 method returning the predicted optimal `platform_y` (i.e. the value the
 caller should aim `target_y` at).
 
-Two implementations live here so they can be swapped at the call site:
+Three implementations live here so they can be swapped at the call site:
 
 - `KnnPredictor` — inverse-distance-weighted KNN over past makes.
   Adapts to local curvature in the (hoop_y, hoop_x) → optimal_py
@@ -13,12 +13,15 @@ Two implementations live here so they can be swapped at the call site:
 - `BivariatePredictor` — closed-form OLS for
   `target_y = a*hoop_y + b*hoop_x + c`. Older model, kept here for
   A/B comparison and as a baseline.
+- `GpPredictor` — Gaussian Process regression with anisotropic RBF
+  kernel (sklearn). Returns a posterior mean *and* std; the std is
+  what enables variance-driven gating and directional perturbation
+  downstream.
 
-`fit_knn` / `fit_bivariate` are factory helpers that take the rows and
-return a fitted predictor (or None if too few samples).
+`fit_knn` / `fit_bivariate` / `fit_gp` are factory helpers that take the
+rows and return a fitted predictor (or None if too few samples).
 
-For algorithm refreshers (KNN, OLS, planned GP), see
-`docs/predictors.md` (or
+For algorithm refreshers (KNN, OLS, GP), see `docs/predictors.md` (or
 https://jandersson.github.io/idleon-automation/predictors.html for
 the same content with rendered LaTeX + the interactive playground
 linked from the top). Keep the doc in sync when adding/removing
@@ -85,6 +88,38 @@ class BivariatePredictor:
         return self.a * hoop_y + self.b * hoop_x + self.c
 
 
+class GpPredictor:
+    """Gaussian Process regression over past makes with an anisotropic
+    RBF kernel. Wraps a fitted sklearn `GaussianProcessRegressor`.
+
+    Exposes `predict` (posterior mean only, matching the Predictor
+    Protocol) and `predict_with_std` (mean + std), so callers that want
+    to gate or perturb based on uncertainty can reach for the std
+    without instantiating a separate predictor.
+    """
+
+    def __init__(self, points: list[tuple[float, float, float]], gp):
+        self.points = points
+        self._gp = gp
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def predict(self, hoop_y: float, hoop_x: float) -> float:
+        mu, _ = self.predict_with_std(hoop_y, hoop_x)
+        return mu
+
+    def predict_with_std(
+        self, hoop_y: float, hoop_x: float
+    ) -> tuple[float, float]:
+        import numpy as np
+
+        x = np.array([[hoop_y, hoop_x]])
+        mu, std = self._gp.predict(x, return_std=True)
+        return float(mu[0]), float(std[0])
+
+
 def fit_knn(
     rows: list[tuple[float, float, float]],
     k: int = 5,
@@ -130,6 +165,45 @@ def fit_bivariate(
         return None
     a, b, c = sol
     return BivariatePredictor(points, a, b, c)
+
+
+def fit_gp(
+    rows: list[tuple[float, float, float]],
+    min_samples: int = 4,
+) -> GpPredictor | None:
+    """Fit a Gaussian Process to (hoop_y, hoop_x) → platform_y.
+
+    Anisotropic RBF kernel (one length scale per dim, since hoop_y and
+    hoop_x cover different ranges) × ConstantKernel for tunable signal
+    variance, plus a WhiteKernel for the per-make platform_y detection
+    jitter. Hyperparameters fit via marginal-likelihood maximisation
+    with 4 restarts to dodge bad local optima.
+
+    sklearn imports are lazy: bots that stick with KNN don't pay the
+    sklearn import cost on startup.
+    """
+    if len(rows) < min_samples:
+        return None
+    import numpy as np
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
+
+    points = [(float(r[0]), float(r[1]), float(r[2])) for r in rows]
+    X = np.array([[p[0], p[1]] for p in points])
+    y = np.array([p[2] for p in points])
+
+    kernel = (
+        ConstantKernel(1.0, (1e-2, 1e3))
+        * RBF(length_scale=[50.0, 50.0], length_scale_bounds=(1.0, 1e3))
+        + WhiteKernel(noise_level=4.0, noise_level_bounds=(1e-2, 1e2))
+    )
+    gp = GaussianProcessRegressor(
+        kernel=kernel,
+        normalize_y=True,
+        n_restarts_optimizer=4,
+    )
+    gp.fit(X, y)
+    return GpPredictor(points, gp)
 
 
 def _solve_3x3(M: list[list[float]], v: list[float]) -> tuple[float, float, float] | None:
