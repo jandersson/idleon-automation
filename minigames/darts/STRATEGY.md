@@ -27,6 +27,23 @@ a per-day attempt cap. Resets at the daily boundary.
   base cooldown in seconds, the growth function per play, whether the
   daily reset zeroes the per-day counter back to the base cooldown.
 
+### Verified from save file (2026-05-05)
+
+`common.idleon_save.read_darts_cooldown()` reads the live cooldown
+straight out of the LevelDB save. Mapping confirmed empirically by
+diffing the OLA array across a 30s wait:
+
+- `OLA[439]` = ticks of cooldown remaining (negative = playable)
+- `OLA[440]` = number of plays today (matches the cheat-table)
+- `OLA[442]` = base cooldown duration for the current play tier
+- All cooldown values are in **5-tick-per-second** units (so 125 ticks
+  = 25 seconds), verified by watching ola[439] decrement by exactly
+  150 ticks over 30 seconds of wait.
+
+Observed after 2 plays: cooldown was 25.0 seconds. Much shorter than
+expected — the "grows per play" effect probably ramps up slowly. Run
+the helper after a few more plays to chart the growth curve.
+
 **Practical implication for this bot**: very different from hoops.
 Each session consumes future play time. Don't spam-test like we can
 with hoops practice mode — every spin-up extends the next cooldown.

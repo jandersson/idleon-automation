@@ -159,6 +159,47 @@ def load_save(save_dir: str = SAVE_DIR) -> dict | None:
     return _decode_haxe(text)
 
 
+# Idleon's `OptionsListAccount` array stores per-account counters. These
+# indices were identified empirically (2026-05-05) by diffing the save
+# across a 30s wait — the live values shift in 5-tick-per-second units,
+# i.e. 1 tick = 0.2s. The mapping matches cheat-table dumps that flag
+# OLA[440] as the darts daily-play counter.
+_OLA_DARTS_COOLDOWN_TICKS = 439  # negative = playable; positive = ticks of cooldown left
+_OLA_DARTS_PLAYS_TODAY = 440     # 0..N, grows with each scored darts session
+_OLA_DARTS_COOLDOWN_BASE = 442   # static; per-play tier cooldown duration in ticks
+_OLA_TICKS_PER_SECOND = 5
+
+
+def read_darts_cooldown(save_dir: str = SAVE_DIR) -> dict[str, float | int] | None:
+    """Read the live darts cooldown state from the save.
+
+    Returns a dict with:
+        cooldown_seconds  : seconds of cooldown remaining (negative = playable)
+        plays_today       : darts sessions played since the last daily reset
+        base_cooldown_seconds : cooldown duration that the current play tier
+                                schedules (likely; seems static between dumps)
+
+    Returns None if the save can't be read or the OLA array is too short.
+    The unit conversion (5 ticks per second) was verified empirically.
+    """
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    ola = data.get("OptionsListAccount")
+    if not isinstance(ola, list) or len(ola) <= _OLA_DARTS_COOLDOWN_BASE:
+        return None
+    cd_ticks = ola[_OLA_DARTS_COOLDOWN_TICKS]
+    base_ticks = ola[_OLA_DARTS_COOLDOWN_BASE]
+    plays = ola[_OLA_DARTS_PLAYS_TODAY]
+    if not all(isinstance(v, (int, float)) for v in (cd_ticks, base_ticks, plays)):
+        return None
+    return {
+        "cooldown_seconds": float(cd_ticks) / _OLA_TICKS_PER_SECOND,
+        "plays_today": int(plays),
+        "base_cooldown_seconds": float(base_ticks) / _OLA_TICKS_PER_SECOND,
+    }
+
+
 def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
     """Read MinigamePlays per character from the save. Returns
     {character_name: plays_remaining} or None if the save can't be read.
