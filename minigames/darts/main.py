@@ -46,6 +46,14 @@ MONITOR_MODE = True
 MONITOR_DIR = Path(__file__).parent / "assets" / "monitor"
 POST_LAND_DELAY = 0.6  # how long to wait after the cooldown before post-screenshot
 
+# Capture flight frames during the post-throw cooldown so we can later
+# extract dart-landing position relative to the bullseye and study how
+# wind state correlates with landing offset. Heavyweight (~50KB/frame
+# × ~30 frames per throw) but the data is what unlocks any future
+# release-angle predictor. Mirrors hoops' MONITOR_FLIGHT pattern.
+MONITOR_FLIGHT = True
+FLIGHT_POLL = 0.05
+
 # If no release pose has matched in this many seconds, assume the game-over
 # screen has replaced the dartboard scene (the entire scene is replaced at
 # game over, so the player avatar disappears and the template can't match).
@@ -111,8 +119,13 @@ def _save_monitor_throw(
     score_after,
     score_diff: float | None,
     score_changed_flag: bool | None,
+    sub: Path | None = None,
 ) -> Path:
-    sub = make_shot_dir(MONITOR_DIR, throw_idx, prefix="throw")
+    # When the caller has already allocated the throw folder (e.g. to
+    # write flight frames during the cooldown), reuse it instead of
+    # creating a new one — keeps everything for one throw in one place.
+    if sub is None:
+        sub = make_shot_dir(MONITOR_DIR, throw_idx, prefix="throw")
     save_frame(sub / "pre_throw.png", pre_frame_bgra)
     save_frame(sub / "post_throw.png", post_frame_bgra)
     if wind_crop is not None and wind_crop.size > 0:
@@ -227,8 +240,29 @@ def _run_inner():
             last_wind_crop = wind_crop
         if _maybe_save_wind_sample(wind_crop, wind_seen):
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
-        time.sleep(POST_THROW_COOLDOWN)
-        time.sleep(POST_LAND_DELAY)
+        # Per-throw monitor folder is allocated up-front so flight frames
+        # have a destination. throws_taken hasn't been incremented yet —
+        # do it now so the folder index matches the meta written below.
+        throws_taken += 1
+        flight_dir: Path | None = None
+        if MONITOR_MODE:
+            flight_dir = make_shot_dir(MONITOR_DIR, throws_taken, prefix="throw")
+        # Sample flight frames during the cooldown instead of just sleeping.
+        # Frames go to the throw folder so a later trajectory module can
+        # extract dart-landing-x without a second live session.
+        if MONITOR_FLIGHT and flight_dir is not None:
+            flight_deadline = time.time() + POST_THROW_COOLDOWN + POST_LAND_DELAY
+            flight_idx = 0
+            while time.time() < flight_deadline:
+                check_failsafe()
+                flight_idx += 1
+                f = grab_region(left, top, width, height)
+                bgr = cv2.cvtColor(f, cv2.COLOR_BGRA2BGR)
+                cv2.imwrite(str(flight_dir / f"flight_{flight_idx:03d}.png"), bgr)
+                time.sleep(FLIGHT_POLL)
+        else:
+            time.sleep(POST_THROW_COOLDOWN)
+            time.sleep(POST_LAND_DELAY)
         post_frame = grab_region(left, top, width, height)
         score_after = _capture_score(left, top, width, height)
         # Compute the diff once so we can log AND save it to meta.
@@ -237,7 +271,6 @@ def _run_inner():
         if score_before is not None and score_after is not None:
             diff_changed, diff_val = score_changed(score_before, score_after)
         _log_shot_result(shot_stats, score_before, score_after)
-        throws_taken += 1
         if MONITOR_MODE:
             sub = _save_monitor_throw(
                 throw_idx=throws_taken,
@@ -250,6 +283,7 @@ def _run_inner():
                 score_after=score_after,
                 score_diff=diff_val,
                 score_changed_flag=diff_changed,
+                sub=flight_dir,
             )
             print(f"  [monitor] saved {sub.name}")
         best_recent_conf = 0.0
