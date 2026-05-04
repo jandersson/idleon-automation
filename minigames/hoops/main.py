@@ -567,20 +567,26 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 if clamped:
                     tag += " [clamped]"
                 print(f"Platform at ({px},{py}) (target_y={target_y}, dir={direction}) — shooting{tag}")
-                # Per-shot monitor folder: we'll save pre/post-shot screenshots
-                # plus all flight frames captured during _try_rescue.
+                # Fire immediately. Bookkeeping (disk writes, extra grabs,
+                # randomized delay) happens after the click — anything done
+                # before it shifts platform_y away from what the cross-detector
+                # just sampled, biasing every shot by tens of pixels.
                 shot_idx = shot_stats["attempts"] + 1
-                shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
-                if shot_dir is not None:
-                    save_frame(shot_dir / "pre_shot.png", frame)
-                # Snapshot score and lives regions before launch so we can diff later.
-                score_before = _capture_score_region(left, top, width, height)
-                lives_before = _capture_lives_region(left, top, width, height)
-                random_delay(10, 40)
                 fired_at = datetime.now().isoformat(timespec="seconds")
                 # Click at the hoop. Click coordinates have no measurable
                 # effect on aim (verified May 3) — could be anywhere.
                 click(left + hoop_x, top + hoop_y)
+                # Per-shot monitor folder: we'll save pre/post-shot screenshots
+                # plus all flight frames captured during _try_rescue.
+                shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
+                if shot_dir is not None:
+                    save_frame(shot_dir / "pre_shot.png", frame)
+                # Score/lives "before" are captured post-click: the in-game
+                # score only updates after the ball lands (~2.9s later), so
+                # the region still shows the pre-shot value.
+                score_before = _capture_score_region(left, top, width, height)
+                lives_before = _capture_lives_region(left, top, width, height)
+                random_delay(10, 40)
                 # Try to rescue an overshoot by clicking the ball mid-flight.
                 if RESCUE_ENABLED:
                     _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
