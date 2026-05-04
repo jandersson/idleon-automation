@@ -90,6 +90,32 @@ score-magnitude approach for distinguishing bullseyes from regular
 hits is viable: a bullseye throw should leave a notably larger
 post-throw score increment than a +1 / +2 / +3 hit.
 
+### Wall layout (verified from session 2026-05-05 01:25)
+
+The wall is **vertical alternating dark/light stripes**, each a
+different scoring tier, with **thin dividers between stripes that
+count as a miss** (and cost a life — 3 lives = 3 dividers = game
+over).
+
+Empirical bullseye (+5) location at the standard player platform:
+
+- **Bullseye stripe**: window x ≈ **400-415** (center near 406).
+  Confirmed from a +5 throw whose flight ended at landing_x=414, plus
+  two probable bullseyes at landing_x=399/405. The lighter-coloured
+  central stripe in `assets/monitor/throw_001_012546/post_throw.png`.
+- **Divider (miss)**: window x ≈ 370-390. Three misses in that
+  session all landed there (landing_x=370/387/390) and all reported
+  score_increment=0 exactly — i.e. didn't score even +1. Consistent
+  with hitting the divider between bullseye stripe and the adjacent
+  +3 stripe.
+
+Caveat: this is at one player platform position. After a hit the
+player teleports, which shifts the wall's *relative* position from
+the player but not its absolute window coords (the wall is fixed UI).
+So the bullseye stripe stays at x ≈ 400-415 regardless of teleport.
+What changes per-teleport is the launch trajectory needed to land
+there, which is what the future predictor learns.
+
 ## Open questions (in-game verification needed)
 
 These can be answered by playing a session and watching, faster than
