@@ -3,6 +3,36 @@
 What the bot assumes about the game and how each piece of the throw
 pipeline fits together. Living document — update as we learn more.
 
+## Cost and cadence (player budget)
+
+Researched 2026-05-05; hypothesis "same as hoops" was **wrong**. Darts
+uses a **real-time cooldown that grows with each play that day**, not
+a per-day attempt cap. Resets at the daily boundary.
+
+- **No daily attempt limit per se** — plays are gated by a real-time
+  reset timer, not a counter. Game state tracks
+  `Time until Darts Minigame resets` and
+  `Number of Darts Minigame played today - makes successive reset timer longer`
+  (OLA entry 440 per cheat-table dumps:
+  [FearLess Revolution thread p586](https://fearlessrevolution.com/viewtopic.php?t=14407&start=8775)).
+- **No unlimited practice mode** — unlike hoops, once the cooldown is
+  active there's no free retry. You wait. Confirmed by absence in
+  every public source consulted.
+- **No play cost** in tickets/energy. The cooldown is the only gate.
+- **No "extra plays" upgrade for darts** confirmed; the gem-shop
+  /bribe "+attempts" items reportedly apply to the gathering
+  minigames (mining/chopping/fishing/catching), not darts.
+  ([Steam discussion](https://steamcommunity.com/app/1476970/discussions/0/3127163422371650124/))
+- **Couldn't verify** (idleon.wiki returned 403 to scraping): exact
+  base cooldown in seconds, the growth function per play, whether the
+  daily reset zeroes the per-day counter back to the base cooldown.
+
+**Practical implication for this bot**: very different from hoops.
+Each session consumes future play time. Don't spam-test like we can
+with hoops practice mode — every spin-up extends the next cooldown.
+Plan around it: capture monitor data deliberately, treat each session
+as expensive, save offline analysis for between cooldowns.
+
 ## What this minigame is
 
 In-game title: **"THROWY DARTS"** (visible top-right of the playfield).
