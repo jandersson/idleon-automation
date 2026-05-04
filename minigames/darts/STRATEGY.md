@@ -149,3 +149,10 @@ value-per-effort. Drop entries as they ship.
 - **Better game-over detection.** Match the game-over screen template
   rather than relying on a no-pose timeout. Cuts false fires and false
   negatives both. Same approach as `find_game_over` in hoops.
+- **Lift run-time toggles into the launcher GUI.** Constants like
+  `STEAM_SCREENSHOT_ON_NINE_DART`, `MONITOR_FLIGHT`, `MONITOR_MODE`
+  are user-facing options today only via editing source. Once there
+  are 2+ such per-minigame toggles, expose them as launcher
+  checkboxes / settings (alongside or replacing the existing per-bot
+  buttons in `ui/launcher.py`). Same idea would apply to hoops'
+  `RESCUE_ENABLED`, `PREDICTOR_KIND`, etc.
