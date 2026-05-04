@@ -33,13 +33,20 @@ wooden panel, with multiple discrete directional states observed
 either disabled in those moments or the region drifts during scene
 transitions.
 
+## Stripe scoring (verified from monitor screenshots)
+
+The badge row at the top of the playfield shows **+1, +2, +3, +5** —
+the stripe values from outer to inner. Bullseye is **+5**. Confirmed
+2026-05-05 by reading
+`assets/monitor/throw_006_051203/post_throw.png`. This means the
+score-magnitude approach for distinguishing bullseyes from regular
+hits is viable: a bullseye throw should leave a notably larger
+post-throw score increment than a +1 / +2 / +3 hit.
+
 ## Open questions (in-game verification needed)
 
 These can be answered by playing a session and watching, faster than
 trawling wiki/Reddit:
-
-- **Per-stripe scoring**: how many points each colored stripe gives,
-  and whether the centre stripe is the "bullseye" the trophy counts.
 - **Wind effect magnitude**: does each discrete wind state offset the
   dart's flight by a fixed pixel amount, and in which direction
   relative to the arrow?
@@ -146,11 +153,12 @@ value-per-effort. Drop entries as they ship.
   (2026-05-04 / 05). When adding a new minigame, audit the path from
   trigger detection to click landing for any disk writes or full-
   window grabs sneaking in. See CLAUDE.md "Click timing".
-- **Game-over template capture.** Detector + bot wiring shipped
-  2026-05-05; what's left is running `darts-pick-game-over` once with
-  the game-over screen visible to populate `assets/game_over.png`.
-  Until that's done, the bot falls back to the
-  GAME_OVER_NO_POSE_SEC=25s heuristic.
+- **Tighten 9-dart streak detection to bullseyes only.** With the
+  +1/+2/+3/+5 stripe scoring confirmed, a bullseye gives a +5 score
+  increment while regular stripes give +1/+2/+3. Once score-OCR is
+  wired (next item), the streak counter can require `score_increment
+  == 5` instead of any hit. Eliminates the false-fire concern on
+  STEAM_SCREENSHOT_ON_NINE_DART.
 - **Lift run-time toggles into the launcher GUI.** Constants like
   `STEAM_SCREENSHOT_ON_NINE_DART`, `MONITOR_FLIGHT`, `MONITOR_MODE`
   are user-facing options today only via editing source. Once there
