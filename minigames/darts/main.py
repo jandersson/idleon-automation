@@ -202,10 +202,19 @@ def _run_inner():
         last_pose_time = time.time()
         px, py = pose
         print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}) — throwing")
-        score_before = _capture_score(left, top, width, height)
-        # Snapshot wind state right before this throw — useful even now (so the
-        # library accumulates) and later (so we can pick the right release angle).
+        # Fire immediately. Bookkeeping (score capture, wind crop +
+        # diff + sample save) runs after the click — every ms between
+        # pose detection and click landing drifts the arm a few degrees
+        # off the captured release angle. Same principle as hoops; see
+        # CLAUDE.md "Click timing".
+        click(left + width // 2, top + height // 2)
+        # Snapshot wind state from the pre-click frame (still valid —
+        # `frame` is the BGRA buffer captured before the pose match).
         wind_crop = _crop_wind(frame)
+        # Capture the score region post-click: the in-game score only
+        # updates after the dart lands, so the region still shows the
+        # pre-throw value here.
+        score_before = _capture_score(left, top, width, height)
         # Log wind change between throws (vs the previous throw's reading,
         # not vs the saved library — that one only fires on never-seen-before
         # samples). Useful for correlating bullseye-or-not with wind shifts.
@@ -218,10 +227,6 @@ def _run_inner():
             last_wind_crop = wind_crop
         if _maybe_save_wind_sample(wind_crop, wind_seen):
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
-        # No pre-click delay: the arm sweeps fast enough that even 20-60ms of
-        # latency drifts the hand a few degrees off the captured release angle,
-        # which is the difference between bullseye and a regular hit.
-        click(left + width // 2, top + height // 2)
         time.sleep(POST_THROW_COOLDOWN)
         time.sleep(POST_LAND_DELAY)
         post_frame = grab_region(left, top, width, height)
