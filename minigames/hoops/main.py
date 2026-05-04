@@ -14,7 +14,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot, fetch_makes, current_code_commit
-from common.predictor import fit_knn, fit_bivariate
+from common.predictor import fit_knn, fit_bivariate, fit_gp
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -99,12 +99,16 @@ def _perturbation_for(miss_count: int) -> int:
 Y_TOLERANCE = 6
 
 # Which predictor implementation to use for the make-zone target_y:
-#   "knn"       — KNN over past makes, inverse-distance weighted (k=5).
+#   "knn"       — KNN over past makes, inverse-distance weighted (k=3).
 #                 Adapts to local curvature; recommended default.
 #   "bivariate" — linear OLS for target_y = a*hoop_y + b*hoop_x + c.
 #                 Faster but biased in regions far from the training-data
 #                 cluster (needed hardcoded overrides historically).
-PREDICTOR_KIND = "knn"
+#   "gp"        — Gaussian Process regression (sklearn, anisotropic RBF).
+#                 Same interface as KNN/bivariate via predict(); also
+#                 exposes predict_with_std() so future logic can gate or
+#                 perturb based on uncertainty. See docs/predictors.md.
+PREDICTOR_KIND = "gp"
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
@@ -391,6 +395,8 @@ def run():
                 predictor = fit_knn(rows, k=3)
             elif PREDICTOR_KIND == "bivariate":
                 predictor = fit_bivariate(rows)
+            elif PREDICTOR_KIND == "gp":
+                predictor = fit_gp(rows)
             else:
                 raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
             if predictor is None:
