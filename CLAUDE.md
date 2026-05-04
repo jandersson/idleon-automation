@@ -88,6 +88,28 @@ Two approaches are in use; pick whichever fits the visual cue:
 - **Template matching** (`hoops`): `cv2.matchTemplate` with `TM_CCOEFF_NORMED`, region-restricted (right half for hoop, left half for platform) to cut false positives. Templates must be captured *through the same pipeline as the live bot* — that's what `hoops-capture` is for. Cropping a template from a manual screenshot will mismatch because of color-space and scaling differences.
 - **HSV color masking** (`chopping`): `cv2.inRange` on HSV channels, with priority resolution (gold > green > red). Always tune via the `<minigame>-calibrate` script, which dumps per-range mask overlays to `calibration/`.
 
+### Click timing
+
+When a bot samples a moving world state to decide *when* to fire, fire
+the click immediately after the decision — no disk writes, no extra
+`grab_region` calls, no `random_delay` in between. World state keeps
+moving during that latency, biasing every shot away from what was
+sampled. Bookkeeping (pre-shot frame saves, score/lives region captures,
+randomization) goes after the click.
+
+Concrete cases in the codebase:
+
+- **Hoops** (settled 2026-05-04): pre-click `save_frame`, two extra
+  full-window `grab_region` calls for score/lives, and a
+  `random_delay(10, 40)` stacked into 50–120ms of latency — biasing
+  platform_y by ~20–25px on fast-bob shots and showing up as consistent
+  overshoot on perturbed retries. Score/lives "before" capture still
+  works post-click because the in-game score doesn't update until the
+  ball lands ~2.9s later.
+- **Darts**: see the comment at `darts/main.py` above the throw `click()`
+  — even 20–60ms of latency drifts the arm a few degrees off the
+  captured release angle.
+
 ### Entry points and the sys.path dance
 
 Each `main.py` and tooling script starts with:
@@ -125,19 +147,10 @@ investigations:
   pre/post agreement. Confident make count and live session score are
   reported as separate numbers.
 
-- **Fire the click before any bookkeeping** (settled 2026-05-04). The
-  cross-detector samples `platform_y` at the moment it decides to fire;
-  every millisecond between that decision and the click landing moves
-  the platform further from `target_y`. A pre-shot `save_frame` (PNG
-  encode), two extra full-window `grab_region` calls for score/lives
-  snapshots, and a `random_delay(10, 40)` before `pyautogui.click`
-  stacked into 50–120ms of latency, biasing platform_y by ~20–25px on
-  fast-bob shots — observed as consistent overshoot on perturbed
-  retries. Pre-shot disk writes, score/lives "before" captures, and the
-  randomized delay all run *after* the click now (the in-game score
-  doesn't update until the ball lands ~2.9s later, so the "before"
-  region still reads pre-shot). When adding diagnostics around the fire
-  step, keep them after the click.
+- **Click fires before bookkeeping** — see the cross-cutting "Click
+  timing" subsection above. Hoops was the case that surfaced the rule
+  (2026-05-04); same principle applies wherever a sampled world state
+  drives click timing.
 
 ### Safety
 
