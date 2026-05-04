@@ -116,3 +116,35 @@ back into the predictor on next session.
    voting cuts most misreads but not all. The durable fix is template
    matching against pre-extracted digit PNGs (see
    `docs/metrics_backlog.md` "Higher cost").
+
+## Aim-quality backlog
+
+Open ideas for raising the per-session make rate, ordered by expected
+value-per-effort. Drop entries as they ship.
+
+- **Hoop-confidence gating.** Skip the shot when the rim template-match
+  confidence is low (e.g. `hoop_conf < 0.85`) — the rim was probably
+  misdetected and shooting wastes a life. Concrete data: 2026-05-04
+  session 23:52 burned 4 lives on a hoop detected at conf=0.57 before a
+  perturbation finally landed; skipping it would have given those 4
+  lives back to good shots later in the session. Cheapest win on the
+  list.
+- **GP-variance gating.** GpPredictor exposes `predict_with_std`. Skip
+  shots where the predicted std is above a threshold (e.g. 30+ px) —
+  these are hoop positions far from the training cluster, where the
+  predictor knows it's guessing. Distinct from hoop-confidence gating:
+  one says "I can't see the hoop", the other says "I can see it but I
+  haven't learned that region yet". Both worth wiring; GP variance also
+  drives the next item.
+- **Directional perturbation from ball trajectory.** Current sweep is
+  symmetric (`-8, +8, -16, +16, ...`) and ignores where the ball
+  actually landed. Each miss already logs `ball_x_at_rim_height` and
+  `ball_landing_x`; if the ball was short, push offset one way; if
+  long, the other. Higher information yield per miss than blind
+  sweeping. GP variance can scale the step size — high std → wider
+  steps, low std → smaller corrections.
+- **Bigger sample base.** 58 clean makes (post-rattle filter,
+  2026-05-05) train the GP. Every additional clean session shrinks the
+  high-variance regions automatically; comes for free with play time.
+  Not an action item, but worth remembering as the implicit baseline
+  improvement against which other changes are measured.
