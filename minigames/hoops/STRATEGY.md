@@ -3,6 +3,44 @@
 What the bot assumes about the game and how each piece of the make-shot
 pipeline fits together. Living document — update as we learn more.
 
+## Cost and cadence (player budget)
+
+Researched 2026-05-05 from idleon.wiki, idle-skilling.fandom.com, and
+community guides. Numbers are rounded best-effort — public sources are
+thin and the wiki returned 403 to scraping; spot-check in-game when
+you care about specifics.
+
+- **Daily scored attempts: 3.** After the third the game still lets you
+  play freely in **practice mode** with no rewards. Practice resets at
+  daily reset.
+  [wiki](https://idleon.wiki/wiki/Hoops_Minigame),
+  [oreateai](https://www.oreateai.com/blog/mastering-the-hoops-minigame-in-idleon-tips-and-tricks/01505c7236c123c6eafec083b8fe60b0)
+- **No real-time cooldown** between games. Game over → results screen →
+  immediate restart. Bot can spin sessions back-to-back.
+- **No play cost.** Free attempts after the one-time unlock puzzle.
+  No tickets, no energy.
+- **Practical implication for this bot**: after the 3 daily scored
+  tries are burned, **practice mode is an unlimited budget** for
+  growing `shots.db` — no resource cost to building the prior. Run
+  freely.
+- **In-game difficulty escalation** within a single attempt:
+  - Score ≥10 → platform moves horizontally as well as vertically
+  - Score ≥20 → hoop pans horizontally between shots
+  - Score ≥30 → hoop moves on both axes between shots
+  Bot doesn't currently handle any of these. See "Open problems".
+- **Reward thresholds** (gem-payout Hoops): trophy at a single-game
+  score ≥40; Hoops pet at combined-3-try score ≥66; per-tier gem
+  values not on any public page I could reach.
+- **Variant note**: there's a newer **Swishy Hoops** (W7-era,
+  [SteamDB patch notes](https://steamdb.info/patchnotes/20697793/))
+  that uses **3 lives** per session and gives Ball Points instead of
+  gems. The bot's `lives_diff` machinery suggests we're already
+  targeting Swishy Hoops; the daily-3 rule may not apply there.
+  Worth verifying in-game.
+- **Extra plays per day**: the Gem Shop's "Daily Minigame Plays"
+  upgrade reportedly applies to Catching, not Hoops. No Hoops-specific
+  bribe / talent / shop entry surfaced in search. Unconfirmed.
+
 ## Game-physics assumptions (empirical)
 
 - **Launch is fixed-power and fixed-direction.** Same platform Y at click +
