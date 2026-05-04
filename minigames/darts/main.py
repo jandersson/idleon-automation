@@ -27,6 +27,14 @@ POLL_INTERVAL = 0.02
 # firing to the moments when it's in the captured release angle.
 RELEASE_THRESHOLD = 0.7
 
+# Mean Otsu-binarized pixel-diff threshold for "the score digits changed".
+# Was 3.0 (the common.score_diff default); spot-check on 30 recent throws
+# found two real hits at diff=2.25 (3→8) and diff=2.63 (5→6) being marked
+# as misses. Real misses sit at exactly 0.0, so the floor for "something
+# happened" is well below 1.0. Single-digit score region (40×17 px) means
+# even a full digit change only flips a small fraction of pixels.
+SCORE_CHANGE_THRESHOLD = 1.0
+
 # Wait after throwing for: dart to land, score/animation to settle, new dart to
 # load, and the player+platform to teleport to a new spawn position.
 POST_THROW_COOLDOWN = 1.5
@@ -158,7 +166,7 @@ def _capture_score(left: int, top: int, width: int, height: int):
 def _log_shot_result(stats: dict, before, after) -> None:
     if before is None or after is None:
         return
-    changed, diff = score_changed(before, after)
+    changed, diff = score_changed(before, after, threshold=SCORE_CHANGE_THRESHOLD)
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
@@ -269,7 +277,7 @@ def _run_inner():
         diff_val = None
         diff_changed = None
         if score_before is not None and score_after is not None:
-            diff_changed, diff_val = score_changed(score_before, score_after)
+            diff_changed, diff_val = score_changed(score_before, score_after, threshold=SCORE_CHANGE_THRESHOLD)
         _log_shot_result(shot_stats, score_before, score_after)
         if MONITOR_MODE:
             sub = _save_monitor_throw(
