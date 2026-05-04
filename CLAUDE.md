@@ -125,6 +125,20 @@ investigations:
   pre/post agreement. Confident make count and live session score are
   reported as separate numbers.
 
+- **Fire the click before any bookkeeping** (settled 2026-05-04). The
+  cross-detector samples `platform_y` at the moment it decides to fire;
+  every millisecond between that decision and the click landing moves
+  the platform further from `target_y`. A pre-shot `save_frame` (PNG
+  encode), two extra full-window `grab_region` calls for score/lives
+  snapshots, and a `random_delay(10, 40)` before `pyautogui.click`
+  stacked into 50–120ms of latency, biasing platform_y by ~20–25px on
+  fast-bob shots — observed as consistent overshoot on perturbed
+  retries. Pre-shot disk writes, score/lives "before" captures, and the
+  randomized delay all run *after* the click now (the in-game score
+  doesn't update until the ball lands ~2.9s later, so the "before"
+  region still reads pre-shot). When adding diagnostics around the fire
+  step, keep them after the click.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
