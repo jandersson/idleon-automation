@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
-from common.input import click, random_delay, check_failsafe
+from common.input import click, random_delay, check_failsafe, press_key
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
@@ -34,6 +34,17 @@ RELEASE_THRESHOLD = 0.7
 # happened" is well below 1.0. Single-digit score region (40×17 px) means
 # even a full digit change only flips a small fraction of pixels.
 SCORE_CHANGE_THRESHOLD = 1.0
+
+# Steam screenshot on Nine Dart Finish completion. When enabled, the bot
+# presses F12 (Steam's default screenshot binding) after detecting 9
+# consecutive hits — the requirement for the in-game Nine Dart Finish
+# trophy. Limitation: counts any hit as a streak-keeper; if the trophy
+# strictly requires *bullseyes* (and a non-bullseye hit resets the
+# streak in-game), we'd false-fire on a 9-hit run that wasn't all
+# bullseyes. Tighten to bullseye-only via score-magnitude or visual
+# streak-counter detection if false fires happen.
+STEAM_SCREENSHOT_ON_NINE_DART = True
+NINE_DART_STREAK = 9
 
 # Wait after throwing for: dart to land, score/animation to settle, new dart to
 # load, and the player+platform to teleport to a new spawn position.
@@ -170,8 +181,22 @@ def _log_shot_result(stats: dict, before, after) -> None:
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
-        print(f"  [score] HIT (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
+        stats["streak"] = stats.get("streak", 0) + 1
+        streak = stats["streak"]
+        suffix = f" | streak {streak}" if streak >= 2 else ""
+        print(f"  [score] HIT (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}{suffix}")
+        if STEAM_SCREENSHOT_ON_NINE_DART and streak == NINE_DART_STREAK:
+            print(f"  [nine-dart] {NINE_DART_STREAK}-hit streak reached — pressing F12 for Steam screenshot")
+            press_key("f12")
+            # Don't reset — Steam dedupes its own screenshot key, but we
+            # also don't want to spam if the streak continues past 9.
+            # Reset the counter so the next screenshot only fires after
+            # another full streak.
+            stats["streak"] = 0
     else:
+        if stats.get("streak", 0) > 0:
+            print(f"  [streak] reset (was {stats['streak']})")
+        stats["streak"] = 0
         print(f"  [score] miss (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
 
 
