@@ -129,20 +129,22 @@ value-per-effort. Drop entries as they ship.
   perturbation finally landed; skipping it would have given those 4
   lives back to good shots later in the session. Cheapest win on the
   list.
-- **GP-variance gating.** GpPredictor exposes `predict_with_std`. Skip
-  shots where the predicted std is above a threshold (e.g. 30+ px) —
-  these are hoop positions far from the training cluster, where the
-  predictor knows it's guessing. Distinct from hoop-confidence gating:
-  one says "I can't see the hoop", the other says "I can see it but I
-  haven't learned that region yet". Both worth wiring; GP variance also
-  drives the next item.
+- **GP-variance-scaled perturbation step.** GpPredictor exposes
+  `predict_with_std`. The hoop only respawns on a make, so *skipping*
+  uncertain shots is wrong — it just burns lives standing still. The
+  useful move is to consume σ as a step-size signal: high σ (sparse
+  region, predictor is guessing) → take bigger sweep steps (e.g.
+  ±16, ±32, ±64) to walk into the make zone fast; low σ → keep the
+  current ±8 fine-tuning. Same mechanism as the existing
+  PERTURBATION_SEQUENCE, just adaptive.
 - **Directional perturbation from ball trajectory.** Current sweep is
   symmetric (`-8, +8, -16, +16, ...`) and ignores where the ball
   actually landed. Each miss already logs `ball_x_at_rim_height` and
   `ball_landing_x`; if the ball was short, push offset one way; if
   long, the other. Higher information yield per miss than blind
-  sweeping. GP variance can scale the step size — high std → wider
-  steps, low std → smaller corrections.
+  sweeping. Combines with the variance-scaled step above: σ sets the
+  *magnitude* of the next perturbation, ball trajectory sets its
+  *sign*.
 - **Bigger sample base.** 58 clean makes (post-rattle filter,
   2026-05-05) train the GP. Every additional clean session shrinks the
   high-variance regions automatically; comes for free with play time.
