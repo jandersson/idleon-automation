@@ -146,9 +146,11 @@ value-per-effort. Drop entries as they ship.
   (2026-05-04 / 05). When adding a new minigame, audit the path from
   trigger detection to click landing for any disk writes or full-
   window grabs sneaking in. See CLAUDE.md "Click timing".
-- **Better game-over detection.** Match the game-over screen template
-  rather than relying on a no-pose timeout. Cuts false fires and false
-  negatives both. Same approach as `find_game_over` in hoops.
+- **Game-over template capture.** Detector + bot wiring shipped
+  2026-05-05; what's left is running `darts-pick-game-over` once with
+  the game-over screen visible to populate `assets/game_over.png`.
+  Until that's done, the bot falls back to the
+  GAME_OVER_NO_POSE_SEC=25s heuristic.
 - **Lift run-time toggles into the launcher GUI.** Constants like
   `STEAM_SCREENSHOT_ON_NINE_DART`, `MONITOR_FLIGHT`, `MONITOR_MODE`
   are user-facing options today only via editing source. Once there
