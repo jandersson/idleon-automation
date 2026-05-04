@@ -14,10 +14,16 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
+from common.score_ocr import read_score
+from common.dart_trajectory import analyse_throw_dir
+from common.shot_log import current_code_commit  # shared with hoops
 from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
+from minigames.darts.shot_log import open_db, log_throw
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
+THROW_DB_PATH = _HERE / "assets" / "darts.db"
+REPO_ROOT = _HERE.parent.parent
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
@@ -203,10 +209,18 @@ def _log_shot_result(stats: dict, before, after) -> None:
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
-        _run_inner()
+        session_started = datetime.now().isoformat(timespec="seconds")
+        code_commit = current_code_commit(REPO_ROOT)
+        if code_commit:
+            print(f"Code commit: {code_commit}")
+        throw_db = open_db(THROW_DB_PATH)
+        try:
+            _run_inner(session_started, throw_db, code_commit)
+        finally:
+            throw_db.close()
 
 
-def _run_inner():
+def _run_inner(session_started: str, throw_db, code_commit: str | None):
     print(f"Darts bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -263,6 +277,7 @@ def _run_inner():
         # pose detection and click landing drifts the arm a few degrees
         # off the captured release angle. Same principle as hoops; see
         # CLAUDE.md "Click timing".
+        fired_at = datetime.now().isoformat(timespec="seconds")
         click(left + width // 2, top + height // 2)
         # Snapshot wind state from the pre-click frame (still valid —
         # `frame` is the BGRA buffer captured before the pose match).
@@ -314,6 +329,58 @@ def _run_inner():
         if score_before is not None and score_after is not None:
             diff_changed, diff_val = score_changed(score_before, score_after, threshold=SCORE_CHANGE_THRESHOLD)
         _log_shot_result(shot_stats, score_before, score_after)
+        # OCR the score crops — gives us the actual increment (+1/+2/+3/+5)
+        # rather than just hit/miss. None when tesseract isn't installed
+        # or the digit read fails.
+        score_before_int = read_score(score_before) if score_before is not None else None
+        score_after_int = read_score(score_after) if score_after is not None else None
+        score_increment: int | None = None
+        if score_before_int is not None and score_after_int is not None:
+            score_increment = score_after_int - score_before_int
+        # Trajectory analysis on the captured flight frames — angle,
+        # apex, landing. Empty dict if no flight frames captured this
+        # throw or the dart wasn't detected in any frame.
+        trajectory: dict = {
+            "launch_angle_deg": None,
+            "apex_y": None,
+            "landing_x": None,
+            "frames_seen": 0,
+        }
+        if MONITOR_FLIGHT and flight_dir is not None:
+            try:
+                trajectory = analyse_throw_dir(flight_dir)
+            except Exception as e:
+                print(f"  [trajectory] analysis failed (non-fatal): {e}")
+        # bullseye = score_increment of exactly 5 (per Throwy Darts'
+        # +1/+2/+3/+5 stripe scoring). Used by future Nine-Dart-Finish
+        # streak tightening.
+        bullseye = (
+            1 if score_increment == 5 else (0 if score_increment is not None else None)
+        )
+        log_throw(
+            throw_db,
+            session_started=session_started,
+            throw_idx=throws_taken,
+            fired_at=fired_at,
+            release_pose_x=int(px),
+            release_pose_y=int(py),
+            release_conf=float(conf),
+            launch_angle_deg=trajectory["launch_angle_deg"],
+            apex_y=trajectory["apex_y"],
+            landing_x=trajectory["landing_x"],
+            frames_seen=trajectory["frames_seen"],
+            score_before_int=score_before_int,
+            score_after_int=score_after_int,
+            score_increment=score_increment,
+            hit=int(bool(diff_changed)) if diff_changed is not None else None,
+            bullseye=bullseye,
+            streak=shot_stats.get("streak", 0),
+            throw_dir=str(flight_dir) if flight_dir is not None else None,
+            window_w=int(width),
+            window_h=int(height),
+            code_commit=code_commit,
+            source="bot",
+        )
         if MONITOR_MODE:
             sub = _save_monitor_throw(
                 throw_idx=throws_taken,
