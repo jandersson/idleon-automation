@@ -43,7 +43,7 @@ SCORE_CHANGE_THRESHOLD = 1.0
 # streak in-game), we'd false-fire on a 9-hit run that wasn't all
 # bullseyes. Tighten to bullseye-only via score-magnitude or visual
 # streak-counter detection if false fires happen.
-STEAM_SCREENSHOT_ON_NINE_DART = True
+STEAM_SCREENSHOT_ON_NINE_DART = False
 NINE_DART_STREAK = 9
 
 # Wait after throwing for: dart to land, score/animation to settle, new dart to
