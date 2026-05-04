@@ -14,7 +14,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.darts.detector import find_release_pose, score_region, score_changed
+from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -229,6 +229,16 @@ def _run_inner():
             continue
 
         frame = grab_region(left, top, width, height)
+
+        # Fast template check for the game-over screen first. Returns
+        # (False, 0.0) if the template hasn't been captured yet — falls
+        # through to the no-pose timeout heuristic below.
+        is_over, go_conf = find_game_over(frame)
+        if is_over:
+            print(f"Game over detected (conf={go_conf:.2f}). Final session: "
+                  f"{shot_stats['makes']}/{shot_stats['attempts']} hits.")
+            return
+
         pose, conf = find_release_pose(frame, threshold=RELEASE_THRESHOLD)
 
         if pose is None:

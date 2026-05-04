@@ -41,6 +41,27 @@ def find_release_pose(
     return center, val
 
 
+def find_game_over(
+    frame: np.ndarray, threshold: float = 0.7
+) -> tuple[bool, float]:
+    """Detect the end-of-game screen via multi-scale template match.
+
+    Returns (False, 0.0) if the template hasn't been captured yet — the
+    main loop falls back to its no-pose timeout heuristic in that case.
+    Capture the template via `darts-pick-game-over` while the game-over
+    screen is visible.
+    """
+    path = ASSETS / "game_over.png"
+    if not path.exists():
+        return False, 0.0
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        return False, 0.0
+    _, val, _scale = match_multiscale_center(bgr, template)
+    return val >= threshold, val
+
+
 # score_region / score_changed live in common.score_diff. Re-exported here so
 # `from minigames.darts.detector import score_region, score_changed` keeps
 # working unchanged. Darts previously used a non-binarized diff with threshold
