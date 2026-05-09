@@ -77,6 +77,16 @@ MINIGAMES = [
             ("Extract fly", "catching-extract-fly"),
         ],
     },
+    {
+        "name": "mining",
+        "emoji": "⛏️",
+        "bot": "mining",
+        "setup": [
+            ("Observe (you play)", "mining-observe"),
+            ("Capture", "mining-capture"),
+            ("Pick play region", "mining-pick-play-region"),
+        ],
+    },
 ]
 
 

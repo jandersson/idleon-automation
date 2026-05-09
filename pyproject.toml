@@ -50,6 +50,10 @@ catching-observe = "minigames.catching.observe:run"
 catching-capture = "minigames.catching.capture:run"
 catching-pick-play-region = "minigames.catching.pick_play_region:run"
 catching-extract-fly = "minigames.catching.auto_extract_fly:run"
+mining = "minigames.mining.main:run"
+mining-observe = "minigames.mining.observe:run"
+mining-capture = "minigames.mining.capture:run"
+mining-pick-play-region = "minigames.mining.pick_play_region:run"
 
 [build-system]
 requires = ["hatchling"]
