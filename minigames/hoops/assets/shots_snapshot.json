@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-09T18:12:57",
-  "total_shots": 381,
-  "total_makes": 69,
-  "make_rate": 0.181,
+  "generated_at": "2026-05-09T18:27:08",
+  "total_shots": 397,
+  "total_makes": 73,
+  "make_rate": 0.184,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -213,6 +213,11 @@
       "started": "2026-05-09T18:12:12",
       "shots": 4,
       "makes": 1
+    },
+    {
+      "started": "2026-05-09T18:24:22",
+      "shots": 16,
+      "makes": 4
     }
   ],
   "buckets": [
@@ -255,7 +260,7 @@
     {
       "hoop_x_bucket": 580,
       "hoop_y_bucket": 380,
-      "shots": 35,
+      "shots": 36,
       "makes": 0
     },
     {
@@ -280,6 +285,12 @@
       "hoop_x_bucket": 590,
       "hoop_y_bucket": 390,
       "shots": 25,
+      "makes": 1
+    },
+    {
+      "hoop_x_bucket": 600,
+      "hoop_y_bucket": 300,
+      "shots": 1,
       "makes": 1
     },
     {
@@ -339,8 +350,8 @@
     {
       "hoop_x_bucket": 620,
       "hoop_y_bucket": 410,
-      "shots": 3,
-      "makes": 0
+      "shots": 12,
+      "makes": 1
     },
     {
       "hoop_x_bucket": 630,
@@ -374,6 +385,12 @@
     },
     {
       "hoop_x_bucket": 640,
+      "hoop_y_bucket": 330,
+      "shots": 1,
+      "makes": 1
+    },
+    {
+      "hoop_x_bucket": 640,
       "hoop_y_bucket": 340,
       "shots": 1,
       "makes": 1
@@ -394,6 +411,12 @@
       "hoop_x_bucket": 640,
       "hoop_y_bucket": 370,
       "shots": 2,
+      "makes": 1
+    },
+    {
+      "hoop_x_bucket": 650,
+      "hoop_y_bucket": 320,
+      "shots": 1,
       "makes": 1
     },
     {
@@ -503,6 +526,12 @@
       "hoop_y_bucket": 470,
       "shots": 3,
       "makes": 1
+    },
+    {
+      "hoop_x_bucket": 670,
+      "hoop_y_bucket": 480,
+      "shots": 3,
+      "makes": 0
     },
     {
       "hoop_x_bucket": 670,
@@ -843,6 +872,29 @@
       "predictor_kind": null
     },
     {
+      "hoop_x": 605,
+      "hoop_y": 302,
+      "platform_y": 306,
+      "offset": 1,
+      "target_y": 303,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 32,
+      "ball_x_at_rim_height": 590,
+      "ball_landing_x": 672,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 1,
+      "score_after_int": 2,
+      "score_increment": 1,
+      "predicted_offset": 1,
+      "code_commit": "a1d12d414ec9-dirty",
+      "predictor_kind": "gp"
+    },
+    {
       "hoop_x": 607,
       "hoop_y": 338,
       "platform_y": 318,
@@ -935,6 +987,29 @@
       "predictor_kind": null
     },
     {
+      "hoop_x": 628,
+      "hoop_y": 418,
+      "platform_y": 482,
+      "offset": 68,
+      "target_y": 486,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 32,
+      "lives_diff": 222.37864685058594,
+      "ball_apex_y": 116,
+      "ball_x_at_rim_height": 612,
+      "ball_landing_x": 625,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": 36,
+      "code_commit": "a1d12d414ec9-dirty",
+      "predictor_kind": "gp"
+    },
+    {
       "hoop_x": 639,
       "hoop_y": 309,
       "platform_y": 310,
@@ -1025,6 +1100,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 646,
+      "hoop_y": 333,
+      "platform_y": 325,
+      "offset": -7,
+      "target_y": 326,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 33,
+      "ball_x_at_rim_height": 629,
+      "ball_landing_x": 552,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": null,
+      "score_after_int": 5,
+      "score_increment": 2,
+      "predicted_offset": -7,
+      "code_commit": "a1d12d414ec9-dirty",
+      "predictor_kind": "gp"
     },
     {
       "hoop_x": 647,
@@ -1140,6 +1238,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 652,
+      "hoop_y": 320,
+      "platform_y": 312,
+      "offset": 1,
+      "target_y": 321,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 35,
+      "ball_x_at_rim_height": 634,
+      "ball_landing_x": 690,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 2,
+      "score_after_int": 3,
+      "score_increment": 1,
+      "predicted_offset": 1,
+      "code_commit": "a1d12d414ec9-dirty",
+      "predictor_kind": "gp"
     },
     {
       "hoop_x": 654,
