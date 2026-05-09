@@ -215,3 +215,34 @@ def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
         if isinstance(plays, (int, float)):
             out[name] = int(plays)
     return out
+
+
+# Per-character hoops cooldown lives in PlayerDATABASE[name].OptionsList[6].
+# Identified empirically (2026-05-09) by playing a hoops session, dumping
+# before/after, and locating the field that flipped from -5 (playable) to
+# 1586 (≈ 5m17s cooldown). Same tick convention as the darts cooldown:
+# negative = playable, positive = ticks remaining, 5 ticks/sec.
+_PERSONAL_HOOPS_COOLDOWN_TICKS = 6
+
+
+def read_hoops_cooldowns(save_dir: str = SAVE_DIR) -> dict[str, float] | None:
+    """Read per-character hoops cooldown from the save. Returns
+    {character_name: cooldown_seconds} (negative = playable now,
+    positive = seconds remaining) or None if the save can't be read.
+
+    Hoops uses a permanent item with an individual cooldown rather than
+    drawing from the daily-plays pool, so this is the right "can I play
+    again yet?" signal for hoops sessions.
+    """
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    out: dict[str, float] = {}
+    for name, info in (data.get("PlayerDATABASE") or {}).items():
+        ol = info.get("OptionsList") or []
+        if len(ol) <= _PERSONAL_HOOPS_COOLDOWN_TICKS:
+            continue
+        ticks = ol[_PERSONAL_HOOPS_COOLDOWN_TICKS]
+        if isinstance(ticks, (int, float)):
+            out[name] = float(ticks) / _OLA_TICKS_PER_SECOND
+    return out
