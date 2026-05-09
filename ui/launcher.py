@@ -51,6 +51,14 @@ MINIGAMES = [
             ("Pick game over", "hoops-pick-game-over"),
             ("Pick lives", "hoops-pick-lives-region"),
         ],
+        "bot_options": [
+            {
+                "label": "Predictor",
+                "env": "HOOPS_PREDICTOR_KIND",
+                "values": ["gp", "knn", "bivariate", "trajectory_knn"],
+                "default": "gp",
+            },
+        ],
     },
     {
         "name": "darts",
@@ -100,6 +108,9 @@ class Launcher:
         self.status_labels: dict[str, ttk.Label] = {}
         self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
         self.log_queue: queue.Queue = queue.Queue()
+        # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
+        # currently-selected option value for that minigame's bot.
+        self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
 
         # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
         self.frame_images: list[ImageTk.PhotoImage] = []
@@ -147,6 +158,15 @@ class Launcher:
             status = ttk.Label(top, text="stopped", foreground="grey")
             status.pack(side="left")
             self.status_labels[mg["name"]] = status
+
+            for opt in mg.get("bot_options", []):
+                var = tk.StringVar(value=opt["default"])
+                self.bot_option_vars[(mg["name"], opt["env"])] = var
+                ttk.Label(top, text=opt["label"] + ":").pack(side="left", padx=(12, 4))
+                ttk.Combobox(
+                    top, textvariable=var, state="readonly",
+                    values=opt["values"], width=max(len(v) for v in opt["values"]) + 2,
+                ).pack(side="left")
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
@@ -356,7 +376,15 @@ class Launcher:
         if self.processes.get(name) is not None:
             self._enqueue_log(f"[{name}] already running\n")
             return
-        self._spawn(mg["bot"], track_as=name)
+        extra_env: dict[str, str] = {}
+        for opt in mg.get("bot_options", []):
+            var = self.bot_option_vars.get((name, opt["env"]))
+            if var is not None:
+                extra_env[opt["env"]] = var.get()
+        if extra_env:
+            kv = ", ".join(f"{k}={v}" for k, v in extra_env.items())
+            self._enqueue_log(f"[{name}] options: {kv}\n")
+        self._spawn(mg["bot"], track_as=name, extra_env=extra_env)
         self.status_labels[name].config(text="running", foreground="#3a3")
 
     def _stop_bot(self, mg: dict):
@@ -374,7 +402,8 @@ class Launcher:
     def _run_oneshot(self, cmd: str):
         self._spawn(cmd, track_as=None)
 
-    def _spawn(self, entry_point: str, track_as: str | None):
+    def _spawn(self, entry_point: str, track_as: str | None,
+               extra_env: dict[str, str] | None = None):
         import os
         creationflags = 0
         if sys.platform == "win32":
@@ -383,6 +412,8 @@ class Launcher:
         # rather than block-buffering — keeps the launcher log live
         # instead of dumping everything at session end.
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if extra_env:
+            env.update(extra_env)
         try:
             # --no-sync: skip uv's implicit dependency-sync check. The launcher
             # itself is one of the entry points (idleon.exe), so a sync would

@@ -1,3 +1,4 @@
+import os
 import time
 import sys
 from collections import deque
@@ -117,7 +118,11 @@ Y_TOLERANCE = 6
 #                       and picks the one whose modelled landing_x is
 #                       closest to hoop_x. Lets the predictor learn from
 #                       misses as well as makes. See GitHub issue #17.
-PREDICTOR_KIND = "gp"
+#
+# The launcher's Bots tab exposes a Predictor dropdown that sets the
+# HOOPS_PREDICTOR_KIND env var; this constant is the default when the
+# env var is unset (e.g. running `uv run hoops` directly).
+PREDICTOR_KIND = os.environ.get("HOOPS_PREDICTOR_KIND", "gp")
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit
