@@ -111,6 +111,9 @@ class Launcher:
         # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
         # currently-selected option value for that minigame's bot.
         self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
+        # Hoops predictor comparison label (per-predictor make rate); populated
+        # at launcher start and refreshed when a hoops session ends.
+        self.hoops_stats_label: ttk.Label | None = None
         # Snapshot of the shared hoops cooldown + when we read it, so the
         # display ticks down live between save refreshes (the save only
         # flushes on certain in-game triggers, not continuously).
@@ -172,6 +175,17 @@ class Launcher:
                     values=opt["values"], width=max(len(v) for v in opt["values"]) + 2,
                 ).pack(side="left")
 
+            # Hoops gets a per-predictor stats line under the controls so we
+            # can A/B compare gp vs trajectory_knn at a glance — see GitHub
+            # issue #21. Other minigames don't have a comparable signal yet.
+            if mg["name"] == "hoops":
+                self.hoops_stats_label = ttk.Label(
+                    frame, text="", foreground="grey",
+                    font=("Segoe UI", 9),
+                )
+                self.hoops_stats_label.pack(fill="x", pady=(4, 0))
+                self._refresh_hoops_stats()
+
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
         self.log_text = tk.Text(log_frame, height=10, wrap="none", state="disabled",
@@ -214,6 +228,38 @@ class Launcher:
         # save flushes.
         self._tick_hoops_display()
         return strip
+
+    def _refresh_hoops_stats(self) -> None:
+        """Update the predictor-comparison label from shots.db. Cheap query
+        (one GROUP BY over a 400-row table); called on launcher start and
+        whenever a hoops session ends."""
+        if self.hoops_stats_label is None:
+            return
+        import sqlite3
+        db_path = MINIGAMES_DIR / "hoops" / "assets" / "shots.db"
+        if not db_path.exists():
+            self.hoops_stats_label.config(text="(no shots.db yet)")
+            return
+        try:
+            con = sqlite3.connect(str(db_path))
+            rows = con.execute(
+                "SELECT predictor_kind, COUNT(*), SUM(made) "
+                "FROM shots WHERE direction='up' AND predictor_kind IS NOT NULL "
+                "GROUP BY predictor_kind ORDER BY predictor_kind"
+            ).fetchall()
+            con.close()
+        except sqlite3.Error as e:
+            self.hoops_stats_label.config(text=f"(stats error: {e})")
+            return
+        if not rows:
+            self.hoops_stats_label.config(text="(no labelled shots yet)")
+            return
+        parts = []
+        for kind, shots, makes in rows:
+            makes = makes or 0
+            rate = makes / shots if shots else 0
+            parts.append(f"{kind} {makes}/{shots} ({rate:.0%})")
+        self.hoops_stats_label.config(text="  ".join(parts))
 
     def _tick_hoops_display(self) -> None:
         """Update the hoops cooldown label, extrapolating from the last
@@ -491,6 +537,9 @@ class Launcher:
         if track_as is not None:
             self.log_queue.put(("status", track_as, "stopped", "grey"))
             self.processes[track_as] = None
+            if track_as == "hoops":
+                # Hoops session just ended — fresh stats are in shots.db.
+                self.log_queue.put(("refresh_hoops_stats",))
         if entry_point in self.setup_buttons:
             self.log_queue.put(("setup_done", entry_point))
 
@@ -511,6 +560,8 @@ class Launcher:
                         if entry_point in self.setup_buttons:
                             btn, label = self.setup_buttons[entry_point]
                             btn.config(state="normal", text=label)
+                    elif item[0] == "refresh_hoops_stats":
+                        self._refresh_hoops_stats()
                 else:
                     self._append_log(str(item))
         except queue.Empty:
