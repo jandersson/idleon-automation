@@ -219,7 +219,14 @@ def _capture_lives_region(left: int, top: int, width: int, height: int):
     )
 
 
-TRAJECTORY_MAKE_TOLERANCE = 60  # px
+# Bumped from 60 → 80 (2026-05-09) after a confirmed bank-shot make at
+# hoop=(674,447) was rejected with ball_x_at_rim = 750 (76 px past
+# hoop_x). Swishes land ~30–40 px from hoop_x, so 60 was tuned for the
+# swish case; bank shots routinely come down 60–80 px off-center but
+# still drop through. 80 matches CLEAN_MAKE_TOLERANCE in
+# common/shot_log.py — the in-bot check and the post-hoc clean-make
+# classifier now use the same threshold. Closes #9.
+TRAJECTORY_MAKE_TOLERANCE = 80  # px
 
 
 def _log_shot_result(
