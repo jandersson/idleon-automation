@@ -108,3 +108,59 @@ def test_log_shot_normal_make_after_reanchor():
     assert inc == 1
     assert stats["session_score"] == 2
     assert stats["makes"] == 1
+
+
+def test_log_shot_rejects_make_when_ball_overshoots_trajectory_check():
+    """OCR says score went up by 1 but the ball flew well past the hoop.
+    Without prompt confirmation, the trajectory check rejects it as a
+    likely OCR misread / rattle-in / bad detection."""
+    from minigames.hoops.main import TRAJECTORY_MAKE_TOLERANCE
+    stats = {"makes": 0, "attempts": 0, "session_score": 0}
+    pre = _fake_score_crop(0)
+    post = _fake_score_crop(1)
+    made, _, _ = _log_shot_result(
+        stats, pre, post,
+        score_before_int=0, score_after_int=1,
+        ball_x_at_rim=700 + TRAJECTORY_MAKE_TOLERANCE + 10, hoop_x=700,
+    )
+    assert made is False
+    assert stats["makes"] == 0
+
+
+def test_log_shot_prompt_disappeared_overrides_trajectory_rejection():
+    """If the in-game 'Make a shot to start' prompt cleared after a shot,
+    that's binary truth — count it as a make even if the ball landed too
+    far from the hoop for the trajectory check to like it (e.g. bank
+    shots that drop through 70-80 px off-center)."""
+    from minigames.hoops.main import TRAJECTORY_MAKE_TOLERANCE
+    stats = {"makes": 0, "attempts": 0, "session_score": 0}
+    pre = _fake_score_crop(0)
+    post = _fake_score_crop(1)
+    made, _, _ = _log_shot_result(
+        stats, pre, post,
+        score_before_int=None, score_after_int=1,
+        ball_x_at_rim=700 + TRAJECTORY_MAKE_TOLERANCE + 10, hoop_x=700,
+        prompt_disappeared=True,
+    )
+    assert made is True
+    assert stats["makes"] == 1
+    assert stats["session_score"] == 1
+
+
+def test_log_shot_prompt_alone_does_not_create_make_without_score_increment():
+    """The prompt-disappearance signal is only used to override the
+    trajectory check. If OCR shows no score change at all, we still
+    classify as miss — prompt detection is template-matched and can
+    flicker; the score-increment requirement keeps a single false
+    negative on the prompt match from inventing a make."""
+    stats = {"makes": 0, "attempts": 0, "session_score": 0}
+    pre = _fake_score_crop(0)
+    post = _fake_score_crop(0)
+    made, _, _ = _log_shot_result(
+        stats, pre, post,
+        score_before_int=0, score_after_int=0,
+        ball_x_at_rim=700, hoop_x=700,
+        prompt_disappeared=True,
+    )
+    assert made is False
+    assert stats["makes"] == 0

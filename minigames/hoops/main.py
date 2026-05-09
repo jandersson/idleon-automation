@@ -21,7 +21,7 @@ from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
 from common.score_ocr import read_score
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, score_region, score_changed
+from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, find_game_prompt, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -237,6 +237,7 @@ def _log_shot_result(
     score_after_int: int | None = None,
     ball_x_at_rim: int | None = None,
     hoop_x: int | None = None,
+    prompt_disappeared: bool = False,
 ) -> tuple[bool | None, float | None, int | None]:
     """Print the score diff line and update stats. Returns
     (changed, diff, computed_increment) or (None, None, None) if either
@@ -278,7 +279,13 @@ def _log_shot_result(
         or abs(ball_x_at_rim - hoop_x) <= TRAJECTORY_MAKE_TOLERANCE
     )
     # Strict per-shot make credit (this is what the predictor sees).
-    changed = plausible_inc and trajectory_plausible
+    # `prompt_disappeared` is the strongest signal — the in-game "Make a
+    # shot to start" prompt only clears on a real make, so it overrides
+    # the trajectory check on the first shot of a fresh game. Useful when
+    # bank shots come down further off-center than TRAJECTORY_MAKE_TOLERANCE
+    # allows, or when ball_x_at_rim measured the upward crossing
+    # (overshoot pattern from issue #17 prereqs).
+    changed = plausible_inc and (trajectory_plausible or prompt_disappeared)
 
     # Always advance the session score anchor when sa is higher — even if
     # the per-shot increment is too big to attribute to this single shot.
@@ -291,7 +298,10 @@ def _log_shot_result(
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
-        label = f"MAKE (+{inferred_increment})"
+        if prompt_disappeared and not trajectory_plausible:
+            label = f"MAKE (+{inferred_increment}) [prompt cleared — bank shot accepted]"
+        else:
+            label = f"MAKE (+{inferred_increment})"
     elif plausible_inc and not trajectory_plausible:
         label = "miss [OCR said make but ball overshot]"
     elif inferred_increment is not None and inferred_increment > 2:
@@ -615,6 +625,12 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # just sampled, biasing every shot by tens of pixels.
                 shot_idx = shot_stats["attempts"] + 1
                 fired_at = datetime.now().isoformat(timespec="seconds")
+                # Detect the "Make a shot to start the game!" prompt
+                # *before* firing — it's the in-game signal that this is
+                # the first shot of a fresh game. If the prompt was up
+                # before and is gone after, that's a make regardless of
+                # OCR or trajectory checks.
+                prompt_visible_before = find_game_prompt(frame)[0]
                 # Click at the hoop. Click coordinates have no measurable
                 # effect on aim (verified May 3) — could be anywhere.
                 click(left + hoop_x, top + hoop_y)
@@ -647,6 +663,13 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     time.sleep(POST_SHOT_COOLDOWN)
                 score_after = _capture_score_region(left, top, width, height)
                 lives_after = _capture_lives_region(left, top, width, height)
+                # Re-check the prompt only if it was up before the shot —
+                # cheap to skip the post grab + template match entirely
+                # when there's no signal to derive.
+                prompt_disappeared = False
+                if prompt_visible_before:
+                    post_full_frame = grab_region(left, top, width, height)
+                    prompt_disappeared = not find_game_prompt(post_full_frame)[0]
                 # OCR the actual score numbers — used as the primary make
                 # signal (the diff-based heuristic was noisy on the wider
                 # score region). None if tesseract binary isn't installed.
@@ -676,16 +699,22 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     score_after_int=score_after_int,
                     ball_x_at_rim=trajectory["ball_x_at_rim_height"],
                     hoop_x=hoop_x,
+                    prompt_disappeared=prompt_disappeared,
                 )
                 # Clean-make filter for predictor training. A make is
                 # "clean" only if the ball landed reasonably close to
                 # hoop_x — rattle-ins land far past after bouncing off
                 # the backboard. None landing → trust the make (no
                 # trajectory data to evaluate against).
+                # Exception: a prompt-confirmed make is binary truth from
+                # the game; trust it even if the landing is outside the
+                # tolerance (likely a bank shot — useful training data).
                 clean_make_value: int | None = None
                 if made is not None:
                     if not made:
                         clean_make_value = 0
+                    elif prompt_disappeared:
+                        clean_make_value = 1
                     else:
                         landing = trajectory.get("ball_landing_x")
                         if landing is None:
