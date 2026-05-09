@@ -107,6 +107,17 @@ _LATE_COLUMNS = [
 CLEAN_MAKE_TOLERANCE = 80
 
 
+# Minimum (ball_landing_x - platform_x) for a shot's trajectory to be
+# considered "clean enough" to learn from. Empirically the miss landing
+# distribution is sharply bimodal: rim/backboard bounces deflect the ball
+# back and it lands 0-300 px right of the launcher, while shots that
+# actually flew toward the hoop land 400+ px out. Trajectory predictors
+# trained on the bounce cluster learn nonsense; gating at 300 cleanly
+# separates the two modes (verified against the historical shots.db,
+# 2026-05-09). See GitHub issue #18.
+MIN_TRAJECTORY_DISTANCE_PX = 300
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """Add any new columns to an existing shots table that didn't have them.
     Then backfill `clean_make` for any made-row that's missing it, using
@@ -205,6 +216,10 @@ def fetch_shots(
     Unlike fetch_makes, this includes misses — the trajectory predictor
     learns from where any shot lands, not just the makes. Used by
     `fit_trajectory_knn` and friends in common.predictor.
+
+    No bounce filtering is applied — analysis tooling sometimes needs the
+    raw trajectories. Predictors should call `fetch_clean_trajectories`
+    instead.
     """
     return [
         (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
@@ -214,5 +229,31 @@ def fetch_shots(
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
             'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL',
             (required_direction,),
+        )
+    ]
+
+
+def fetch_clean_trajectories(
+    conn: sqlite3.Connection,
+    required_direction: str,
+    min_distance_px: int = MIN_TRAJECTORY_DISTANCE_PX,
+) -> list[tuple[float, float, float, float]]:
+    """Same shape as fetch_shots, but drops rows whose ball ended up too
+    close to the launcher. These are almost always rim/backboard bounces
+    that deflect the ball backwards and pollute trajectory regression.
+
+    Filters in SQL via `(ball_landing_x - platform_x) >= min_distance_px`
+    so the bounce rows never reach the predictor.
+    """
+    return [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
+        for r in conn.execute(
+            'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
+            'WHERE clamped = 0 AND required_direction = ? '
+            'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
+            'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
+            'AND platform_x IS NOT NULL '
+            'AND (ball_landing_x - platform_x) >= ?',
+            (required_direction, min_distance_px),
         )
     ]

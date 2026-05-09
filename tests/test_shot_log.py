@@ -2,7 +2,10 @@
 import sqlite3
 import threading
 
-from common.shot_log import open_db, log_shot, fetch_makes, fetch_shots
+from common.shot_log import (
+    open_db, log_shot, fetch_makes, fetch_shots, fetch_clean_trajectories,
+    MIN_TRAJECTORY_DISTANCE_PX,
+)
 
 
 def test_open_db_creates_schema(tmp_path):
@@ -174,6 +177,62 @@ def test_fetch_shots_returns_makes_and_misses_with_landing(tmp_path):
         (300.0, 600.0, 320.0, 602.0),
         (400.0, 700.0, 420.0, 540.0),
     ]
+
+
+def test_fetch_clean_trajectories_drops_bounces_keeps_clean_shots(tmp_path):
+    """A bounce lands close to platform_x; a clean shot lands far away.
+    The filter cuts the former but keeps the latter."""
+    conn = open_db(tmp_path / "shots.db")
+    # Clean shot: ball flew 500 px right of launcher.
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=636, made=1, clean_make=1, clamped=0,
+             required_direction="up")
+    # Bounce: ball came back to within 100 px of launcher (rim ricochet).
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=236, made=0, clean_make=0, clamped=0,
+             required_direction="up")
+    # Borderline at the threshold (kept).
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=136 + MIN_TRAJECTORY_DISTANCE_PX,
+             made=0, clean_make=0, clamped=0, required_direction="up")
+    # Just below threshold (dropped).
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=136 + MIN_TRAJECTORY_DISTANCE_PX - 1,
+             made=0, clean_make=0, clamped=0, required_direction="up")
+    rows = fetch_clean_trajectories(conn, "up")
+    conn.close()
+    landings = sorted(int(r[3]) for r in rows)
+    assert landings == [136 + MIN_TRAJECTORY_DISTANCE_PX, 636]
+
+
+def test_fetch_clean_trajectories_inherits_other_filters(tmp_path):
+    """The bounce filter doesn't override clamped / wrong-direction /
+    missing-landing filters from the underlying fetch_shots logic."""
+    conn = open_db(tmp_path / "shots.db")
+    # Would pass the bounce filter (landing 636 - launcher 136 = 500 px)
+    # but is clamped → still excluded.
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=636, made=0, clamped=1, required_direction="up")
+    # Same data, wrong direction → excluded.
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=636, made=0, clamped=0, required_direction="down")
+    rows = fetch_clean_trajectories(conn, "up")
+    conn.close()
+    assert rows == []
+
+
+def test_fetch_clean_trajectories_threshold_is_overridable(tmp_path):
+    """Caller can pass a custom min_distance_px (e.g. for analysis tools
+    inspecting the bounce cluster itself)."""
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
+             ball_landing_x=200, made=0, clamped=0, required_direction="up")
+    # Default threshold 300 → row excluded.
+    assert fetch_clean_trajectories(conn, "up") == []
+    # Custom threshold 50 → row kept.
+    rows = fetch_clean_trajectories(conn, "up", min_distance_px=50)
+    conn.close()
+    assert len(rows) == 1
 
 
 def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):

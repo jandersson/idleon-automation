@@ -14,7 +14,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fetch_makes, fetch_shots, current_code_commit, CLEAN_MAKE_TOLERANCE
+from common.shot_log import open_db, log_shot, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE
 from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
@@ -402,8 +402,10 @@ def run():
             if PREDICTOR_KIND == "trajectory_knn":
                 # Trajectory predictor learns from every shot (make or
                 # miss), so it pulls a different schema (4-tuple including
-                # ball_landing_x) and uses fetch_shots, not fetch_makes.
-                rows = fetch_shots(shot_db, REQUIRED_DIRECTION)
+                # ball_landing_x). Uses fetch_clean_trajectories rather
+                # than fetch_shots so rim/backboard-bounce rows are
+                # filtered out — they pollute the regression target.
+                rows = fetch_clean_trajectories(shot_db, REQUIRED_DIRECTION)
                 predictor = fit_trajectory_knn(rows, k=5)
             else:
                 rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
