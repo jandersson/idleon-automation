@@ -2,7 +2,29 @@ import pyautogui
 import random
 import time
 
+import mss
+
 pyautogui.FAILSAFE = True
+
+# pyautogui's default FAILSAFE_POINTS is just [(0, 0)] — only the top-left
+# of the primary monitor triggers. Extend to all four corners of every
+# attached monitor so "slam to any corner" works on multi-monitor setups.
+def _all_monitor_corners() -> list[tuple[int, int]]:
+    points: list[tuple[int, int]] = []
+    with mss.mss() as sct:
+        # sct.monitors[0] is the combined virtual screen; 1+ are individual.
+        for mon in sct.monitors[1:]:
+            l, t, w, h = mon["left"], mon["top"], mon["width"], mon["height"]
+            points.extend([
+                (l, t),
+                (l + w - 1, t),
+                (l, t + h - 1),
+                (l + w - 1, t + h - 1),
+            ])
+    return points or [(0, 0)]
+
+
+pyautogui.FAILSAFE_POINTS = _all_monitor_corners()
 
 
 def click(x: int, y: int, jitter: int = 3):
