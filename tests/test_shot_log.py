@@ -154,7 +154,8 @@ def test_log_shot_works_from_a_background_thread(tmp_path):
 
 def test_fetch_shots_returns_makes_and_misses_with_landing(tmp_path):
     """fetch_shots returns every shot with a tracked ball_landing_x —
-    misses included — so the trajectory predictor can learn from both."""
+    misses included, clamped included — so the trajectory predictor
+    can learn from both make/miss and bob-extreme rows."""
     conn = open_db(tmp_path / "shots.db")
     # Make with landing
     log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, ball_landing_x=602,
@@ -162,8 +163,9 @@ def test_fetch_shots_returns_makes_and_misses_with_landing(tmp_path):
     # Miss with landing — should still be returned
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, ball_landing_x=540,
              made=0, clean_make=0, clamped=0, required_direction="up")
-    # Pollution: clamped (excluded)
-    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, ball_landing_x=700,
+    # Clamped make: kept (#20). The logged platform_y is what actually
+    # fired, so it's a usable training input.
+    log_shot(conn, hoop_y=500, hoop_x=800, platform_y=509, ball_landing_x=750,
              made=1, clean_make=1, clamped=1, required_direction="up")
     # Pollution: wrong direction (excluded)
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, ball_landing_x=700,
@@ -176,6 +178,7 @@ def test_fetch_shots_returns_makes_and_misses_with_landing(tmp_path):
     assert sorted(rows) == [
         (300.0, 600.0, 320.0, 602.0),
         (400.0, 700.0, 420.0, 540.0),
+        (500.0, 800.0, 509.0, 750.0),
     ]
 
 
@@ -206,19 +209,31 @@ def test_fetch_clean_trajectories_drops_bounces_keeps_clean_shots(tmp_path):
 
 
 def test_fetch_clean_trajectories_inherits_other_filters(tmp_path):
-    """The bounce filter doesn't override clamped / wrong-direction /
-    missing-landing filters from the underlying fetch_shots logic."""
+    """The bounce filter doesn't override wrong-direction or
+    missing-landing filters from the underlying fetch_shots logic.
+    Clamped rows are NOT excluded (see #20)."""
     conn = open_db(tmp_path / "shots.db")
-    # Would pass the bounce filter (landing 636 - launcher 136 = 500 px)
-    # but is clamped → still excluded.
-    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
-             ball_landing_x=636, made=0, clamped=1, required_direction="up")
-    # Same data, wrong direction → excluded.
+    # Wrong direction → excluded.
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, platform_x=136,
              ball_landing_x=636, made=0, clamped=0, required_direction="down")
     rows = fetch_clean_trajectories(conn, "up")
     conn.close()
     assert rows == []
+
+
+def test_fetch_clean_trajectories_keeps_clamped_rows(tmp_path):
+    """Clamped rows used to be filtered out; now they're kept so the
+    predictor can learn from perturbation discoveries at the bob limit
+    (#20). The logged platform_y is the actual fire value, not the
+    nominal target_y, so it's still factual training data."""
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=509, platform_x=136,
+             ball_landing_x=636, made=1, clean_make=1, clamped=1,
+             required_direction="up")
+    rows = fetch_clean_trajectories(conn, "up")
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0] == (400.0, 700.0, 509.0, 636.0)
 
 
 def test_fetch_clean_trajectories_threshold_is_overridable(tmp_path):
@@ -235,17 +250,19 @@ def test_fetch_clean_trajectories_threshold_is_overridable(tmp_path):
     assert len(rows) == 1
 
 
-def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
-    """fetch_makes only returns clean makes (clean_make=1, clamped=0,
-    matching direction) so callers don't have to filter."""
+def test_fetch_makes_excludes_misses_and_wrong_direction(tmp_path):
+    """fetch_makes returns clean makes (clean_make=1) in the matching
+    direction, including clamped rows (#20)."""
     conn = open_db(tmp_path / "shots.db")
     log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, made=1,
              clean_make=1, clamped=0, required_direction="up")
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, made=1,
              clean_make=1, clamped=0, required_direction="up")
+    # Clamped clean make: kept (see #20). The logged platform_y is the
+    # actual fire value — useful training data.
+    log_shot(conn, hoop_y=500, hoop_x=800, platform_y=509, made=1,
+             clean_make=1, clamped=1, required_direction="up")
     # Pollution
-    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
-             clean_make=1, clamped=1, required_direction="up")  # clamped
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=0,
              clean_make=0, clamped=0, required_direction="up")  # miss
     log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, made=1,
@@ -254,7 +271,11 @@ def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):
              clean_make=0, clamped=0, required_direction="up")  # rattle-in
     rows = fetch_makes(conn, "up")
     conn.close()
-    assert sorted(rows) == [(300.0, 600.0, 320.0), (400.0, 700.0, 420.0)]
+    assert sorted(rows) == [
+        (300.0, 600.0, 320.0),
+        (400.0, 700.0, 420.0),
+        (500.0, 800.0, 509.0),
+    ]
 
 
 def test_migrate_backfills_clean_make_for_existing_rows(tmp_path):

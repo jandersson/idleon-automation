@@ -180,9 +180,7 @@ def fetch_makes(
     required_direction: str,
 ) -> list[tuple[float, float, float]]:
     """Return [(hoop_y, hoop_x, platform_y), ...] for clean makes in the
-    requested required_direction. Excludes clamped shots — those fired at
-    the bob extreme regardless of nominal target_y, so they don't reflect
-    the predictor's signal.
+    requested required_direction.
 
     Caller hands these to a `fit_*` factory in common.predictor.
 
@@ -191,12 +189,19 @@ def fetch_makes(
     but their platform_y at fire time is a poor target to learn from,
     since the ball's actual flight was off-aim. See `_migrate` for the
     rule that classifies a make as clean.
+
+    Clamped rows are kept (#20). Earlier this query excluded them on the
+    rationale that "fired at bob extreme regardless of target_y", but
+    the logged `platform_y` is the actual fire value — same factual
+    signal as any other row. Excluding clamped makes was preventing
+    the predictor from learning when the perturbation sweep discovered
+    a working offset at the bob limit.
     """
     return [
         (float(r[0]), float(r[1]), float(r[2]))
         for r in conn.execute(
             'SELECT hoop_y, hoop_x, platform_y FROM shots '
-            'WHERE clean_make = 1 AND clamped = 0 AND required_direction = ? '
+            'WHERE clean_make = 1 AND required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
             'AND platform_y IS NOT NULL',
             (required_direction,),
@@ -210,8 +215,7 @@ def fetch_shots(
 ) -> list[tuple[float, float, float, float]]:
     """Return [(hoop_y, hoop_x, platform_y, ball_landing_x), ...] for every
     shot with a tracked trajectory in the requested required_direction.
-    Excludes clamped shots and rows where any input or the trajectory
-    landing is missing.
+    Excludes rows where any input or the trajectory landing is missing.
 
     Unlike fetch_makes, this includes misses — the trajectory predictor
     learns from where any shot lands, not just the makes. Used by
@@ -219,13 +223,13 @@ def fetch_shots(
 
     No bounce filtering is applied — analysis tooling sometimes needs the
     raw trajectories. Predictors should call `fetch_clean_trajectories`
-    instead.
+    instead. Clamped rows are included (see fetch_makes for rationale).
     """
     return [
         (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
         for r in conn.execute(
             'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
-            'WHERE clamped = 0 AND required_direction = ? '
+            'WHERE required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
             'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL',
             (required_direction,),
@@ -243,13 +247,14 @@ def fetch_clean_trajectories(
     that deflect the ball backwards and pollute trajectory regression.
 
     Filters in SQL via `(ball_landing_x - platform_x) >= min_distance_px`
-    so the bounce rows never reach the predictor.
+    so the bounce rows never reach the predictor. Clamped rows are
+    included (see fetch_makes for rationale).
     """
     return [
         (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
         for r in conn.execute(
             'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
-            'WHERE clamped = 0 AND required_direction = ? '
+            'WHERE required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
             'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
             'AND platform_x IS NOT NULL '
