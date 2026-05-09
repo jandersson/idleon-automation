@@ -164,10 +164,10 @@ class Launcher:
 
     def _build_tries_strip(self, parent: ttk.Frame) -> ttk.Frame:
         """Strip showing the per-character minigame plays remaining
-        (chopping + catching share this counter in-game). Auto-reads from
-        the local Idleon save on launcher open; Refresh re-reads on demand."""
+        (chopping + catching + mining share this counter in-game). Auto-reads
+        from the local Idleon save on launcher open; Refresh re-reads on demand."""
         strip = ttk.Frame(parent)
-        ttk.Label(strip, text="🪓 / 🪰 Tries:").pack(side="left")
+        ttk.Label(strip, text="🪓 / 🪰 / ⛏️ Tries:").pack(side="left")
 
         self.tries_label = ttk.Label(
             strip, text="—", font=("Segoe UI", 10, "bold"),

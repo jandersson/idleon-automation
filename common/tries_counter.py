@@ -1,4 +1,4 @@
-"""Persisted "global tries" counter shared by chopping + catching.
+"""Persisted "global tries" counter shared by chopping + catching + mining.
 
 User-managed: the counter is whatever they last typed in via the launcher.
 Stored as a tiny JSON so the launcher can read it on every refresh and
