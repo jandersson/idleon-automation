@@ -142,20 +142,36 @@ class TrajectoryKnnPredictor:
     landing_x as direct evidence of "this offset overshoots / undershoots
     at this hoop". Sparse-region behaviour is the same as KNN's: the k
     nearest neighbours dominate.
+
+    To prevent the scan from picking platform_y values at the bob extremes
+    where the model surface is unconstrained (the failure mode from
+    issue #19), `predict` first finds the M nearest *makes* in
+    (hoop_y, hoop_x) and bounds the scan to their min/max platform_y
+    plus a small margin. The trajectory model still chooses inside that
+    envelope; it can't pick wild extrapolations. When no makes are
+    provided (legacy callers, cold start), the scan falls back to the
+    full empirical platform_y range.
     """
 
     def __init__(
         self,
         points: list[tuple[float, float, float, float]],
+        makes: list[tuple[float, float, float]] | None = None,
         k: int = 5,
         py_scan_step: float = 5.0,
+        envelope_k: int = 5,
+        envelope_margin_px: float = 10.0,
     ):
         # points: list of (hoop_y, hoop_x, platform_y, ball_landing_x)
+        # makes:  list of (hoop_y, hoop_x, platform_y) for the envelope clamp
         self.points = points
+        self.makes = makes or []
         self.k = min(k, len(points))
         self._step = py_scan_step
-        # Scan range bounded by the empirical platform_y envelope so we
-        # never predict for platform_y values we have zero data for.
+        self._envelope_k = envelope_k
+        self._envelope_margin = envelope_margin_px
+        # Global platform_y envelope from the trained shots — used as the
+        # outer bound when there are no nearby makes to scope to.
         pys = [p[2] for p in points]
         self._py_lo = min(pys)
         self._py_hi = max(pys)
@@ -163,6 +179,21 @@ class TrajectoryKnnPredictor:
     @property
     def n(self) -> int:
         return len(self.points)
+
+    def _envelope(self, hoop_y: float, hoop_x: float) -> tuple[float, float]:
+        """Scan bounds for a query hoop: M nearest makes' platform_y range
+        plus a margin, clipped to the global empirical envelope. If no
+        makes, fall back to the global envelope."""
+        if not self.makes:
+            return self._py_lo, self._py_hi
+        nearest = sorted(
+            self.makes,
+            key=lambda m: (m[0] - hoop_y) ** 2 + (m[1] - hoop_x) ** 2,
+        )[: self._envelope_k]
+        pys = [m[2] for m in nearest]
+        lo = max(min(pys) - self._envelope_margin, self._py_lo)
+        hi = min(max(pys) + self._envelope_margin, self._py_hi)
+        return lo, hi
 
     def _predict_landing(
         self, hoop_y: float, hoop_x: float, platform_y: float
@@ -181,21 +212,22 @@ class TrajectoryKnnPredictor:
 
     def predict(self, hoop_y: float, hoop_x: float) -> float:
         """Return the platform_y whose modelled trajectory lands closest
-        to hoop_x. Scans the empirical platform_y range in self._step
-        increments."""
+        to hoop_x. Scan range is the nearby-makes envelope (or the global
+        empirical envelope if no makes were provided)."""
+        lo, hi = self._envelope(hoop_y, hoop_x)
         best_py: float | None = None
         best_diff = float("inf")
-        py = self._py_lo
-        while py <= self._py_hi + 1e-9:
+        py = lo
+        while py <= hi + 1e-9:
             pred_landing = self._predict_landing(hoop_y, hoop_x, py)
             diff = abs(pred_landing - hoop_x)
             if diff < best_diff:
                 best_diff = diff
                 best_py = py
             py += self._step
-        # py_lo == py_hi degenerate case (all training shares one platform_y);
+        # Degenerate envelope (lo == hi, e.g. one make in the neighbourhood):
         # fall back to that single value rather than returning None.
-        return float(best_py if best_py is not None else self._py_lo)
+        return float(best_py if best_py is not None else lo)
 
 
 def fit_knn(
@@ -286,12 +318,15 @@ def fit_gp(
 
 def fit_trajectory_knn(
     rows: list[tuple[float, float, float, float]],
+    makes: list[tuple[float, float, float]] | None = None,
     k: int = 5,
     min_samples: int = 8,
     py_scan_step: float = 5.0,
 ) -> TrajectoryKnnPredictor | None:
     """Build a TrajectoryKnnPredictor from rows of
-    (hoop_y, hoop_x, platform_y, ball_landing_x).
+    (hoop_y, hoop_x, platform_y, ball_landing_x). Optionally pass `makes`
+    (the same 3-tuples fetch_makes returns) so the predictor can clamp
+    its scan to a nearby-makes envelope rather than the full bob range.
 
     Higher min_samples than the make-based predictors because the input
     space has one more dimension (platform_y) — sparse 3D coverage
@@ -303,7 +338,14 @@ def fit_trajectory_knn(
     points = [
         (float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows
     ]
-    return TrajectoryKnnPredictor(points, k=k, py_scan_step=py_scan_step)
+    make_points = (
+        [(float(m[0]), float(m[1]), float(m[2])) for m in makes]
+        if makes is not None
+        else None
+    )
+    return TrajectoryKnnPredictor(
+        points, makes=make_points, k=k, py_scan_step=py_scan_step,
+    )
 
 
 def _solve_3x3(M: list[list[float]], v: list[float]) -> tuple[float, float, float] | None:

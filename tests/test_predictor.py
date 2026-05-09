@@ -192,7 +192,9 @@ def test_trajectory_knn_recovers_optimal_platform_y():
 
 def test_trajectory_knn_scan_bounded_by_training_range():
     """Scan should not return platform_y values outside the training set's
-    [min, max] envelope — extrapolation past those bounds is not allowed."""
+    [min, max] envelope — extrapolation past those bounds is not allowed.
+    Backward-compat: when no makes are provided, falls back to the global
+    empirical envelope of the trained shots."""
     rows = [
         (400.0, 700.0, 410.0, 690.0),
         (400.0, 700.0, 420.0, 700.0),
@@ -211,6 +213,63 @@ def test_trajectory_knn_scan_bounded_by_training_range():
     py_hi = pred.predict(400, 1000)
     assert 410.0 <= py_lo <= 480.0
     assert 410.0 <= py_hi <= 480.0
+
+
+def test_trajectory_knn_envelope_clamps_scan_to_nearby_makes():
+    """When makes are supplied, the scan's range for a query is bounded
+    by the M nearest makes' min/max platform_y. A pathological shot set
+    that would otherwise produce a scan-edge "winner" at py=300 still
+    returns a value inside the nearby-makes envelope (440..460)."""
+    # 200 noisy shots scattered all over platform_y. Without an envelope,
+    # the scan would readily find a coincidental zero-crossing at the
+    # extremes.
+    rows: list[tuple[float, float, float, float]] = []
+    for hoop_y in (380.0, 400.0, 420.0):
+        for hoop_x in (600.0, 650.0, 700.0):
+            for py in range(300, 510, 10):
+                # A noisy/biased landing function: reduces toward 0 as
+                # platform_y approaches 300 (mimicking the scan-edge
+                # extrapolation problem from the real DB).
+                landing = hoop_x + (py - 405) * 1.5
+                rows.append((hoop_y, hoop_x, float(py), landing))
+    # Makes cluster tightly around platform_y in [440, 460].
+    makes = [
+        (400.0, 650.0, 445.0),
+        (400.0, 650.0, 450.0),
+        (400.0, 650.0, 455.0),
+        (400.0, 650.0, 460.0),
+        (400.0, 650.0, 440.0),
+    ]
+    pred = fit_trajectory_knn(rows, makes=makes, k=5)
+    assert pred is not None
+    py = pred.predict(400, 650)
+    # 10 px envelope margin on each side → scan in [430, 470].
+    assert 430.0 <= py <= 470.0
+
+
+def test_trajectory_knn_envelope_per_query():
+    """Different queries see different nearest makes, so different
+    envelopes. A query near makes-cluster A picks from A's range; a
+    query near cluster B picks from B's range. Each cluster has at
+    least envelope_k=5 makes so 5-NN stays local."""
+    rows: list[tuple[float, float, float, float]] = []
+    for py in range(300, 510, 10):
+        rows.append((400.0, 600.0, float(py), 600.0 + (py - 405) * 1.5))
+        rows.append((400.0, 700.0, float(py), 700.0 + (py - 405) * 1.5))
+    makes = [
+        (400.0, 600.0, 350.0), (400.0, 600.0, 355.0), (400.0, 600.0, 360.0),
+        (400.0, 600.0, 365.0), (400.0, 600.0, 370.0),
+        (400.0, 700.0, 470.0), (400.0, 700.0, 475.0), (400.0, 700.0, 480.0),
+        (400.0, 700.0, 485.0), (400.0, 700.0, 490.0),
+    ]
+    pred = fit_trajectory_knn(rows, makes=makes, k=5)
+    assert pred is not None
+    py_low_cluster = pred.predict(400, 600)
+    py_high_cluster = pred.predict(400, 700)
+    # Each query stays inside its local makes envelope (350..370 for the
+    # low cluster, 470..490 for the high cluster, ±10 px margin).
+    assert 340.0 <= py_low_cluster <= 380.0
+    assert 460.0 <= py_high_cluster <= 500.0
 
 
 def test_trajectory_knn_matches_predictor_protocol():

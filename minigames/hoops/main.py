@@ -405,8 +405,12 @@ def run():
                 # ball_landing_x). Uses fetch_clean_trajectories rather
                 # than fetch_shots so rim/backboard-bounce rows are
                 # filtered out — they pollute the regression target.
+                # Also passes the makes list so predict() clamps its
+                # scan to the nearby-makes envelope (issue #19) instead
+                # of saturating at the bob extremes.
                 rows = fetch_clean_trajectories(shot_db, REQUIRED_DIRECTION)
-                predictor = fit_trajectory_knn(rows, k=5)
+                makes = fetch_makes(shot_db, REQUIRED_DIRECTION)
+                predictor = fit_trajectory_knn(rows, makes=makes, k=5)
             else:
                 rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
                 if PREDICTOR_KIND == "knn":
