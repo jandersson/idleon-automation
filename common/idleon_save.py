@@ -217,70 +217,31 @@ def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
     return out
 
 
-# Per-character hoops cooldown lives in PlayerDATABASE[name].OptionsList[6].
-# Identified empirically (2026-05-09) by playing a hoops session, dumping
-# before/after, and locating the field that flipped from -5 (playable) to
-# 1586 (≈ 5m17s cooldown). Same tick convention as the darts cooldown:
-# negative = playable, positive = ticks remaining, 5 ticks/sec.
-_PERSONAL_HOOPS_COOLDOWN_TICKS = 6
-
-
-def read_hoops_cooldowns(save_dir: str = SAVE_DIR) -> dict[str, float] | None:
-    """Read per-character hoops cooldown snapshots from the save. Returns
-    {character_name: cooldown_seconds} (negative = playable now,
-    positive = seconds remaining) or None if the save can't be read.
-
-    NOTE: the cooldown is account-wide (shared across all characters),
-    confirmed empirically — switching to a non-active character mid-
-    cooldown shows the same timer in-game. Each character's OL[6] is
-    just a per-character cache of the shared value, refreshed when that
-    character becomes active. For the live "what's my actual cooldown
-    right now" answer, prefer `read_hoops_cooldown` (singular), which
-    returns the value from the most-recently-active character.
-    """
-    data = load_save(save_dir)
-    if data is None:
-        return None
-    out: dict[str, float] = {}
-    for name, info in (data.get("PlayerDATABASE") or {}).items():
-        ol = info.get("OptionsList") or []
-        if len(ol) <= _PERSONAL_HOOPS_COOLDOWN_TICKS:
-            continue
-        ticks = ol[_PERSONAL_HOOPS_COOLDOWN_TICKS]
-        if isinstance(ticks, (int, float)):
-            out[name] = float(ticks) / _OLA_TICKS_PER_SECOND
-    return out
+# Hoops cooldown: account-wide, lives in OptionsListAccount[423]. Same
+# convention as the darts cooldown at OLA[439] — negative = playable,
+# positive = ticks of cooldown remaining, 5 ticks/sec. Identified
+# empirically (2026-05-09) by diffing two save dumps ~66s apart and
+# finding OLA[423] decrementing at exactly 5 ticks/sec; the prior
+# attempt at PlayerDATABASE[name].OptionsList[6] turned out to be a
+# per-character snapshot of the cooldown duration, not a live counter.
+_OLA_HOOPS_COOLDOWN_TICKS = 423
 
 
 def read_hoops_cooldown(save_dir: str = SAVE_DIR) -> float | None:
     """Return the shared hoops cooldown in seconds — negative when
-    playable, positive when on cooldown. None if the save can't be read.
+    playable, positive when on cooldown. None if the save can't be read
+    or the OLA array is too short.
 
-    The cooldown is account-wide but only the most-recently-active
-    character's OL[6] is up-to-date; offline characters' values are
-    stale snapshots from their last logout. We pick the character with
-    the smallest PlayerAwayTime delta from now — that's the active
-    one whose cache reflects the live shared state.
+    Decrements at 5 ticks/sec in real time (independent of which
+    character is active), matching the in-game cooldown indicator.
     """
-    import time
     data = load_save(save_dir)
     if data is None:
         return None
-    now = time.time()
-    best_afk: float | None = None
-    best_cd: float | None = None
-    for info in (data.get("PlayerDATABASE") or {}).values():
-        away = info.get("PlayerAwayTime")
-        ol = info.get("OptionsList") or []
-        if not isinstance(away, (int, float)):
-            continue
-        if len(ol) <= _PERSONAL_HOOPS_COOLDOWN_TICKS:
-            continue
-        ticks = ol[_PERSONAL_HOOPS_COOLDOWN_TICKS]
-        if not isinstance(ticks, (int, float)):
-            continue
-        afk = now - float(away)
-        if best_afk is None or afk < best_afk:
-            best_afk = afk
-            best_cd = float(ticks) / _OLA_TICKS_PER_SECOND
-    return best_cd
+    ola = data.get("OptionsListAccount")
+    if not isinstance(ola, list) or len(ola) <= _OLA_HOOPS_COOLDOWN_TICKS:
+        return None
+    ticks = ola[_OLA_HOOPS_COOLDOWN_TICKS]
+    if not isinstance(ticks, (int, float)):
+        return None
+    return float(ticks) / _OLA_TICKS_PER_SECOND
