@@ -19,7 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from common import tries_counter
-from common.idleon_save import read_minigame_plays, read_hoops_cooldowns
+from common.idleon_save import read_minigame_plays, read_hoops_cooldown
 
 PROJECT_ROOT = Path(__file__).parent.parent
 MINIGAMES_DIR = PROJECT_ROOT / "minigames"
@@ -111,10 +111,10 @@ class Launcher:
         # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
         # currently-selected option value for that minigame's bot.
         self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
-        # Snapshot of hoops cooldowns + when we read them, so the display
-        # ticks down live between save refreshes (the save only flushes
-        # on certain in-game triggers, not continuously).
-        self.hoops_cooldown_snapshot: tuple[float, dict[str, float]] | None = None
+        # Snapshot of the shared hoops cooldown + when we read it, so the
+        # display ticks down live between save refreshes (the save only
+        # flushes on certain in-game triggers, not continuously).
+        self.hoops_cooldown_snapshot: tuple[float, float] | None = None
 
         # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
         self.frame_images: list[ImageTk.PhotoImage] = []
@@ -202,7 +202,7 @@ class Launcher:
         ttk.Button(strip, text="Refresh", width=8,
                    command=self._refresh_tries).pack(side="left")
 
-        ttk.Label(strip, text="🏀 Next:").pack(side="left", padx=(16, 4))
+        ttk.Label(strip, text="🏀 Cooldown:").pack(side="left", padx=(16, 4))
         self.hoops_label = ttk.Label(
             strip, text="—", font=("Segoe UI", 10, "bold"),
         )
@@ -217,31 +217,30 @@ class Launcher:
 
     def _tick_hoops_display(self) -> None:
         """Update the hoops cooldown label, extrapolating from the last
-        save-read snapshot. Re-arms itself once a second."""
+        save-read snapshot. Re-arms itself once a second.
+
+        The cooldown is account-wide (shared across all characters), so
+        we show one number, not a per-character breakdown.
+        """
         import time
         snap = self.hoops_cooldown_snapshot
         if snap is None:
             self.hoops_label.config(text="—")
         else:
-            read_at, cds = snap
-            elapsed = time.time() - read_at
-            # Compute current remaining for each character.
-            current = {n: cd - elapsed for n, cd in cds.items()}
-            in_cd = {n: r for n, r in current.items() if r > 0}
-            if not in_cd:
-                self.hoops_label.config(text="all ready")
+            read_at, stored_cd = snap
+            remaining = stored_cd - (time.time() - read_at)
+            if remaining <= 0:
+                self.hoops_label.config(text="ready")
             else:
-                soonest_name = min(in_cd, key=in_cd.get)
-                r = in_cd[soonest_name]
-                m, s = divmod(int(r) + 1, 60)  # +1 to round up the visible second
-                self.hoops_label.config(text=f"{soonest_name} {m}:{s:02d}")
+                m, s = divmod(int(remaining) + 1, 60)  # round up the visible second
+                self.hoops_label.config(text=f"{m}:{s:02d}")
         self.root.after(1000, self._tick_hoops_display)
 
     def _refresh_tries(self, silent: bool = False) -> None:
         import time
-        cds = read_hoops_cooldowns()
-        if cds is not None:
-            self.hoops_cooldown_snapshot = (time.time(), cds)
+        cd = read_hoops_cooldown()
+        if cd is not None:
+            self.hoops_cooldown_snapshot = (time.time(), cd)
         plays = read_minigame_plays()
         if plays is None:
             self.tries_label.config(text="(save not found)")

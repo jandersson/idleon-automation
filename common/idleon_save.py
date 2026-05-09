@@ -226,13 +226,17 @@ _PERSONAL_HOOPS_COOLDOWN_TICKS = 6
 
 
 def read_hoops_cooldowns(save_dir: str = SAVE_DIR) -> dict[str, float] | None:
-    """Read per-character hoops cooldown from the save. Returns
+    """Read per-character hoops cooldown snapshots from the save. Returns
     {character_name: cooldown_seconds} (negative = playable now,
     positive = seconds remaining) or None if the save can't be read.
 
-    Hoops uses a permanent item with an individual cooldown rather than
-    drawing from the daily-plays pool, so this is the right "can I play
-    again yet?" signal for hoops sessions.
+    NOTE: the cooldown is account-wide (shared across all characters),
+    confirmed empirically — switching to a non-active character mid-
+    cooldown shows the same timer in-game. Each character's OL[6] is
+    just a per-character cache of the shared value, refreshed when that
+    character becomes active. For the live "what's my actual cooldown
+    right now" answer, prefer `read_hoops_cooldown` (singular), which
+    returns the value from the most-recently-active character.
     """
     data = load_save(save_dir)
     if data is None:
@@ -246,3 +250,37 @@ def read_hoops_cooldowns(save_dir: str = SAVE_DIR) -> dict[str, float] | None:
         if isinstance(ticks, (int, float)):
             out[name] = float(ticks) / _OLA_TICKS_PER_SECOND
     return out
+
+
+def read_hoops_cooldown(save_dir: str = SAVE_DIR) -> float | None:
+    """Return the shared hoops cooldown in seconds — negative when
+    playable, positive when on cooldown. None if the save can't be read.
+
+    The cooldown is account-wide but only the most-recently-active
+    character's OL[6] is up-to-date; offline characters' values are
+    stale snapshots from their last logout. We pick the character with
+    the smallest PlayerAwayTime delta from now — that's the active
+    one whose cache reflects the live shared state.
+    """
+    import time
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    now = time.time()
+    best_afk: float | None = None
+    best_cd: float | None = None
+    for info in (data.get("PlayerDATABASE") or {}).values():
+        away = info.get("PlayerAwayTime")
+        ol = info.get("OptionsList") or []
+        if not isinstance(away, (int, float)):
+            continue
+        if len(ol) <= _PERSONAL_HOOPS_COOLDOWN_TICKS:
+            continue
+        ticks = ol[_PERSONAL_HOOPS_COOLDOWN_TICKS]
+        if not isinstance(ticks, (int, float)):
+            continue
+        afk = now - float(away)
+        if best_afk is None or afk < best_afk:
+            best_afk = afk
+            best_cd = float(ticks) / _OLA_TICKS_PER_SECOND
+    return best_cd
