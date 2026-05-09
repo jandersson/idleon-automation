@@ -2,7 +2,8 @@
 import pytest
 
 from common.predictor import (
-    KnnPredictor, BivariatePredictor, fit_knn, fit_bivariate, fit_gp,
+    KnnPredictor, BivariatePredictor, TrajectoryKnnPredictor,
+    fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn,
 )
 
 
@@ -141,3 +142,82 @@ def test_gp_matches_predictor_protocol():
     assert gp is not None
     assert isinstance(gp.n, int)
     assert isinstance(gp.predict(400, 700), float)
+
+
+def test_fit_trajectory_knn_returns_none_with_too_few_samples():
+    rows = [(400.0, 700.0, 420.0, 700.0)] * 3
+    assert fit_trajectory_knn(rows, min_samples=8) is None
+
+
+def _synthetic_trajectory_rows() -> list[tuple[float, float, float, float]]:
+    """Build a synthetic dataset where landing_x is a clean function of
+    (hoop_y, hoop_x, platform_y). The optimal platform_y for a given
+    hoop is the one whose modelled landing equals hoop_x.
+
+    Model: each hoop_y has its own offset slope; landing_x = hoop_x +
+    slope * (platform_y - 420). So landing == hoop_x exactly when
+    platform_y == 420 (regardless of hoop_y / hoop_x for this fixture).
+    """
+    rows: list[tuple[float, float, float, float]] = []
+    for hoop_y in (350.0, 400.0, 450.0):
+        for hoop_x in (600.0, 700.0):
+            slope = 0.5  # px landing per px platform_y above 420
+            for platform_y in (390.0, 410.0, 420.0, 430.0, 450.0):
+                landing_x = hoop_x + slope * (platform_y - 420.0)
+                rows.append((hoop_y, hoop_x, platform_y, landing_x))
+    return rows
+
+
+def test_fit_trajectory_knn_returns_predictor_when_enough_samples():
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_knn(rows, k=3)
+    assert pred is not None
+    assert pred.n == len(rows)
+
+
+def test_trajectory_knn_recovers_optimal_platform_y():
+    """For the synthetic fixture the optimum is always platform_y=420
+    (the launch elevation that yields landing_x == hoop_x). At a query
+    point dense in training data, 3-NN locates the optimum within one
+    scan step."""
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_knn(rows, k=3, py_scan_step=5.0)
+    assert pred is not None
+    # Query at a trained (hoop_y, hoop_x) so 3-NN finds neighbors with
+    # zero spatial offset and the platform_y axis dominates the distance
+    # metric — avoids cross-column averaging artefacts.
+    py_pred = pred.predict(400, 600)
+    assert abs(py_pred - 420.0) <= 5.0
+
+
+def test_trajectory_knn_scan_bounded_by_training_range():
+    """Scan should not return platform_y values outside the training set's
+    [min, max] envelope — extrapolation past those bounds is not allowed."""
+    rows = [
+        (400.0, 700.0, 410.0, 690.0),
+        (400.0, 700.0, 420.0, 700.0),
+        (400.0, 700.0, 430.0, 710.0),
+        (400.0, 700.0, 440.0, 720.0),
+        (400.0, 700.0, 450.0, 730.0),
+        (400.0, 700.0, 460.0, 740.0),
+        (400.0, 700.0, 470.0, 750.0),
+        (400.0, 700.0, 480.0, 760.0),
+    ]
+    pred = fit_trajectory_knn(rows, k=3)
+    assert pred is not None
+    # Even a hoop far outside the trained range can't pull the scan
+    # past [410, 480].
+    py_lo = pred.predict(400, 100)
+    py_hi = pred.predict(400, 1000)
+    assert 410.0 <= py_lo <= 480.0
+    assert 410.0 <= py_hi <= 480.0
+
+
+def test_trajectory_knn_matches_predictor_protocol():
+    """Same .n / .predict surface as the other predictors so the call
+    site at minigames/hoops/main.py:52 doesn't need a special case."""
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_knn(rows, k=3)
+    assert pred is not None
+    assert isinstance(pred.n, int)
+    assert isinstance(pred.predict(400, 700), float)

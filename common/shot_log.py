@@ -191,3 +191,28 @@ def fetch_makes(
             (required_direction,),
         )
     ]
+
+
+def fetch_shots(
+    conn: sqlite3.Connection,
+    required_direction: str,
+) -> list[tuple[float, float, float, float]]:
+    """Return [(hoop_y, hoop_x, platform_y, ball_landing_x), ...] for every
+    shot with a tracked trajectory in the requested required_direction.
+    Excludes clamped shots and rows where any input or the trajectory
+    landing is missing.
+
+    Unlike fetch_makes, this includes misses — the trajectory predictor
+    learns from where any shot lands, not just the makes. Used by
+    `fit_trajectory_knn` and friends in common.predictor.
+    """
+    return [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
+        for r in conn.execute(
+            'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
+            'WHERE clamped = 0 AND required_direction = ? '
+            'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
+            'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL',
+            (required_direction,),
+        )
+    ]

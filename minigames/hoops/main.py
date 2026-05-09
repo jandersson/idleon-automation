@@ -13,8 +13,8 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fetch_makes, current_code_commit, CLEAN_MAKE_TOLERANCE
-from common.predictor import fit_knn, fit_bivariate, fit_gp
+from common.shot_log import open_db, log_shot, fetch_makes, fetch_shots, current_code_commit, CLEAN_MAKE_TOLERANCE
+from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -99,15 +99,24 @@ def _perturbation_for(miss_count: int) -> int:
 Y_TOLERANCE = 6
 
 # Which predictor implementation to use for the make-zone target_y:
-#   "knn"       — KNN over past makes, inverse-distance weighted (k=3).
-#                 Adapts to local curvature; recommended default.
-#   "bivariate" — linear OLS for target_y = a*hoop_y + b*hoop_x + c.
-#                 Faster but biased in regions far from the training-data
-#                 cluster (needed hardcoded overrides historically).
-#   "gp"        — Gaussian Process regression (sklearn, anisotropic RBF).
-#                 Same interface as KNN/bivariate via predict(); also
-#                 exposes predict_with_std() so future logic can gate or
-#                 perturb based on uncertainty. See docs/predictors.md.
+#   "knn"             — KNN over past makes, inverse-distance weighted
+#                       (k=3). Adapts to local curvature; recommended
+#                       baseline.
+#   "bivariate"       — linear OLS for target_y = a*hoop_y + b*hoop_x + c.
+#                       Faster but biased in regions far from the
+#                       training-data cluster (needed hardcoded overrides
+#                       historically).
+#   "gp"              — Gaussian Process regression (sklearn, anisotropic
+#                       RBF). Same interface as KNN/bivariate via
+#                       predict(); also exposes predict_with_std() so
+#                       future logic can gate or perturb based on
+#                       uncertainty. See docs/predictors.md.
+#   "trajectory_knn"  — 3D KNN on (hoop_y, hoop_x, platform_y) → ball_
+#                       landing_x, fit on every shot (make or miss). At
+#                       predict time scans candidate platform_y values
+#                       and picks the one whose modelled landing_x is
+#                       closest to hoop_x. Lets the predictor learn from
+#                       misses as well as makes. See GitHub issue #17.
 PREDICTOR_KIND = "gp"
 
 # Required direction of platform motion to fire. "up", "down", or "any".
@@ -385,24 +394,33 @@ def run():
             print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
         try:
-            rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
-            if PREDICTOR_KIND == "knn":
-                # k=3 (was 5): smaller K is more local. With k=5 the
-                # predictor over-smoothed in regions with sparse training
-                # data — a single nearby make at hoop=(593,390) with
-                # offset=78 got diluted to offset=23 by 4 distant
-                # neighbours. k=3 lets the local data dominate more.
-                predictor = fit_knn(rows, k=3)
-            elif PREDICTOR_KIND == "bivariate":
-                predictor = fit_bivariate(rows)
-            elif PREDICTOR_KIND == "gp":
-                predictor = fit_gp(rows)
+            if PREDICTOR_KIND == "trajectory_knn":
+                # Trajectory predictor learns from every shot (make or
+                # miss), so it pulls a different schema (4-tuple including
+                # ball_landing_x) and uses fetch_shots, not fetch_makes.
+                rows = fetch_shots(shot_db, REQUIRED_DIRECTION)
+                predictor = fit_trajectory_knn(rows, k=5)
             else:
-                raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
+                rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
+                if PREDICTOR_KIND == "knn":
+                    # k=3 (was 5): smaller K is more local. With k=5 the
+                    # predictor over-smoothed in regions with sparse
+                    # training data — a single nearby make at
+                    # hoop=(593,390) with offset=78 got diluted to
+                    # offset=23 by 4 distant neighbours. k=3 lets the
+                    # local data dominate more.
+                    predictor = fit_knn(rows, k=3)
+                elif PREDICTOR_KIND == "bivariate":
+                    predictor = fit_bivariate(rows)
+                elif PREDICTOR_KIND == "gp":
+                    predictor = fit_gp(rows)
+                else:
+                    raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
             if predictor is None:
-                print(f"No predictor fit ({PREDICTOR_KIND!r}, fewer than 4 makes in dir={REQUIRED_DIRECTION!r}); using cold-start offset={COLD_START_OFFSET}")
+                print(f"No predictor fit ({PREDICTOR_KIND!r}, too few samples in dir={REQUIRED_DIRECTION!r}); using cold-start offset={COLD_START_OFFSET}")
             else:
-                print(f"{PREDICTOR_KIND.upper()} target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} makes)")
+                sample_kind = "shots" if PREDICTOR_KIND == "trajectory_knn" else "makes"
+                print(f"{PREDICTOR_KIND.upper()} target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} {sample_kind})")
             _run_inner(session_started, shot_db, predictor, code_commit)
         finally:
             shot_db.close()

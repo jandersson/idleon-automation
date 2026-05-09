@@ -2,7 +2,7 @@
 import sqlite3
 import threading
 
-from common.shot_log import open_db, log_shot, fetch_makes
+from common.shot_log import open_db, log_shot, fetch_makes, fetch_shots
 
 
 def test_open_db_creates_schema(tmp_path):
@@ -147,6 +147,33 @@ def test_log_shot_works_from_a_background_thread(tmp_path):
     rows = list(conn.execute("SELECT shot_idx, source, made FROM shots"))
     conn.close()
     assert rows == [(99, "human", 1)]
+
+
+def test_fetch_shots_returns_makes_and_misses_with_landing(tmp_path):
+    """fetch_shots returns every shot with a tracked ball_landing_x —
+    misses included — so the trajectory predictor can learn from both."""
+    conn = open_db(tmp_path / "shots.db")
+    # Make with landing
+    log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, ball_landing_x=602,
+             made=1, clean_make=1, clamped=0, required_direction="up")
+    # Miss with landing — should still be returned
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, ball_landing_x=540,
+             made=0, clean_make=0, clamped=0, required_direction="up")
+    # Pollution: clamped (excluded)
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=9999, ball_landing_x=700,
+             made=1, clean_make=1, clamped=1, required_direction="up")
+    # Pollution: wrong direction (excluded)
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420, ball_landing_x=700,
+             made=1, clean_make=1, clamped=0, required_direction="down")
+    # Pollution: ball_landing_x missing (excluded — no trajectory signal)
+    log_shot(conn, hoop_y=400, hoop_x=700, platform_y=420,
+             made=0, clean_make=0, clamped=0, required_direction="up")
+    rows = fetch_shots(conn, "up")
+    conn.close()
+    assert sorted(rows) == [
+        (300.0, 600.0, 320.0, 602.0),
+        (400.0, 700.0, 420.0, 540.0),
+    ]
 
 
 def test_fetch_makes_excludes_clamped_misses_and_wrong_direction(tmp_path):

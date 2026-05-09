@@ -1,11 +1,11 @@
 """Predictors for "where should the platform be at fire time?".
 
-Each predictor is fit on a list of past makes — `(hoop_y, hoop_x,
-platform_y)` tuples — and exposes a `predict(hoop_y, hoop_x) -> float`
-method returning the predicted optimal `platform_y` (i.e. the value the
-caller should aim `target_y` at).
+Most predictors here are fit on a list of past *makes* —
+`(hoop_y, hoop_x, platform_y)` tuples — and expose
+`predict(hoop_y, hoop_x) -> float` returning the predicted optimal
+`platform_y` (i.e. the value the caller should aim `target_y` at).
 
-Three implementations live here so they can be swapped at the call site:
+Four implementations live here so they can be swapped at the call site:
 
 - `KnnPredictor` — inverse-distance-weighted KNN over past makes.
   Adapts to local curvature in the (hoop_y, hoop_x) → optimal_py
@@ -17,9 +17,19 @@ Three implementations live here so they can be swapped at the call site:
   kernel (sklearn). Returns a posterior mean *and* std; the std is
   what enables variance-driven gating and directional perturbation
   downstream.
+- `TrajectoryKnnPredictor` — different shape of model. Fit on *every*
+  shot (make or miss) as
+  `(hoop_y, hoop_x, platform_y) -> ball_landing_x`, then at predict
+  time scans candidate `platform_y` values within the empirical bob
+  range and returns the one whose modelled landing is closest to the
+  hoop. Lets the predictor learn from misses, not just makes — see
+  GitHub issue #17.
 
-`fit_knn` / `fit_bivariate` / `fit_gp` are factory helpers that take the
-rows and return a fitted predictor (or None if too few samples).
+`fit_knn` / `fit_bivariate` / `fit_gp` / `fit_trajectory_knn` are
+factory helpers that take the rows and return a fitted predictor (or
+None if too few samples). The first three take `fetch_makes` rows; the
+trajectory one takes `fetch_shots` rows (4-tuples including
+`ball_landing_x`).
 
 For algorithm refreshers (KNN, OLS, GP), see `docs/predictors.md` (or
 https://jandersson.github.io/idleon-automation/predictors.html for
@@ -120,6 +130,74 @@ class GpPredictor:
         return float(mu[0]), float(std[0])
 
 
+class TrajectoryKnnPredictor:
+    """3D KNN over (hoop_y, hoop_x, platform_y) -> ball_landing_x.
+
+    The model maps "what shot was fired" to "where the ball ended up".
+    To pick a target_y for a given hoop, scan platform_y across the
+    empirical bob range and return the value whose predicted landing
+    is closest to hoop_x — i.e. invert the trajectory model.
+
+    Trains on every shot, not just makes, so misses contribute their
+    landing_x as direct evidence of "this offset overshoots / undershoots
+    at this hoop". Sparse-region behaviour is the same as KNN's: the k
+    nearest neighbours dominate.
+    """
+
+    def __init__(
+        self,
+        points: list[tuple[float, float, float, float]],
+        k: int = 5,
+        py_scan_step: float = 5.0,
+    ):
+        # points: list of (hoop_y, hoop_x, platform_y, ball_landing_x)
+        self.points = points
+        self.k = min(k, len(points))
+        self._step = py_scan_step
+        # Scan range bounded by the empirical platform_y envelope so we
+        # never predict for platform_y values we have zero data for.
+        pys = [p[2] for p in points]
+        self._py_lo = min(pys)
+        self._py_hi = max(pys)
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def _predict_landing(
+        self, hoop_y: float, hoop_x: float, platform_y: float
+    ) -> float:
+        distances = sorted(
+            (
+                ((py - hoop_y) ** 2 + (px - hoop_x) ** 2 + (pp - platform_y) ** 2) ** 0.5,
+                lx,
+            )
+            for py, px, pp, lx in self.points
+        )
+        nearest = distances[: self.k]
+        weights = [1.0 / max(d, 1.0) for d, _ in nearest]
+        total = sum(weights)
+        return sum(w * lx for w, (_, lx) in zip(weights, nearest)) / total
+
+    def predict(self, hoop_y: float, hoop_x: float) -> float:
+        """Return the platform_y whose modelled trajectory lands closest
+        to hoop_x. Scans the empirical platform_y range in self._step
+        increments."""
+        best_py: float | None = None
+        best_diff = float("inf")
+        py = self._py_lo
+        while py <= self._py_hi + 1e-9:
+            pred_landing = self._predict_landing(hoop_y, hoop_x, py)
+            diff = abs(pred_landing - hoop_x)
+            if diff < best_diff:
+                best_diff = diff
+                best_py = py
+            py += self._step
+        # py_lo == py_hi degenerate case (all training shares one platform_y);
+        # fall back to that single value rather than returning None.
+        return float(best_py if best_py is not None else self._py_lo)
+
+
 def fit_knn(
     rows: list[tuple[float, float, float]],
     k: int = 5,
@@ -204,6 +282,28 @@ def fit_gp(
     )
     gp.fit(X, y)
     return GpPredictor(points, gp)
+
+
+def fit_trajectory_knn(
+    rows: list[tuple[float, float, float, float]],
+    k: int = 5,
+    min_samples: int = 8,
+    py_scan_step: float = 5.0,
+) -> TrajectoryKnnPredictor | None:
+    """Build a TrajectoryKnnPredictor from rows of
+    (hoop_y, hoop_x, platform_y, ball_landing_x).
+
+    Higher min_samples than the make-based predictors because the input
+    space has one more dimension (platform_y) — sparse 3D coverage
+    produces noisy KNN predictions. Returns None if too few samples or
+    if the input list is empty.
+    """
+    if len(rows) < min_samples:
+        return None
+    points = [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows
+    ]
+    return TrajectoryKnnPredictor(points, k=k, py_scan_step=py_scan_step)
 
 
 def _solve_3x3(M: list[list[float]], v: list[float]) -> tuple[float, float, float] | None:
