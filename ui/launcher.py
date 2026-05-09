@@ -19,7 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from common import tries_counter
-from common.idleon_save import read_minigame_plays
+from common.idleon_save import read_minigame_plays, read_hoops_cooldowns
 
 PROJECT_ROOT = Path(__file__).parent.parent
 MINIGAMES_DIR = PROJECT_ROOT / "minigames"
@@ -111,6 +111,10 @@ class Launcher:
         # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
         # currently-selected option value for that minigame's bot.
         self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
+        # Snapshot of hoops cooldowns + when we read them, so the display
+        # ticks down live between save refreshes (the save only flushes
+        # on certain in-game triggers, not continuously).
+        self.hoops_cooldown_snapshot: tuple[float, dict[str, float]] | None = None
 
         # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
         self.frame_images: list[ImageTk.PhotoImage] = []
@@ -184,8 +188,9 @@ class Launcher:
 
     def _build_tries_strip(self, parent: ttk.Frame) -> ttk.Frame:
         """Strip showing the per-character minigame plays remaining
-        (chopping + catching + mining share this counter in-game). Auto-reads
-        from the local Idleon save on launcher open; Refresh re-reads on demand."""
+        (chopping + catching + mining share this counter in-game) plus
+        the next-playable hoops countdown. Auto-reads from the local
+        Idleon save on launcher open; Refresh re-reads on demand."""
         strip = ttk.Frame(parent)
         ttk.Label(strip, text="🪓 / 🪰 / ⛏️ Tries:").pack(side="left")
 
@@ -196,11 +201,47 @@ class Launcher:
 
         ttk.Button(strip, text="Refresh", width=8,
                    command=self._refresh_tries).pack(side="left")
-        # Read once at startup so the count is visible without a manual click.
+
+        ttk.Label(strip, text="🏀 Next:").pack(side="left", padx=(16, 4))
+        self.hoops_label = ttk.Label(
+            strip, text="—", font=("Segoe UI", 10, "bold"),
+        )
+        self.hoops_label.pack(side="left")
+
+        # Read once at startup so values are visible without a manual click.
         self._refresh_tries(silent=True)
+        # Tick the hoops countdown every second so it stays live between
+        # save flushes.
+        self._tick_hoops_display()
         return strip
 
+    def _tick_hoops_display(self) -> None:
+        """Update the hoops cooldown label, extrapolating from the last
+        save-read snapshot. Re-arms itself once a second."""
+        import time
+        snap = self.hoops_cooldown_snapshot
+        if snap is None:
+            self.hoops_label.config(text="—")
+        else:
+            read_at, cds = snap
+            elapsed = time.time() - read_at
+            # Compute current remaining for each character.
+            current = {n: cd - elapsed for n, cd in cds.items()}
+            in_cd = {n: r for n, r in current.items() if r > 0}
+            if not in_cd:
+                self.hoops_label.config(text="all ready")
+            else:
+                soonest_name = min(in_cd, key=in_cd.get)
+                r = in_cd[soonest_name]
+                m, s = divmod(int(r) + 1, 60)  # +1 to round up the visible second
+                self.hoops_label.config(text=f"{soonest_name} {m}:{s:02d}")
+        self.root.after(1000, self._tick_hoops_display)
+
     def _refresh_tries(self, silent: bool = False) -> None:
+        import time
+        cds = read_hoops_cooldowns()
+        if cds is not None:
+            self.hoops_cooldown_snapshot = (time.time(), cds)
         plays = read_minigame_plays()
         if plays is None:
             self.tries_label.config(text="(save not found)")
