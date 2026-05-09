@@ -78,6 +78,14 @@ def _compute_offset(hoop_y: int, hoop_x: int, predictor) -> int:
 # neighborhood. (617, 372) has been swept across 56px of fired_py without
 # a make — the make zone there is genuinely far from where the regression
 # predicts.
+# Margin (px) inside the platform's observed bob range that target_y must
+# stay within after perturbation. Prevents a stuck loop where target_y
+# lands exactly at the bob extreme — at the apex the platform only kisses
+# that y for a single ephemeral sample, which the bot reliably misses
+# with the tight Y_TOLERANCE. Observed 2026-05-09 session 20:18:44.
+PERTURBATION_BOB_MARGIN = 5  # px
+
+
 PERTURBATION_SEQUENCE = [
     0, -8, 8, -16, 16, -24, 24, -32, 32,
     -48, 48, -64, 64, -80, 80,
@@ -548,9 +556,31 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             perturbation = _perturbation_for(misses_at_current_hoop)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
+            # Cap target_y inside the platform's observed bob range with a
+            # small margin so the platform passes through (rather than only
+            # kissing at the apex). Without this, a perturbation that
+            # lands target_y exactly at ymin/ymax produces a stuck loop:
+            # the dir=up + position-matched sample is ephemeral at the
+            # bob extreme, and the bot spins waiting for it (observed
+            # 2026-05-09 in session 20:18:44, perturb +16 → target=510,
+            # bob ymax=510, never fired).
+            cap_tag = ""
+            if len(range_samples) >= 40:
+                ys_seen = [p[1] for p in range_samples]
+                ymin_seen, ymax_seen = min(ys_seen), max(ys_seen)
+                upper = ymax_seen - PERTURBATION_BOB_MARGIN
+                lower = ymin_seen + PERTURBATION_BOB_MARGIN
+                if upper >= lower and target_y > upper:
+                    cap_tag = f" [capped target_y {target_y}->{upper}, bob ymax={ymax_seen}]"
+                    target_y = upper
+                    offset = target_y - hoop_y
+                elif upper >= lower and target_y < lower:
+                    cap_tag = f" [capped target_y {target_y}->{lower}, bob ymin={ymin_seen}]"
+                    target_y = lower
+                    offset = target_y - hoop_y
             tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
             override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}{override_tag}, target launch y={target_y}")
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
