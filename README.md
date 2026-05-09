@@ -16,7 +16,7 @@ Below: bots for Idleon minigames. Each one captures a region of the screen, dete
 | darts    | ~30%    | Release-pose template matching fires consistently. Wind region is captured, dedup-saving distinct states builds the wind library as you play. Score-region diff per throw. Multi-template per spawn-height (the dominant accuracy variable) not yet built. |
 | chopping | ~40%    | Region picking + dual-region (bar zones + leaf track above) + leaf HSV all working. Button click is suspect — first test closed the minigame. Needs verification of the button region and a single careful re-test. |
 | catching | Scaffold| Folder + entry points (`catching`, `catching-capture`, `catching-pick-play-region`). Flappy-Bird-style: click for altitude, navigate hoops. Need fly + hoop-gap detectors before this runs — currently the detectors return None. |
-| mining   | Scaffold| Folder + entry points (`mining`, `mining-capture`, `mining-pick-play-region`). Side-scrolling cart: click to jump, click again mid-air to slam. Need cart + ore/pit detectors before this runs — currently the detectors return None. |
+| mining   | Scaffold| Folder + entry points (`mining`, `mining-observe`, `mining-capture`, `mining-pick-play-region`). Click-to-jump, click-again-to-slam. Detectors return None; play region floats with the player's world position so a fixed fractional region won't survive a position change — needs anchor-template localization first. Open work tracked under [`label:minigame:mining`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+label%3A%22minigame%3Amining%22) and `docs/mining_backlog.md`. |
 
 ## Supported platforms
 
@@ -158,9 +158,9 @@ Flappy-Bird-style: click to gain altitude, navigate the fly through a series of 
 
 ### mining
 
-Side-scrolling mining cart: cart auto-scrolls right; click to jump, click again mid-air to slam down. Land slams on ore deposits, avoid pits/traps. **Currently scaffold only** — needs cart + terrain detectors before it runs.
+Cart-jump-slam minigame, rendered as a small overlay panel anchored above the player's head. Click to jump, click again mid-air to slam down. Land slams on ore deposits, avoid pits/traps. **Currently scaffold only** — needs anchor-template localization (the play region floats with the player's world position) plus cart and terrain detectors before it runs.
 
-**Setup so far:** `mining-pick-play-region`, `mining-capture`. Capture frames during a live attempt to design ore/pit detection from real images.
+**Setup so far:** `mining-observe` (per-click frame snapshots), `mining-capture` (burst-capture frames), `mining-pick-play-region` (offline-picks from latest capture). Open work is tracked as GitHub issues under [`label:minigame:mining`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+label%3A%22minigame%3Amining%22), with deeper context in `docs/mining_backlog.md`.
 
 > Daily attempts are pooled across the in-map minigames (chopping, catching, mining, etc.). Hoops and darts use their own permanent items on individual cooldowns and don't draw from the same pool.
 
