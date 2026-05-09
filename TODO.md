@@ -1,11 +1,19 @@
 # TODO
 
-The detailed work-in-progress lists live in `docs/`:
+Most open work is tracked as GitHub issues:
+<https://github.com/jandersson/idleon-automation/issues>. Useful
+labels:
 
-- **`docs/cleanup_backlog.md`** — refactors and dead-code removal
-- **`docs/metrics_backlog.md`** — `shots.db` columns to add, OCR work
+- [`area:cleanup`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+is%3Aopen+label%3A%22area%3Acleanup%22) — refactors, dead-code removal, code follow-ups
+- [`area:metrics`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+is%3Aopen+label%3A%22area%3Ametrics%22) — `shots.db` schema, OCR replacement
+- [`minigame:hoops`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+is%3Aopen+label%3A%22minigame%3Ahoops%22) / [`minigame:mining`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+is%3Aopen+label%3A%22minigame%3Amining%22) — per-minigame work
 
-This file holds only items that don't fit those buckets.
+`docs/cleanup_backlog.md` and `docs/metrics_backlog.md` keep the
+historical record of shipped diagnostic columns and settled
+experiments.
+
+This file holds cross-cutting items, scheduled-agent IDs, and the
+recent-changes snapshot that don't fit a single issue.
 
 ## Open
 

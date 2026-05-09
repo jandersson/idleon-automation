@@ -195,9 +195,9 @@ scripts/
   dump_shots.py    snapshot shots.db → tracked JSON
   dump_idleon_save inspect the decoded Idleon save
 docs/
-  cleanup_backlog  refactors and dead-code removal
-  metrics_backlog  shots.db columns to add, OCR follow-ups
-  mining_backlog   open work for the mining bot
+  cleanup_backlog  historical record (open items → issues label:area:cleanup)
+  metrics_backlog  historical record (open items → issues label:area:metrics)
+  mining_backlog   reference frames + mechanics (open items → issues label:minigame:mining)
 ```
 
 ## Where to start (coming back to this after a while)
@@ -207,16 +207,21 @@ docs/
    findings" section (settled experiments not to redo).
 3. **`minigames/hoops/STRATEGY.md`** — end-to-end pipeline for the
    hoops bot: detect → predict → fire → validate → log → snapshot.
-4. **`TODO.md`** — open work + scheduled-agent IDs.
-5. **`docs/`** — longer-form notes and backlogs. Browseable on
-   GitHub Pages: <https://jandersson.github.io/idleon-automation/>.
-   Highlights:
+4. **GitHub Issues** — open work, labelled by area / minigame:
+   <https://github.com/jandersson/idleon-automation/issues>.
+5. **`TODO.md`** — cross-cutting open work + scheduled-agent IDs that
+   don't fit a single issue.
+6. **`docs/`** — longer-form notes and historical backlog records.
+   Browseable on GitHub Pages:
+   <https://jandersson.github.io/idleon-automation/>. Highlights:
    - **`docs/predictors.md`** — refresher notes on KNN, OLS, and the
      planned GP regression upgrade for the hoops predictor (renders
      with proper LaTeX on Pages).
    - **`docs/predictor_playground.html`** — interactive heatmap
      visualisation of the predictors over a synthetic playfield.
-   - **`docs/cleanup_backlog.md`** + **`docs/metrics_backlog.md`** —
-     small improvements queued for later.
+   - **`docs/cleanup_backlog.md`** + **`docs/metrics_backlog.md`** +
+     **`docs/mining_backlog.md`** — historical record of settled
+     conclusions and reference context. Open follow-ups live in
+     issues now.
 
 `uv run pytest` should always pass — that's the executable spec.

@@ -1,11 +1,13 @@
-# Cleanup backlog
+# Cleanup backlog (historical)
 
-Code that was added during investigation/experimentation and is now safe to
-delete. Items here exist to keep them tracked and not forgotten.
+Open follow-ups have moved to GitHub issues — see
+[`label:area:cleanup`](https://github.com/jandersson/idleon-automation/issues?q=is%3Aissue+is%3Aopen+label%3A%22area%3Acleanup%22).
+This file keeps the settled experiments and their conclusions so the
+"why" survives in repo history.
 
 ## Hoops: click-position machinery
 
-**Conclusion from experiments (2025-05-03):** click position has no
+**Conclusion from experiments (2026-05-03):** click position has no
 measurable effect on ball trajectory.
 
 - click_y sweep (170 → 490, 320px range) → ball_x_at_rim variation: 24px
@@ -17,7 +19,7 @@ The earlier "click matters" reading was confounded by perturbation-sweep
 luck and a small number of flukey makes. The clean isolation experiments
 disproved it.
 
-### Remove (done 2026-05-03)
+### Removed (2026-05-03)
 
 - [x] `CLICK_STRATEGY` constants and all branches in `_pick_click_position`
 - [x] `VARIED_CLICK_POSITIONS`, `CLICK_SWEEP_Y_OFFSETS`,
@@ -26,23 +28,6 @@ disproved it.
       removed the two click experiments from the hoops launcher entry
       (kept the general `experiments` slot for future use)
 - [x] `tests/test_click_strategy.py` deleted
-
-### Follow-ups (still open)
-
-- [ ] **DB rows from the click-sweep / click-extreme runs** — still
-      labelled `made=0` correctly thanks to OCR+trajectory validation.
-      Adding a `experiment_label` column would let the predictor exclude
-      them in case future false-positives slip through. Low priority.
-- [x] **CLAUDE.md note** — added a "Hoops: established findings" section
-      under Architecture covering click position, OCR + trajectory cross-
-      check, and pre-shot OCR flakiness.
-- [ ] **Tune `TRAJECTORY_MAKE_TOLERANCE` (currently 60px)** — only
-      relevant if we see a real make get rejected because the ball
-      detector mistracked. Worth revisiting after a few sessions of
-      data with the new validation.
-
-### Done 2026-05-03
-
 - [x] `_pick_click_position` inlined at the call site (was a one-liner)
 - [x] Launcher's `experiments` config slot removed (was empty, plus
       its `extra_env` plumbing in `_start_bot` / `_spawn`)
@@ -50,8 +35,11 @@ disproved it.
       schema, migration, dump_shots query, and tests. Old DBs still
       have the columns sitting there harmlessly (no DROP COLUMN
       migration — they take ~16 bytes per row, not worth the churn).
+- [x] **CLAUDE.md note** — added a "Hoops: established findings" section
+      under Architecture covering click position, OCR + trajectory cross-
+      check, and pre-shot OCR flakiness.
 
-### Keep
+### Kept
 
 - `click_x` / `click_y` columns in `shots.db` — still useful per-shot
   diagnostic info even if we don't vary them.
