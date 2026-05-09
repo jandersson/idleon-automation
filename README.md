@@ -79,7 +79,7 @@ Two ways to stop a running bot:
 - **Per-session logs** under `minigames/<game>/assets/logs/` capture the bot's full stdout for review.
 - **Per-shot monitor folders** (where applicable) under `minigames/<game>/assets/monitor/` save pre/post screenshots, mid-flight frames, and metadata for offline tuning.
 
-### hoops
+### 🏀 hoops
 
 Basketball minigame. Platform oscillates vertically (and horizontally at score ≥10); hoop repositions randomly between shots (and moves continuously at score ≥20). Bot detects both, fires a click when the platform crosses a target Y derived from `OFFSET_ANCHORS`. Resolution-agnostic via multi-scale `matchTemplate`. Game-start prompt detection skips counting the wake-up click; game-over detection exits cleanly with final session stats.
 
@@ -114,7 +114,7 @@ uv run hoops-pick-game-over
 - `hoops-score-calibrate` — save the score-region crop for visual verification.
 - `hoops-pick-score-region`, `hoops-pick-game-over` — one-time region/template picks.
 
-### darts
+### 🎯 darts
 
 Throwy Darts. Player teleports to a new platform position per throw; arm sweeps in a `)` arc; wind affects trajectory. Bot template-matches a `release.png` (player+arm at the captured release angle); when matchTemplate confidence peaks, fires a click. Score region diff and a wind-state library accumulate as you play.
 
@@ -133,7 +133,7 @@ Each throw saves a folder under `minigames/darts/assets/monitor/` with pre/post 
 
 **Helper scripts:** `darts-capture`, `darts-pick-release` (manual click-corners crop), `darts-auto-crop-release` (motion-detection crop), `darts-watch-wind` (standalone wind-sample collector).
 
-### chopping
+### 🪓 chopping
 
 Click "Chop" when the sliding leaf is over the green (1pt) or gold (2pt) zone. The leaf scrolls in a strip *above* the colored bar, so the bot uses two regions: a `leaf` strip (for X position) and a `bar` strip (for zone color at that X). Per community wisdom, the hitbox is the **left edge of the leaf**, not its center.
 
@@ -150,13 +150,13 @@ uv run chopping-calibrate          # dumps masks/overlays to assets/calibration/
 
 Tune `LEAF_HSV` / `GREEN_HSV` / `GOLD_HSV` / `RED_HSV_LOW` / `RED_HSV_HIGH` in `minigames/chopping/detector.py` if calibration shows a mask catching the wrong things.
 
-### catching
+### 🪰 catching
 
 Flappy-Bird-style: click to gain altitude, navigate the fly through a series of hoops. **Currently scaffold only** — needs a fly template and a working `find_next_gap` implementation before it runs.
 
 **Setup so far:** `catching-pick-play-region`, `catching-capture`. Real detector code is the next step.
 
-### mining
+### ⛏️ mining
 
 Cart-jump-slam minigame, rendered as a small overlay panel anchored above the player's head. Click to jump, click again mid-air to slam down. Land slams on ore deposits, avoid pits/traps. **Currently scaffold only** — needs anchor-template localization (the play region floats with the player's world position) plus cart and terrain detectors before it runs.
 
