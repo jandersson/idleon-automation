@@ -182,12 +182,13 @@ common/
   idleon_save.py   read & decode the local Idleon save (Haxe format)
   auto_commit.py   stage+commit+push a single file from inside a bot
   review_nag.py    "you've played N sessions since last review" nudge
-  tries_counter.py persisted shared chopping/catching tries count
+  tries_counter.py persisted shared chopping/catching/mining tries count
 minigames/
   hoops/           basketball — see minigames/hoops/STRATEGY.md
   darts/           throwy darts — release-pose template, wind capture
   chopping/        leaf+zones HSV bot, separate leaf/bar regions
   catching/        scaffold — flappy-bird-style, detectors not built
+  mining/          scaffold — cart-jump-slam, anchor-template work pending
 ui/
   launcher.py      Tk launcher: Bots / Setup / Frames tabs
 scripts/
@@ -196,6 +197,7 @@ scripts/
 docs/
   cleanup_backlog  refactors and dead-code removal
   metrics_backlog  shots.db columns to add, OCR follow-ups
+  mining_backlog   open work for the mining bot
 ```
 
 ## Where to start (coming back to this after a while)
