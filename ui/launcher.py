@@ -301,12 +301,18 @@ class Launcher:
             now = time.time()
             remaining = stored_cd - (now - save_at)
             save_age = now - save_at
+            stale = save_age > 30
             if remaining <= 0:
-                base = "ready"
+                # Don't claim "ready" off a stale snapshot — the user
+                # may have played in-game since the last flush, in
+                # which case there's an active cooldown we can't see.
+                # Verified 2026-05-10 14:49: in-game showed 219s while
+                # launcher said "ready (save 1m32s old)" — misleading.
+                base = "?" if stale else "ready"
             else:
                 m, s = divmod(int(remaining) + 1, 60)
                 base = f"{m}:{s:02d}"
-            if save_age > 30:
+            if stale:
                 am, asec = divmod(int(save_age), 60)
                 age_str = f"{am}m{asec:02d}s" if am else f"{asec}s"
                 base += f"  (save {age_str} old)"
