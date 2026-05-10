@@ -28,6 +28,10 @@ Five implementations live here so they can be swapped at the call site:
   KNN flavour, but uses a 3D GP for the landing model. Smoother fit
   than KNN in sparse 3D regions and exposes posterior variance for
   uncertainty-aware downstream logic.
+- `TrajectoryRfPredictor` — same shape, with a sklearn random forest
+  in place of GP/KNN. RFs handle interactions naturally and don't
+  extrapolate (predict mean of training samples in each leaf), which
+  is robust on small datasets but can produce step-function outputs.
 
 `fit_knn` / `fit_bivariate` / `fit_gp` / `fit_trajectory_knn` /
 `fit_trajectory_gp` are factory helpers that take the rows and return
@@ -436,6 +440,120 @@ def fit_trajectory_knn(
     )
     return TrajectoryKnnPredictor(
         points, makes=make_points, k=k, py_scan_step=py_scan_step,
+    )
+
+
+class TrajectoryRfPredictor:
+    """Random-forest variant of the trajectory predictor family.
+
+    Same external contract as TrajectoryKnnPredictor /
+    TrajectoryGpPredictor: predict(hoop_y, hoop_x) returns the
+    platform_y inside the nearby-makes envelope whose modelled landing
+    is closest to hoop_x. Internally uses a sklearn
+    RandomForestRegressor over (hoop_y, hoop_x, platform_y) →
+    ball_landing_x.
+
+    Tree ensembles handle feature interactions and noisy data well at
+    small sample sizes — a complement to GP (smooth) and KNN (local).
+    Trees produce step-function predictions, which means the scan
+    can have plateaus in pred_landing(platform_y). The argmin still
+    returns a single platform_y per call.
+    """
+
+    def __init__(
+        self,
+        points: list[tuple[float, float, float, float]],
+        makes: list[tuple[float, float, float]] | None,
+        rf,
+        py_scan_step: float = 5.0,
+        envelope_k: int = 5,
+        envelope_margin_px: float = 10.0,
+    ):
+        self.points = points
+        self.makes = makes or []
+        self._rf = rf
+        self._step = py_scan_step
+        self._envelope_k = envelope_k
+        self._envelope_margin = envelope_margin_px
+        pys = [p[2] for p in points]
+        self._py_lo = min(pys)
+        self._py_hi = max(pys)
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def _envelope(self, hoop_y: float, hoop_x: float) -> tuple[float, float]:
+        if not self.makes:
+            return self._py_lo, self._py_hi
+        nearest = sorted(
+            self.makes,
+            key=lambda m: (m[0] - hoop_y) ** 2 + (m[1] - hoop_x) ** 2,
+        )[: self._envelope_k]
+        pys = [m[2] for m in nearest]
+        lo = max(min(pys) - self._envelope_margin, self._py_lo)
+        hi = min(max(pys) + self._envelope_margin, self._py_hi)
+        return lo, hi
+
+    def predict(self, hoop_y: float, hoop_x: float) -> float:
+        import numpy as np
+
+        lo, hi = self._envelope(hoop_y, hoop_x)
+        scan_pys: list[float] = []
+        py = lo
+        while py <= hi + 1e-9:
+            scan_pys.append(py)
+            py += self._step
+        if not scan_pys:
+            return float(lo)
+        X = np.array([[hoop_y, hoop_x, py] for py in scan_pys])
+        landings = self._rf.predict(X)
+        best_py, _ = min(
+            zip(scan_pys, landings),
+            key=lambda pair: abs(pair[1] - hoop_x),
+        )
+        return float(best_py)
+
+
+def fit_trajectory_rf(
+    rows: list[tuple[float, float, float, float]],
+    makes: list[tuple[float, float, float]] | None = None,
+    min_samples: int = 12,
+    n_estimators: int = 100,
+    py_scan_step: float = 5.0,
+    random_state: int = 0,
+) -> TrajectoryRfPredictor | None:
+    """Fit a RandomForestRegressor to (hoop_y, hoop_x, platform_y) →
+    ball_landing_x. Returns None if too few samples.
+
+    Same min_samples bar (12) as fit_trajectory_gp — both work in 3D
+    with mixed make/miss data. Default n_estimators=100 (sklearn
+    default); larger forests don't help much on n~200 and double
+    fit time. random_state pinned for reproducible per-session output
+    (otherwise the scan landing-prediction is jittery between bot
+    restarts on the same data).
+    """
+    if len(rows) < min_samples:
+        return None
+    import numpy as np
+    from sklearn.ensemble import RandomForestRegressor
+
+    points = [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows
+    ]
+    X = np.array([[p[0], p[1], p[2]] for p in points])
+    y = np.array([p[3] for p in points])
+    rf = RandomForestRegressor(
+        n_estimators=n_estimators, random_state=random_state, n_jobs=-1,
+    )
+    rf.fit(X, y)
+    make_points = (
+        [(float(m[0]), float(m[1]), float(m[2])) for m in makes]
+        if makes is not None
+        else None
+    )
+    return TrajectoryRfPredictor(
+        points, makes=make_points, rf=rf, py_scan_step=py_scan_step,
     )
 
 

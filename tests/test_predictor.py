@@ -2,8 +2,10 @@
 import pytest
 
 from common.predictor import (
-    KnnPredictor, BivariatePredictor, TrajectoryKnnPredictor, TrajectoryGpPredictor,
-    fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp,
+    KnnPredictor, BivariatePredictor,
+    TrajectoryKnnPredictor, TrajectoryGpPredictor, TrajectoryRfPredictor,
+    fit_knn, fit_bivariate, fit_gp,
+    fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf,
 )
 
 
@@ -332,6 +334,54 @@ def test_trajectory_gp_matches_predictor_protocol():
     pytest.importorskip("sklearn")
     rows = _synthetic_trajectory_rows()
     pred = fit_trajectory_gp(rows, min_samples=10)
+    assert pred is not None
+    assert isinstance(pred.n, int)
+    assert isinstance(pred.predict(400, 600), float)
+
+
+def test_fit_trajectory_rf_returns_none_with_too_few_samples():
+    pytest.importorskip("sklearn")
+    rows = [(400.0, 700.0, 410.0, 690.0)] * 5
+    assert fit_trajectory_rf(rows, min_samples=12) is None
+
+
+def test_trajectory_rf_recovers_optimal_platform_y():
+    """Synthetic landing_x = hoop_x + 0.5*(py-420). Optimum is py=420."""
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_rf(rows, min_samples=10, py_scan_step=5.0)
+    assert pred is not None
+    py_pred = pred.predict(400, 600)
+    # RF makes step-function predictions; tolerate one extra step's worth
+    # of slop vs the GP test (which gets 5px).
+    assert abs(py_pred - 420.0) <= 10.0
+
+
+def test_trajectory_rf_envelope_clamps_scan_to_nearby_makes():
+    pytest.importorskip("sklearn")
+    rows: list[tuple[float, float, float, float]] = []
+    for hoop_y in (380.0, 400.0, 420.0):
+        for hoop_x in (600.0, 650.0, 700.0):
+            for py in range(300, 510, 10):
+                landing = hoop_x + (py - 405) * 1.5
+                rows.append((hoop_y, hoop_x, float(py), landing))
+    makes = [
+        (400.0, 650.0, 445.0),
+        (400.0, 650.0, 450.0),
+        (400.0, 650.0, 455.0),
+        (400.0, 650.0, 460.0),
+        (400.0, 650.0, 440.0),
+    ]
+    pred = fit_trajectory_rf(rows, makes=makes, min_samples=10)
+    assert pred is not None
+    py = pred.predict(400, 650)
+    assert 430.0 <= py <= 470.0
+
+
+def test_trajectory_rf_matches_predictor_protocol():
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_rf(rows, min_samples=10)
     assert pred is not None
     assert isinstance(pred.n, int)
     assert isinstance(pred.predict(400, 600), float)
