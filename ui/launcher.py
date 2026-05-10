@@ -118,6 +118,10 @@ class Launcher:
         # display ticks down live between save refreshes (the save only
         # flushes on certain in-game triggers, not continuously).
         self.hoops_cooldown_snapshot: tuple[float, float] | None = None
+        # Last-seen save file mtime, so the periodic display loop can
+        # re-pull when Idleon writes a fresh save (e.g. after a hoops
+        # session ends in-game and the cooldown jumps to its full value).
+        self.last_save_mtime: float = 0.0
 
         # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
         self.frame_images: list[ImageTk.PhotoImage] = []
@@ -261,14 +265,32 @@ class Launcher:
             parts.append(f"{kind} {makes}/{shots} ({rate:.0%})")
         self.hoops_stats_label.config(text="  ".join(parts))
 
+    def _save_mtime(self) -> float:
+        """Newest mtime among the LevelDB save files, or 0 if unreachable."""
+        import os, glob
+        save_dir = os.path.expandvars(r"%APPDATA%\legends-of-idleon\Local Storage\leveldb")
+        try:
+            files = glob.glob(os.path.join(save_dir, "*.log")) + glob.glob(os.path.join(save_dir, "*.ldb"))
+            return max((os.path.getmtime(p) for p in files), default=0.0)
+        except OSError:
+            return 0.0
+
     def _tick_hoops_display(self) -> None:
         """Update the hoops cooldown label, extrapolating from the last
         save-read snapshot. Re-arms itself once a second.
 
         The cooldown is account-wide (shared across all characters), so
-        we show one number, not a per-character breakdown.
+        we show one number, not a per-character breakdown. If Idleon
+        wrote a fresh save since the last snapshot (mtime advanced),
+        re-pull — this catches the cooldown jump after a hoops session
+        ends without waiting for the user to hit Refresh.
         """
         import time
+        # Save-mtime watcher: re-pull when Idleon flushes a new save.
+        mtime = self._save_mtime()
+        if mtime > self.last_save_mtime:
+            self.last_save_mtime = mtime
+            self._refresh_tries(silent=True)
         snap = self.hoops_cooldown_snapshot
         if snap is None:
             self.hoops_label.config(text="—")
@@ -538,8 +560,11 @@ class Launcher:
             self.log_queue.put(("status", track_as, "stopped", "grey"))
             self.processes[track_as] = None
             if track_as == "hoops":
-                # Hoops session just ended — fresh stats are in shots.db.
+                # Hoops session just ended — fresh stats are in shots.db,
+                # and the in-game cooldown just got reset (though Idleon
+                # may not flush the save to disk for a few more seconds).
                 self.log_queue.put(("refresh_hoops_stats",))
+                self.log_queue.put(("refresh_tries",))
         if entry_point in self.setup_buttons:
             self.log_queue.put(("setup_done", entry_point))
 
@@ -562,6 +587,8 @@ class Launcher:
                             btn.config(state="normal", text=label)
                     elif item[0] == "refresh_hoops_stats":
                         self._refresh_hoops_stats()
+                    elif item[0] == "refresh_tries":
+                        self._refresh_tries(silent=True)
                 else:
                     self._append_log(str(item))
         except queue.Empty:
