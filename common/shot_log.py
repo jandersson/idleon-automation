@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS shots (
     time_since_last_shot_ms INTEGER,
     ball_flight_ms INTEGER,
     bob_ymin INTEGER,
-    bob_ymax INTEGER
+    bob_ymax INTEGER,
+    bob_period_ms INTEGER
 )
 """
 
@@ -110,6 +111,7 @@ _LATE_COLUMNS = [
     ("ball_flight_ms", "INTEGER"),       # first-detected to last-detected across flight frames
     ("bob_ymin", "INTEGER"),             # observed platform_y range at fire time
     ("bob_ymax", "INTEGER"),
+    ("bob_period_ms", "INTEGER"),        # mean ms between consecutive bob peaks (#13)
 ]
 
 

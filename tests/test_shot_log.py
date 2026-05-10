@@ -21,7 +21,7 @@ def test_open_db_creates_schema(tmp_path):
     conn.close()
     assert "shots" in tables
     for col in ("rim_match_scale", "time_since_last_shot_ms",
-                "ball_flight_ms", "bob_ymin", "bob_ymax"):
+                "ball_flight_ms", "bob_ymin", "bob_ymax", "bob_period_ms"):
         assert col in cols, f"missing column {col!r}"
 
 
@@ -46,13 +46,14 @@ def test_late_column_migration_on_existing_db(tmp_path):
         conn, session_started="x", hoop_x=700,
         rim_match_scale=0.92, time_since_last_shot_ms=1234,
         ball_flight_ms=2900, bob_ymin=290, bob_ymax=510,
+        bob_period_ms=410,
     )
     row = conn.execute(
         "SELECT rim_match_scale, time_since_last_shot_ms, ball_flight_ms, "
-        "bob_ymin, bob_ymax FROM shots"
+        "bob_ymin, bob_ymax, bob_period_ms FROM shots"
     ).fetchone()
     conn.close()
-    assert row == (0.92, 1234, 2900, 290, 510)
+    assert row == (0.92, 1234, 2900, 290, 510, 410)
 
 
 def test_log_shot_inserts_partial_row(tmp_path):

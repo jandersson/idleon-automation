@@ -86,6 +86,43 @@ def _compute_offset(hoop_y: int, hoop_x: int, predictor) -> int:
 PERTURBATION_BOB_MARGIN = 5  # px
 
 
+def _estimate_bob_period_ms(
+    samples: list[tuple[float, int, int]],
+    min_prominence_px: int = 8,
+    window: int = 5,
+) -> int | None:
+    """Mean ms between consecutive bob peaks in (timestamp, px, py) samples.
+
+    Detects local maxima in the py series (largest y is the bottom of
+    the bob, since y grows downward) and averages the time deltas
+    between consecutive peaks. Returns None when fewer than 2 distinct
+    peaks are visible — typically because the buffer is too short or
+    the platform isn't moving (e.g. clamped at an extreme).
+
+    `min_prominence_px` rejects spurious peaks created by detector
+    jitter: a real peak must rise at least N px from the local minima
+    on either side within `window` samples.
+    """
+    if len(samples) < 5:
+        return None
+    pys = [s[2] for s in samples]
+    n = len(pys)
+    peak_times: list[float] = []
+    for i in range(1, n - 1):
+        if pys[i] > pys[i - 1] and pys[i] >= pys[i + 1]:
+            left = pys[max(0, i - window): i]
+            right = pys[i + 1: min(n, i + window + 1)]
+            left_min = min(left) if left else pys[i]
+            right_min = min(right) if right else pys[i]
+            prominence = pys[i] - max(left_min, right_min)
+            if prominence >= min_prominence_px:
+                peak_times.append(samples[i][0])
+    if len(peak_times) < 2:
+        return None
+    deltas = [peak_times[k + 1] - peak_times[k] for k in range(len(peak_times) - 1)]
+    return int(sum(deltas) / len(deltas) * 1000)
+
+
 PERTURBATION_SEQUENCE = [
     0, -8, 8, -16, 16, -24, 24, -32, 32,
     -48, 48, -64, 64, -80, 80,
@@ -497,10 +534,12 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     hoop_conf_last: float = 0.0  # carries to shot_log row
     hoop_scale_last: float = 0.0  # rim_match_scale, carries to shot_log row
     last_fired_at_ms: float | None = None  # for time_since_last_shot_ms
+    # range_samples is (timestamp, px, py) — the timestamp lets us
+    # estimate bob_period_ms via _estimate_bob_period_ms.
     hoop_missing_since: float | None = None  # for exit-when-stuck
     x_samples: list[int] = []
     home_x: int | None = None
-    range_samples: deque[tuple[int, int]] = deque(maxlen=200)  # (px, py) for range diagnostics
+    range_samples: deque[tuple[float, int, int]] = deque(maxlen=200)  # (ts, px, py) for range + period diagnostics
     last_range_log = time.time()
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0, "session_score": 0}
@@ -573,7 +612,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             # bob ymax=510, never fired).
             cap_tag = ""
             if len(range_samples) >= 40:
-                ys_seen = [p[1] for p in range_samples]
+                ys_seen = [p[2] for p in range_samples]
                 ymin_seen, ymax_seen = min(ys_seen), max(ys_seen)
                 upper = ymax_seen - PERTURBATION_BOB_MARGIN
                 lower = ymin_seen + PERTURBATION_BOB_MARGIN
@@ -596,11 +635,11 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
 
         px, py = platform_pos
         platform_history.append(py)
-        range_samples.append((px, py))
+        range_samples.append((time.time(), px, py))
 
         if time.time() - last_range_log > 3.0 and range_samples:
-            xs = [p[0] for p in range_samples]
-            ys = [p[1] for p in range_samples]
+            xs = [p[1] for p in range_samples]
+            ys = [p[2] for p in range_samples]
             print(f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, y={min(ys)}..{max(ys)}, target_y={target_y}")
             last_range_log = time.time()
 
@@ -620,7 +659,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         effective_target_y = target_y
         clamped = False
         if len(range_samples) >= 40:
-            ys = [p[1] for p in range_samples]
+            ys = [p[2] for p in range_samples]
             ymin, ymax = min(ys), max(ys)
             if target_y > ymax:
                 effective_target_y = ymax
@@ -785,12 +824,14 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 if lives_before is not None and lives_after is not None:
                     if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
                         _, lives_diff_value = score_changed(lives_before, lives_after)
-                # Capture bob range from the recent platform samples for #16.
+                # Capture bob range from the recent platform samples for #16
+                # and the bob period for #13.
                 bob_ymin = bob_ymax = None
                 if len(range_samples) >= 10:
-                    ys_at_fire = [p[1] for p in range_samples]
+                    ys_at_fire = [p[2] for p in range_samples]
                     bob_ymin = int(min(ys_at_fire))
                     bob_ymax = int(max(ys_at_fire))
+                bob_period_ms_value = _estimate_bob_period_ms(list(range_samples))
                 log_shot(
                     shot_db,
                     session_started=session_started,
@@ -829,6 +870,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     ball_flight_ms=trajectory.get("ball_flight_ms"),
                     bob_ymin=bob_ymin,
                     bob_ymax=bob_ymax,
+                    bob_period_ms=bob_period_ms_value,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

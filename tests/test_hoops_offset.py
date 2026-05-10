@@ -147,6 +147,44 @@ def test_log_shot_prompt_disappeared_overrides_trajectory_rejection():
     assert stats["session_score"] == 1
 
 
+def test_estimate_bob_period_returns_none_for_short_buffer():
+    from minigames.hoops.main import _estimate_bob_period_ms
+    assert _estimate_bob_period_ms([(0.0, 136, 400)]) is None
+
+
+def test_estimate_bob_period_recovers_known_period_from_synthetic_sine():
+    """Build a 200ms-period sinusoid sampled at 10ms intervals; the
+    detector should return ~200ms ± a small margin."""
+    import math
+    from minigames.hoops.main import _estimate_bob_period_ms
+    samples = []
+    for i in range(60):
+        t = i * 0.010
+        py = int(400 + 80 * math.sin(2 * math.pi * t / 0.200))
+        samples.append((t, 136, py))
+    period_ms = _estimate_bob_period_ms(samples)
+    assert period_ms is not None
+    assert 180 <= period_ms <= 220, f"got {period_ms}"
+
+
+def test_estimate_bob_period_returns_none_for_flat_signal():
+    """A platform stuck at one y (e.g. clamped at the bob extreme) has
+    no peaks and no period."""
+    from minigames.hoops.main import _estimate_bob_period_ms
+    samples = [(i * 0.01, 136, 510) for i in range(60)]
+    assert _estimate_bob_period_ms(samples) is None
+
+
+def test_estimate_bob_period_filters_jitter_below_prominence():
+    """A signal with only ±2px jitter (no real bob) must not produce a
+    spurious period — min_prominence_px=8 default cuts those."""
+    import random
+    from minigames.hoops.main import _estimate_bob_period_ms
+    rng = random.Random(0)
+    samples = [(i * 0.01, 136, 400 + rng.randint(-2, 2)) for i in range(60)]
+    assert _estimate_bob_period_ms(samples) is None
+
+
 def test_log_shot_prompt_alone_does_not_create_make_without_score_increment():
     """The prompt-disappearance signal is only used to override the
     trajectory check. If OCR shows no score change at all, we still
