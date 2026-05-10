@@ -20,6 +20,7 @@ from PIL import Image, ImageTk
 
 from common import tries_counter
 from common.idleon_save import read_minigame_plays, read_hoops_cooldown
+from common import hoops_cooldown_state
 
 PROJECT_ROOT = Path(__file__).parent.parent
 MINIGAMES_DIR = PROJECT_ROOT / "minigames"
@@ -278,20 +279,18 @@ class Launcher:
             return 0.0
 
     def _tick_hoops_display(self) -> None:
-        """Update the hoops cooldown label, extrapolating from the last
-        save-read snapshot. Re-arms itself once a second.
+        """Update the hoops cooldown label, extrapolating from whichever
+        source has the most recent cooldown set: the save snapshot or
+        the client-side state file written when the bot finishes a
+        hoops session. Re-arms itself once a second.
 
-        The cooldown is account-wide (shared across all characters), so
-        we show one number, not a per-character breakdown. If Idleon
-        wrote a fresh save since the last snapshot (mtime advanced),
-        re-pull — this catches the cooldown jump after a hoops session
-        ends without waiting for the user to hit Refresh.
-
-        When the save is more than ~30s old, the displayed value may
-        not reflect a more-recent in-game change (Idleon doesn't always
-        flush immediately after a hoops play). Surface that with a
-        "stale" suffix so the user knows the display can't be trusted
-        for "ready" claims until the save catches up.
+        Picking the source with the higher remaining is equivalent to
+        picking the one whose cooldown was set most recently — so a
+        bot-finished play immediately reflects in the display, even
+        though Idleon hasn't flushed that play to disk yet. The save
+        wins back over once Idleon flushes (e.g. on character switch),
+        which is correct since the save is then both more recent and
+        ground-truth.
         """
         import time
         # Save-mtime watcher: re-pull when Idleon flushes a new save.
@@ -299,21 +298,32 @@ class Launcher:
         if mtime > self.last_save_mtime:
             self.last_save_mtime = mtime
             self._refresh_tries(silent=True)
+        now = time.time()
+        candidates: list[tuple[str, float, float]] = []  # (source, remaining, age)
         snap = self.hoops_cooldown_snapshot
-        if snap is None:
+        if snap is not None:
+            save_at, stored_cd = snap
+            candidates.append(("save", stored_cd - (now - save_at), now - save_at))
+        client = hoops_cooldown_state.read()
+        if client is not None:
+            elapsed = now - float(client["set_at"])
+            candidates.append(
+                ("client", float(client["duration_seconds"]) - elapsed, elapsed)
+            )
+        if not candidates:
             self.hoops_label.config(text="—")
         else:
-            save_at, stored_cd = snap
-            now = time.time()
-            remaining = stored_cd - (now - save_at)
-            save_age = now - save_at
+            # Most-recently-set cooldown wins (= largest remaining).
+            source, remaining, age = max(candidates, key=lambda t: t[1])
             if remaining <= 0:
                 base = "ready"
             else:
                 m, s = divmod(int(remaining) + 1, 60)
                 base = f"{m}:{s:02d}"
-            if save_age > 30:
-                am, asec = divmod(int(save_age), 60)
+            # Only flag staleness when the save is the chosen source AND
+            # it's old. Client-side data is always fresh by construction.
+            if source == "save" and age > 30:
+                am, asec = divmod(int(age), 60)
                 age_str = f"{am}m{asec:02d}s" if am else f"{asec}s"
                 base += f"  (save {age_str} old)"
             self.hoops_label.config(text=base)
@@ -582,6 +592,13 @@ class Launcher:
                 # Hoops session just ended — fresh stats are in shots.db,
                 # and the in-game cooldown just got reset (though Idleon
                 # may not flush the save to disk for a few more seconds).
+                # Stamp client-side cooldown state immediately so the
+                # display reflects the just-played state without waiting
+                # for the save flush.
+                try:
+                    hoops_cooldown_state.write_set_now()
+                except OSError as e:
+                    self.log_queue.put(f"[launcher] couldn't write hoops cooldown state: {e}\n")
                 self.log_queue.put(("refresh_hoops_stats",))
                 self.log_queue.put(("refresh_tries",))
         if entry_point in self.setup_buttons:
