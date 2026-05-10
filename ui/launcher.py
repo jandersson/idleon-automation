@@ -223,7 +223,8 @@ class Launcher:
         ttk.Button(strip, text="Refresh", width=8,
                    command=self._refresh_tries).pack(side="left")
 
-        ttk.Label(strip, text="🏀 Cooldown:").pack(side="left", padx=(16, 4))
+        # 🚧 = save-flush timing makes this unreliable; see GitHub #22.
+        ttk.Label(strip, text="🏀 Cooldown 🚧:").pack(side="left", padx=(16, 4))
         self.hoops_label = ttk.Label(
             strip, text="—", font=("Segoe UI", 10, "bold"),
         )
