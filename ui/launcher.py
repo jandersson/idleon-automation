@@ -112,9 +112,10 @@ class Launcher:
         # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
         # currently-selected option value for that minigame's bot.
         self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
-        # Hoops predictor comparison label (per-predictor make rate); populated
-        # at launcher start and refreshed when a hoops session ends.
-        self.hoops_stats_label: ttk.Label | None = None
+        # Hoops predictor comparison cards (Pokemon-style, one per kind).
+        # Map predictor_kind -> dict of widget refs for fast updating.
+        # Built in _build_bots_tab when the hoops row is constructed.
+        self.predictor_cards: dict[str, dict] = {}
         # Snapshot of the shared hoops cooldown anchored to the save
         # mtime it came from: (save_mtime, cd_at_save_time). The display
         # extrapolates remaining = cd - (now - save_mtime). Anchoring
@@ -182,16 +183,19 @@ class Launcher:
                     values=opt["values"], width=max(len(v) for v in opt["values"]) + 2,
                 ).pack(side="left")
 
-            # Hoops gets a per-predictor stats line under the controls so we
-            # can A/B compare gp vs trajectory_knn at a glance — see GitHub
-            # issue #21. Other minigames don't have a comparable signal yet.
+            # Hoops gets a Pokemon-style stat-card row, one per predictor
+            # — see GitHub issue #21. Each card shows Lv (sessions),
+            # HP-bar (make rate), and shots/makes. Active predictor
+            # (matching the dropdown) is highlighted. Other minigames
+            # don't have a comparable signal yet.
             if mg["name"] == "hoops":
-                self.hoops_stats_label = ttk.Label(
-                    frame, text="", foreground="grey",
-                    font=("Segoe UI", 9),
-                )
-                self.hoops_stats_label.pack(fill="x", pady=(4, 0))
+                self._build_predictor_cards(frame)
                 self._refresh_hoops_stats()
+                # Re-highlight the active card whenever the dropdown changes.
+                pred_var = self.bot_option_vars.get((mg["name"], "HOOPS_PREDICTOR_KIND"))
+                if pred_var is not None:
+                    pred_var.trace_add("write", lambda *_a: self._highlight_active_predictor())
+                self._highlight_active_predictor()
 
         log_frame = ttk.LabelFrame(parent, text="Log", padding=4)
         log_frame.grid(row=len(MINIGAMES) + 1, column=0, sticky="nsew", padx=8, pady=(4, 8))
@@ -237,37 +241,99 @@ class Launcher:
         self._tick_hoops_display()
         return strip
 
+    # Predictor "cards" — one per kind in the launcher's hoops row.
+    # Type colors are arbitrary but consistent (each model gets one).
+    _PREDICTOR_CARD_SPECS = [
+        ("gp",             "🧠", "GP",     "#7B68EE"),
+        ("knn",            "🎯", "KNN",    "#4682B4"),
+        ("bivariate",      "📐", "Biv",    "#808080"),
+        ("trajectory_knn", "📍", "T-KNN",  "#FF8C00"),
+        ("trajectory_gp",  "🌐", "T-GP",   "#DAA520"),
+        ("trajectory_rf",  "🌲", "T-RF",   "#228B22"),
+    ]
+
+    def _build_predictor_cards(self, parent: ttk.Frame) -> None:
+        """Build a horizontal row of stat cards, one per predictor kind."""
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(6, 0))
+        for kind, emoji, label, color in self._PREDICTOR_CARD_SPECS:
+            # tk.Frame (not ttk) so we can set a per-card background and
+            # a coloured border via highlightbackground for the "active"
+            # outline. ttk.Frame styling is more painful for this.
+            card = tk.Frame(
+                row, relief="solid", borderwidth=1, padx=6, pady=4,
+                highlightthickness=2, highlightbackground="#444",
+                bg="#222",
+            )
+            card.pack(side="left", padx=2)
+            name = tk.Label(
+                card, text=f"{emoji} {label}", fg=color, bg="#222",
+                font=("Segoe UI", 9, "bold"),
+            )
+            name.pack()
+            lv = tk.Label(card, text="Lv 0", fg="#bbb", bg="#222",
+                          font=("Segoe UI", 8))
+            lv.pack()
+            hp = ttk.Progressbar(card, length=80, mode="determinate", maximum=100)
+            hp.pack(pady=(2, 1))
+            rate = tk.Label(card, text="0/0", fg="#888", bg="#222",
+                            font=("Consolas", 8))
+            rate.pack()
+            self.predictor_cards[kind] = {
+                "card": card, "lv": lv, "hp": hp, "rate": rate,
+                "color": color,
+            }
+
     def _refresh_hoops_stats(self) -> None:
-        """Update the predictor-comparison label from shots.db. Cheap query
-        (one GROUP BY over a 400-row table); called on launcher start and
-        whenever a hoops session ends."""
-        if self.hoops_stats_label is None:
+        """Pull per-predictor stats from shots.db and update each card.
+        Cheap query (one GROUP BY over a few-hundred-row table); called
+        on launcher start and whenever a hoops session ends."""
+        if not self.predictor_cards:
             return
         import sqlite3
         db_path = MINIGAMES_DIR / "hoops" / "assets" / "shots.db"
-        if not db_path.exists():
-            self.hoops_stats_label.config(text="(no shots.db yet)")
+        per_kind: dict[str, tuple[int, int, int]] = {}  # kind -> (sessions, shots, makes)
+        if db_path.exists():
+            try:
+                con = sqlite3.connect(str(db_path))
+                rows = con.execute(
+                    "SELECT predictor_kind, COUNT(DISTINCT session_started), "
+                    "COUNT(*), SUM(made) "
+                    "FROM shots WHERE direction='up' AND predictor_kind IS NOT NULL "
+                    "GROUP BY predictor_kind"
+                ).fetchall()
+                con.close()
+                for kind, sessions, shots, makes in rows:
+                    per_kind[kind] = (int(sessions), int(shots), int(makes or 0))
+            except sqlite3.Error:
+                pass  # leave cards in their default state
+        for kind, widgets in self.predictor_cards.items():
+            sessions, shots, makes = per_kind.get(kind, (0, 0, 0))
+            rate_pct = int(round(100 * makes / shots)) if shots else 0
+            widgets["lv"].config(text=f"Lv {sessions}")
+            widgets["hp"]["value"] = rate_pct
+            if shots:
+                widgets["rate"].config(text=f"{makes}/{shots}  {rate_pct}%",
+                                       fg="#ddd")
+            else:
+                widgets["rate"].config(text="—", fg="#666")
+
+    def _highlight_active_predictor(self) -> None:
+        """Outline the predictor card that matches the launcher's
+        Predictor dropdown selection."""
+        if not self.predictor_cards:
             return
-        try:
-            con = sqlite3.connect(str(db_path))
-            rows = con.execute(
-                "SELECT predictor_kind, COUNT(*), SUM(made) "
-                "FROM shots WHERE direction='up' AND predictor_kind IS NOT NULL "
-                "GROUP BY predictor_kind ORDER BY predictor_kind"
-            ).fetchall()
-            con.close()
-        except sqlite3.Error as e:
-            self.hoops_stats_label.config(text=f"(stats error: {e})")
-            return
-        if not rows:
-            self.hoops_stats_label.config(text="(no labelled shots yet)")
-            return
-        parts = []
-        for kind, shots, makes in rows:
-            makes = makes or 0
-            rate = makes / shots if shots else 0
-            parts.append(f"{kind} {makes}/{shots} ({rate:.0%})")
-        self.hoops_stats_label.config(text="  ".join(parts))
+        active = ""
+        var = self.bot_option_vars.get(("hoops", "HOOPS_PREDICTOR_KIND"))
+        if var is not None:
+            active = var.get()
+        for kind, widgets in self.predictor_cards.items():
+            if kind == active:
+                widgets["card"].config(highlightbackground=widgets["color"],
+                                       highlightthickness=2)
+            else:
+                widgets["card"].config(highlightbackground="#444",
+                                       highlightthickness=2)
 
     def _save_mtime(self) -> float:
         """Newest mtime among the LevelDB save files, or 0 if unreachable."""
