@@ -114,9 +114,11 @@ class Launcher:
         # Hoops predictor comparison label (per-predictor make rate); populated
         # at launcher start and refreshed when a hoops session ends.
         self.hoops_stats_label: ttk.Label | None = None
-        # Snapshot of the shared hoops cooldown + when we read it, so the
-        # display ticks down live between save refreshes (the save only
-        # flushes on certain in-game triggers, not continuously).
+        # Snapshot of the shared hoops cooldown anchored to the save
+        # mtime it came from: (save_mtime, cd_at_save_time). The display
+        # extrapolates remaining = cd - (now - save_mtime). Anchoring
+        # to save_mtime (not read time) keeps the math correct across
+        # save flushes and surfaces save-staleness as a separate signal.
         self.hoops_cooldown_snapshot: tuple[float, float] | None = None
         # Last-seen save file mtime, so the periodic display loop can
         # re-pull when Idleon writes a fresh save (e.g. after a hoops
@@ -284,6 +286,12 @@ class Launcher:
         wrote a fresh save since the last snapshot (mtime advanced),
         re-pull — this catches the cooldown jump after a hoops session
         ends without waiting for the user to hit Refresh.
+
+        When the save is more than ~30s old, the displayed value may
+        not reflect a more-recent in-game change (Idleon doesn't always
+        flush immediately after a hoops play). Surface that with a
+        "stale" suffix so the user knows the display can't be trusted
+        for "ready" claims until the save catches up.
         """
         import time
         # Save-mtime watcher: re-pull when Idleon flushes a new save.
@@ -295,20 +303,31 @@ class Launcher:
         if snap is None:
             self.hoops_label.config(text="—")
         else:
-            read_at, stored_cd = snap
-            remaining = stored_cd - (time.time() - read_at)
+            save_at, stored_cd = snap
+            now = time.time()
+            remaining = stored_cd - (now - save_at)
+            save_age = now - save_at
             if remaining <= 0:
-                self.hoops_label.config(text="ready")
+                base = "ready"
             else:
-                m, s = divmod(int(remaining) + 1, 60)  # round up the visible second
-                self.hoops_label.config(text=f"{m}:{s:02d}")
+                m, s = divmod(int(remaining) + 1, 60)
+                base = f"{m}:{s:02d}"
+            if save_age > 30:
+                am, asec = divmod(int(save_age), 60)
+                age_str = f"{am}m{asec:02d}s" if am else f"{asec}s"
+                base += f"  (save {age_str} old)"
+            self.hoops_label.config(text=base)
         self.root.after(1000, self._tick_hoops_display)
 
     def _refresh_tries(self, silent: bool = False) -> None:
         import time
         cd = read_hoops_cooldown()
         if cd is not None:
-            self.hoops_cooldown_snapshot = (time.time(), cd)
+            # Anchor the snapshot to the save mtime, not the read time:
+            # the cd value reflects the cooldown *at save time*, so
+            # extrapolating from save_mtime keeps the math exact.
+            anchor = self._save_mtime() or time.time()
+            self.hoops_cooldown_snapshot = (anchor, cd)
         plays = read_minigame_plays()
         if plays is None:
             self.tries_label.config(text="(save not found)")
