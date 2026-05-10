@@ -15,7 +15,7 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import open_db, log_shot, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE
-from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn
+from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -126,6 +126,11 @@ Y_TOLERANCE = 6
 #                       and picks the one whose modelled landing_x is
 #                       closest to hoop_x. Lets the predictor learn from
 #                       misses as well as makes. See GitHub issue #17.
+#   "trajectory_gp"   — Same trajectory-regression shape as
+#                       trajectory_knn but uses a 3D GP for the landing
+#                       surface. Smoother fit than KNN in sparse 3D
+#                       regions; exposes posterior variance for future
+#                       uncertainty-aware logic. See GitHub issue #21.
 #
 # The launcher's Bots tab exposes a Predictor dropdown that sets the
 # HOOPS_PREDICTOR_KIND env var; this constant is the default when the
@@ -424,18 +429,17 @@ def run():
             print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
         try:
-            if PREDICTOR_KIND == "trajectory_knn":
-                # Trajectory predictor learns from every shot (make or
-                # miss), so it pulls a different schema (4-tuple including
-                # ball_landing_x). Uses fetch_clean_trajectories rather
-                # than fetch_shots so rim/backboard-bounce rows are
-                # filtered out — they pollute the regression target.
-                # Also passes the makes list so predict() clamps its
-                # scan to the nearby-makes envelope (issue #19) instead
-                # of saturating at the bob extremes.
+            if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp"):
+                # Both trajectory predictors learn from every shot (make
+                # or miss) and use the same input schema (4-tuple with
+                # ball_landing_x) and envelope clamp from nearby makes.
+                # Pull the data once and dispatch on KIND.
                 rows = fetch_clean_trajectories(shot_db, REQUIRED_DIRECTION)
                 makes = fetch_makes(shot_db, REQUIRED_DIRECTION)
-                predictor = fit_trajectory_knn(rows, makes=makes, k=5)
+                if PREDICTOR_KIND == "trajectory_knn":
+                    predictor = fit_trajectory_knn(rows, makes=makes, k=5)
+                else:
+                    predictor = fit_trajectory_gp(rows, makes=makes)
             else:
                 rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
                 if PREDICTOR_KIND == "knn":
@@ -455,7 +459,7 @@ def run():
             if predictor is None:
                 print(f"No predictor fit ({PREDICTOR_KIND!r}, too few samples in dir={REQUIRED_DIRECTION!r}); using cold-start offset={COLD_START_OFFSET}")
             else:
-                sample_kind = "shots" if PREDICTOR_KIND == "trajectory_knn" else "makes"
+                sample_kind = "shots" if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp") else "makes"
                 print(f"{PREDICTOR_KIND.upper()} target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} {sample_kind})")
             _run_inner(session_started, shot_db, predictor, code_commit)
         finally:

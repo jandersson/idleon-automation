@@ -2,8 +2,8 @@
 import pytest
 
 from common.predictor import (
-    KnnPredictor, BivariatePredictor, TrajectoryKnnPredictor,
-    fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn,
+    KnnPredictor, BivariatePredictor, TrajectoryKnnPredictor, TrajectoryGpPredictor,
+    fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp,
 )
 
 
@@ -270,6 +270,71 @@ def test_trajectory_knn_envelope_per_query():
     # low cluster, 470..490 for the high cluster, ±10 px margin).
     assert 340.0 <= py_low_cluster <= 380.0
     assert 460.0 <= py_high_cluster <= 500.0
+
+
+def test_fit_trajectory_gp_returns_none_with_too_few_samples():
+    pytest.importorskip("sklearn")
+    rows = [(400.0, 700.0, 410.0, 690.0)] * 5
+    assert fit_trajectory_gp(rows, min_samples=12) is None
+
+
+def test_trajectory_gp_recovers_optimal_platform_y():
+    """Synthetic data where landing_x = hoop_x + 0.5*(py-420). The
+    optimal py for landing == hoop_x is 420. The GP scan should find
+    it within one step at a query point dense in training data."""
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_gp(rows, min_samples=10, py_scan_step=5.0)
+    assert pred is not None
+    py_pred = pred.predict(400, 600)
+    assert abs(py_pred - 420.0) <= 5.0
+
+
+def test_trajectory_gp_envelope_clamps_scan_to_nearby_makes():
+    """As with TrajectoryKnnPredictor: when nearby makes are concentrated
+    in a tight platform_y band, the scan stays in that band even when
+    the model surface would otherwise let an extreme py 'win' on
+    landing match."""
+    pytest.importorskip("sklearn")
+    rows: list[tuple[float, float, float, float]] = []
+    for hoop_y in (380.0, 400.0, 420.0):
+        for hoop_x in (600.0, 650.0, 700.0):
+            for py in range(300, 510, 10):
+                landing = hoop_x + (py - 405) * 1.5
+                rows.append((hoop_y, hoop_x, float(py), landing))
+    makes = [
+        (400.0, 650.0, 445.0),
+        (400.0, 650.0, 450.0),
+        (400.0, 650.0, 455.0),
+        (400.0, 650.0, 460.0),
+        (400.0, 650.0, 440.0),
+    ]
+    pred = fit_trajectory_gp(rows, makes=makes, min_samples=10)
+    assert pred is not None
+    py = pred.predict(400, 650)
+    assert 430.0 <= py <= 470.0
+
+
+def test_trajectory_gp_predict_landing_with_std_returns_two_floats():
+    """Posterior (mean, std) at a training-near point — both finite,
+    std non-negative."""
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_gp(rows, min_samples=10)
+    assert pred is not None
+    mu, std = pred.predict_landing_with_std(400, 600, 420)
+    assert isinstance(mu, float) and isinstance(std, float)
+    assert std >= 0
+
+
+def test_trajectory_gp_matches_predictor_protocol():
+    """Same .n / .predict surface as the other predictors."""
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_gp(rows, min_samples=10)
+    assert pred is not None
+    assert isinstance(pred.n, int)
+    assert isinstance(pred.predict(400, 600), float)
 
 
 def test_trajectory_knn_matches_predictor_protocol():

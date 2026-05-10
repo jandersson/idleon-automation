@@ -5,7 +5,7 @@ Most predictors here are fit on a list of past *makes* —
 `predict(hoop_y, hoop_x) -> float` returning the predicted optimal
 `platform_y` (i.e. the value the caller should aim `target_y` at).
 
-Four implementations live here so they can be swapped at the call site:
+Five implementations live here so they can be swapped at the call site:
 
 - `KnnPredictor` — inverse-distance-weighted KNN over past makes.
   Adapts to local curvature in the (hoop_y, hoop_x) → optimal_py
@@ -24,12 +24,17 @@ Four implementations live here so they can be swapped at the call site:
   range and returns the one whose modelled landing is closest to the
   hoop. Lets the predictor learn from misses, not just makes — see
   GitHub issue #17.
+- `TrajectoryGpPredictor` — same trajectory-regression shape as the
+  KNN flavour, but uses a 3D GP for the landing model. Smoother fit
+  than KNN in sparse 3D regions and exposes posterior variance for
+  uncertainty-aware downstream logic.
 
-`fit_knn` / `fit_bivariate` / `fit_gp` / `fit_trajectory_knn` are
-factory helpers that take the rows and return a fitted predictor (or
-None if too few samples). The first three take `fetch_makes` rows; the
-trajectory one takes `fetch_shots` rows (4-tuples including
-`ball_landing_x`).
+`fit_knn` / `fit_bivariate` / `fit_gp` / `fit_trajectory_knn` /
+`fit_trajectory_gp` are factory helpers that take the rows and return
+a fitted predictor (or None if too few samples). The first three take
+`fetch_makes` rows; the trajectory ones take `fetch_clean_trajectories`
+rows (4-tuples including `ball_landing_x`) plus the make rows for the
+envelope clamp.
 
 For algorithm refreshers (KNN, OLS, GP), see `docs/predictors.md` (or
 https://jandersson.github.io/idleon-automation/predictors.html for
@@ -316,6 +321,92 @@ def fit_gp(
     return GpPredictor(points, gp)
 
 
+class TrajectoryGpPredictor:
+    """Same shape as TrajectoryKnnPredictor but uses a 3D Gaussian
+    Process for the (hoop_y, hoop_x, platform_y) -> ball_landing_x
+    surface. Smoother fit than 3D KNN in sparse regions and exposes
+    posterior variance via predict_landing_with_std for callers that
+    want uncertainty-aware logic.
+
+    Same interface contract: predict(hoop_y, hoop_x) returns the
+    platform_y inside the nearby-makes envelope whose modelled landing
+    is closest to hoop_x.
+    """
+
+    def __init__(
+        self,
+        points: list[tuple[float, float, float, float]],
+        makes: list[tuple[float, float, float]] | None,
+        gp,
+        py_scan_step: float = 5.0,
+        envelope_k: int = 5,
+        envelope_margin_px: float = 10.0,
+    ):
+        self.points = points
+        self.makes = makes or []
+        self._gp = gp
+        self._step = py_scan_step
+        self._envelope_k = envelope_k
+        self._envelope_margin = envelope_margin_px
+        pys = [p[2] for p in points]
+        self._py_lo = min(pys)
+        self._py_hi = max(pys)
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def _envelope(self, hoop_y: float, hoop_x: float) -> tuple[float, float]:
+        if not self.makes:
+            return self._py_lo, self._py_hi
+        nearest = sorted(
+            self.makes,
+            key=lambda m: (m[0] - hoop_y) ** 2 + (m[1] - hoop_x) ** 2,
+        )[: self._envelope_k]
+        pys = [m[2] for m in nearest]
+        lo = max(min(pys) - self._envelope_margin, self._py_lo)
+        hi = min(max(pys) + self._envelope_margin, self._py_hi)
+        return lo, hi
+
+    def _predict_landing_batch(
+        self, hoop_y: float, hoop_x: float, platform_ys: list[float]
+    ) -> list[float]:
+        import numpy as np
+
+        X = np.array([[hoop_y, hoop_x, py] for py in platform_ys])
+        return list(self._gp.predict(X))
+
+    def predict_landing_with_std(
+        self, hoop_y: float, hoop_x: float, platform_y: float
+    ) -> tuple[float, float]:
+        """Posterior (mean, std) for the predicted ball_landing_x at the
+        given (hoop, platform_y). Useful for uncertainty-aware logic."""
+        import numpy as np
+
+        X = np.array([[hoop_y, hoop_x, platform_y]])
+        mu, std = self._gp.predict(X, return_std=True)
+        return float(mu[0]), float(std[0])
+
+    def predict(self, hoop_y: float, hoop_x: float) -> float:
+        """Return the platform_y inside the nearby-makes envelope whose
+        modelled trajectory lands closest to hoop_x."""
+        lo, hi = self._envelope(hoop_y, hoop_x)
+        scan_pys: list[float] = []
+        py = lo
+        while py <= hi + 1e-9:
+            scan_pys.append(py)
+            py += self._step
+        if not scan_pys:
+            return float(lo)
+        landings = self._predict_landing_batch(hoop_y, hoop_x, scan_pys)
+        # Pick the platform_y minimising |predicted landing - hoop_x|.
+        best_py, _ = min(
+            zip(scan_pys, landings),
+            key=lambda pair: abs(pair[1] - hoop_x),
+        )
+        return float(best_py)
+
+
 def fit_trajectory_knn(
     rows: list[tuple[float, float, float, float]],
     makes: list[tuple[float, float, float]] | None = None,
@@ -345,6 +436,59 @@ def fit_trajectory_knn(
     )
     return TrajectoryKnnPredictor(
         points, makes=make_points, k=k, py_scan_step=py_scan_step,
+    )
+
+
+def fit_trajectory_gp(
+    rows: list[tuple[float, float, float, float]],
+    makes: list[tuple[float, float, float]] | None = None,
+    min_samples: int = 12,
+    py_scan_step: float = 5.0,
+) -> TrajectoryGpPredictor | None:
+    """Fit a 3D Gaussian Process to (hoop_y, hoop_x, platform_y) →
+    ball_landing_x. Returns None if too few samples.
+
+    Higher min_samples than the make-only fit_gp (12 vs 4) because the
+    input space has one more dimension and the noise level is higher
+    (we include misses). Anisotropic RBF length scales [50, 50, 30]:
+    the third dimension (platform_y) is the one we scan over at predict
+    time, so we want a tighter scale there to capture local curvature
+    of the launch-physics function.
+
+    sklearn imports are lazy so bots that stick with KNN don't pay the
+    sklearn import cost.
+    """
+    if len(rows) < min_samples:
+        return None
+    import numpy as np
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel, WhiteKernel
+
+    points = [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3])) for r in rows
+    ]
+    X = np.array([[p[0], p[1], p[2]] for p in points])
+    y = np.array([p[3] for p in points])
+
+    kernel = (
+        ConstantKernel(1.0, (1e-2, 1e3))
+        * RBF(length_scale=[50.0, 50.0, 30.0],
+              length_scale_bounds=(1.0, 1e3))
+        + WhiteKernel(noise_level=400.0, noise_level_bounds=(1e-1, 1e4))
+    )
+    gp = GaussianProcessRegressor(
+        kernel=kernel,
+        normalize_y=True,
+        n_restarts_optimizer=4,
+    )
+    gp.fit(X, y)
+    make_points = (
+        [(float(m[0]), float(m[1]), float(m[2])) for m in makes]
+        if makes is not None
+        else None
+    )
+    return TrajectoryGpPredictor(
+        points, makes=make_points, gp=gp, py_scan_step=py_scan_step,
     )
 
 
