@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-10T17:17:59",
-  "total_shots": 523,
-  "total_makes": 107,
-  "make_rate": 0.205,
+  "generated_at": "2026-05-10T17:35:52",
+  "total_shots": 532,
+  "total_makes": 110,
+  "make_rate": 0.207,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -303,6 +303,11 @@
       "started": "2026-05-10T17:17:07",
       "shots": 5,
       "makes": 1
+    },
+    {
+      "started": "2026-05-10T17:34:30",
+      "shots": 9,
+      "makes": 3
     }
   ],
   "buckets": [
@@ -381,7 +386,7 @@
     {
       "hoop_x_bucket": 590,
       "hoop_y_bucket": 350,
-      "shots": 3,
+      "shots": 4,
       "makes": 0
     },
     {
@@ -453,7 +458,7 @@
     {
       "hoop_x_bucket": 610,
       "hoop_y_bucket": 370,
-      "shots": 34,
+      "shots": 35,
       "makes": 0
     },
     {
@@ -467,6 +472,12 @@
       "hoop_y_bucket": 390,
       "shots": 16,
       "makes": 1
+    },
+    {
+      "hoop_x_bucket": 620,
+      "hoop_y_bucket": 310,
+      "shots": 1,
+      "makes": 0
     },
     {
       "hoop_x_bucket": 620,
@@ -669,8 +680,8 @@
     {
       "hoop_x_bucket": 670,
       "hoop_y_bucket": 400,
-      "shots": 1,
-      "makes": 1
+      "shots": 2,
+      "makes": 2
     },
     {
       "hoop_x_bucket": 670,
@@ -687,8 +698,8 @@
     {
       "hoop_x_bucket": 670,
       "hoop_y_bucket": 450,
-      "shots": 3,
-      "makes": 0
+      "shots": 4,
+      "makes": 1
     },
     {
       "hoop_x_bucket": 670,
@@ -879,8 +890,8 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 30,
-      "makes": 16
+      "shots": 31,
+      "makes": 17
     },
     {
       "hoop_x_bucket": 710,
@@ -911,6 +922,12 @@
       "hoop_y_bucket": 430,
       "shots": 1,
       "makes": 1
+    },
+    {
+      "hoop_x_bucket": 720,
+      "hoop_y_bucket": 440,
+      "shots": 3,
+      "makes": 0
     },
     {
       "hoop_x_bucket": 720,
@@ -2218,6 +2235,29 @@
     },
     {
       "hoop_x": 677,
+      "hoop_y": 406,
+      "platform_y": 435,
+      "offset": 31,
+      "target_y": 437,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": 222.37864685058594,
+      "ball_apex_y": 47,
+      "ball_x_at_rim_height": 653,
+      "ball_landing_x": 742,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 2,
+      "score_after_int": 3,
+      "score_increment": 1,
+      "predicted_offset": 31,
+      "code_commit": "7471e49818db-dirty",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
+      "hoop_x": 677,
       "hoop_y": 429,
       "platform_y": 432,
       "offset": 27,
@@ -2238,6 +2278,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 677,
+      "hoop_y": 454,
+      "platform_y": 467,
+      "offset": 27,
+      "target_y": 481,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": 222.37864685058594,
+      "ball_apex_y": 78,
+      "ball_x_at_rim_height": 652,
+      "ball_landing_x": 647,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 5,
+      "score_after_int": 6,
+      "score_increment": 1,
+      "predicted_offset": 27,
+      "code_commit": "7471e49818db-dirty",
+      "predictor_kind": "trajectory_gp"
     },
     {
       "hoop_x": 677,
@@ -3158,6 +3221,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 456,
+      "offset": 22,
+      "target_y": 472,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 69,
+      "ball_x_at_rim_height": 689,
+      "ball_landing_x": 615,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": 22,
+      "code_commit": "7471e49818db-dirty",
+      "predictor_kind": "trajectory_gp"
     },
     {
       "hoop_x": 715,
