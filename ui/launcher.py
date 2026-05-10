@@ -19,7 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from common import tries_counter
-from common.idleon_save import read_minigame_plays, read_hoops_cooldown
+from common.idleon_save import read_minigame_plays_shared, read_hoops_cooldown
 from common import hoops_cooldown_state
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -338,25 +338,17 @@ class Launcher:
             # extrapolating from save_mtime keeps the math exact.
             anchor = self._save_mtime() or time.time()
             self.hoops_cooldown_snapshot = (anchor, cd)
-        plays = read_minigame_plays()
+        plays = read_minigame_plays_shared()
         if plays is None:
             self.tries_label.config(text="(save not found)")
             if not silent:
                 self._enqueue_log("[tries] couldn't read save (Idleon not installed, or plyvel missing)\n")
             return
-        if not plays:
-            self.tries_label.config(text="0 (no chars)")
-            if not silent:
-                self._enqueue_log("[tries] save loaded but no characters with MinigamePlays found\n")
-            return
-        total = sum(plays.values())
-        # Per-char breakdown after total.
-        per_char = ", ".join(f"{n}={c}" for n, c in plays.items())
-        self.tries_label.config(text=f"{total}  ({per_char})")
+        self.tries_label.config(text=f"{plays}")
         # Persist for any external consumer.
-        tries_counter.write(total)
+        tries_counter.write(plays)
         if not silent:
-            self._enqueue_log(f"[tries] refreshed: {total} total ({per_char})\n")
+            self._enqueue_log(f"[tries] refreshed: {plays}\n")
 
     def _build_setup_tab(self, parent: ttk.Frame):
         """Per-minigame calibration / debug buttons. Lives in its own tab so

@@ -204,8 +204,13 @@ def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
     """Read MinigamePlays per character from the save. Returns
     {character_name: plays_remaining} or None if the save can't be read.
 
-    Chopping and catching share this counter in-game. Per-character
-    (each character has its own quota that resets daily)."""
+    NOTE: the count is account-wide (chopping + catching + mining share
+    one pool, refreshed daily). Each character's PersonalValuesMap
+    field is a stale per-character cache that updates when that
+    character becomes active — same pattern as the hoops cooldown's
+    OL[6]. For the live shared count, prefer `read_minigame_plays_shared`.
+    Kept for tooling that wants the raw per-character snapshots.
+    """
     data = load_save(save_dir)
     if data is None:
         return None
@@ -215,6 +220,32 @@ def read_minigame_plays(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
         if isinstance(plays, (int, float)):
             out[name] = int(plays)
     return out
+
+
+def read_minigame_plays_shared(save_dir: str = SAVE_DIR) -> int | None:
+    """Return the shared (account-wide) minigame plays count by reading
+    the most-recently-active character's MinigamePlays cache. None if
+    the save can't be read or no character has the field.
+    """
+    import time
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    now = time.time()
+    best_afk: float | None = None
+    best_plays: int | None = None
+    for info in (data.get("PlayerDATABASE") or {}).values():
+        plays = (info.get("PersonalValuesMap") or {}).get("MinigamePlays")
+        away = info.get("PlayerAwayTime")
+        if not isinstance(plays, (int, float)):
+            continue
+        if not isinstance(away, (int, float)):
+            continue
+        afk = now - float(away)
+        if best_afk is None or afk < best_afk:
+            best_afk = afk
+            best_plays = int(plays)
+    return best_plays
 
 
 # Hoops cooldown: account-wide, lives in OptionsListAccount[423]. Same
