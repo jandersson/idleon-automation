@@ -68,4 +68,7 @@ def find_game_over(
 # 5.0; the common version is binarized with threshold 3.0 (same as hoops post-
 # noise-fix). Keeping the same behavior is preferable since both bots crop the
 # same kind of in-game UI text.
-from common.score_diff import score_region, score_changed  # noqa: F401, E402
+from common.score_diff import score_region, score_changed  # noqa: E402
+
+# Explicit re-export so pyflakes doesn't flag the imports as unused.
+__all__ = ["score_region", "score_changed"]

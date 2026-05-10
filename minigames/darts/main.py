@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
-from common.input import click, random_delay, check_failsafe, press_key
+from common.input import click, check_failsafe, press_key
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log

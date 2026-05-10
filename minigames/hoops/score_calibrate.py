@@ -17,7 +17,7 @@ OUT = _HERE / "assets" / "score_calibration.png"
 
 
 def run():
-    print(f"Score-region calibration. Bring the hoops minigame into view.")
+    print("Score-region calibration. Bring the hoops minigame into view.")
     time.sleep(2)
 
     left, top, win_w, win_h = get_bounds(WINDOW_TITLE)

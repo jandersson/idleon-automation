@@ -165,7 +165,10 @@ def _find_top_text(frame: np.ndarray, template_name: str, threshold: float) -> t
 # score_region / score_changed live in common.score_diff. Re-exported here so
 # `from minigames.hoops.detector import score_region, score_changed` keeps
 # working unchanged.
-from common.score_diff import score_region, score_changed  # noqa: E402, F401
+from common.score_diff import score_region, score_changed  # noqa: E402
+
+# Explicit re-export so pyflakes doesn't flag the imports as unused.
+__all__ = ["score_region", "score_changed"]
 
 
 def find_ball(

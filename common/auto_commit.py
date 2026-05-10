@@ -62,11 +62,11 @@ def commit_file_if_changed(
                 ["git", "push"], cwd=repo_root, capture_output=True, text=True,
             )
             if res.returncode == 0:
-                print(f"  [auto-commit] pushed")
+                print("  [auto-commit] pushed")
             else:
                 print(f"  [auto-commit] push failed (non-fatal): {res.stderr.strip()}")
         elif push:
-            print(f"  [auto-commit] outside push window, will push later")
+            print("  [auto-commit] outside push window, will push later")
     except subprocess.CalledProcessError as e:
         print(f"  [auto-commit] git op failed (non-fatal): {e.stderr.decode(errors='replace').strip() if e.stderr else e}")
     except Exception as e:

@@ -27,7 +27,7 @@ INTER_FRAME_DELAY = 0.04  # ~25 fps for ~1s of flight
 
 def run():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Ball-calibration: bring the minigame into view. Will fire one shot in 3s and burst-capture flight frames.")
+    print("Ball-calibration: bring the minigame into view. Will fire one shot in 3s and burst-capture flight frames.")
     time.sleep(3)
 
     left, top, width, height = get_bounds(WINDOW_TITLE)
@@ -63,7 +63,7 @@ def run():
 
     print(f"Wrote {BURST_FRAMES} side-by-side (raw | mask-highlighted) frames to {OUT_DIR}")
     print("Look for the basketball — should be highlighted yellow in the right pane.")
-    print(f"If the ball isn't highlighted, adjust BALL_HSV_LOWER/UPPER in detector.py.")
+    print("If the ball isn't highlighted, adjust BALL_HSV_LOWER/UPPER in detector.py.")
     print(f"  Current: LOWER={BALL_HSV_LOWER.tolist()}, UPPER={BALL_HSV_UPPER.tolist()}")
 
 
