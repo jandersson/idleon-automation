@@ -34,6 +34,7 @@ MINIGAMES = [
             ("Pick bar", "chopping-pick-bar-region"),
             ("Pick leaf", "chopping-pick-leaf-region"),
             ("Pick button", "chopping-pick-button-region"),
+            ("Pick game over", "chopping-pick-game-over"),
             ("Calibrate", "chopping-calibrate"),
         ],
     },

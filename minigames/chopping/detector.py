@@ -1,5 +1,11 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
+
+from common.templates import match_multiscale_center
+
+ASSETS = Path(__file__).parent / "assets"
 
 # OpenCV HSV: H in [0,179], S/V in [0,255]. Red wraps, so two ranges.
 #
@@ -94,3 +100,21 @@ def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> 
     if _column_has_color(red, leaf_x):
         return leaf_x, "red"
     return leaf_x, "none"
+
+
+def find_game_over(
+    frame: np.ndarray, threshold: float = 0.7
+) -> tuple[bool, float]:
+    """Detect the end-of-trial game-over screen via multi-scale template
+    match. Returns (False, 0.0) if the template asset doesn't exist —
+    capture it once via `chopping-pick-game-over`.
+    """
+    path = ASSETS / "game_over.png"
+    if not path.exists():
+        return False, 0.0
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        return False, 0.0
+    _, val, _scale = match_multiscale_center(bgr, template)
+    return val >= threshold, val

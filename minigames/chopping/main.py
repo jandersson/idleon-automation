@@ -9,7 +9,7 @@ from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from minigames.chopping.detector import analyze_bar, nearest_red_distance
+from minigames.chopping.detector import analyze_bar, nearest_red_distance, find_game_over
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -29,6 +29,11 @@ COOLDOWN_AFTER_CLICK = 0.45
 # leaf to the detector) and exit cleanly instead of spamming clicks.
 STAGNATION_LIMIT = 5
 
+# How often to template-match for the game-over screen, in seconds. The poll
+# loop runs ~100 Hz so a per-iteration grab+match would dominate CPU; once
+# per second is plenty since the game-over banner stays put for many seconds.
+GAME_OVER_CHECK_INTERVAL = 1.0
+
 # Skip the click if the leaf's left edge is within this many pixels of a red
 # column. Click latency (~50ms pre-click delay + OS jitter) lets the leaf drift
 # a few px between detection and click — landing in red ends the minigame.
@@ -47,6 +52,7 @@ def _run_inner():
 
     last_click: tuple[int, str] | None = None
     stagnation_count = 0
+    last_game_over_check = 0.0
 
     while True:
         check_failsafe()
@@ -56,6 +62,14 @@ def _run_inner():
             print(e)
             time.sleep(1)
             continue
+
+        if time.time() - last_game_over_check > GAME_OVER_CHECK_INTERVAL:
+            last_game_over_check = time.time()
+            full_frame = grab_region(win_left, win_top, win_w, win_h)
+            is_over, conf = find_game_over(full_frame)
+            if is_over:
+                print(f"Game over detected (conf={conf:.2f}). Stopping.")
+                return
 
         bar_region = get_region(_HERE, "bar", win_w, win_h)
         leaf_region = get_region(_HERE, "leaf", win_w, win_h)
