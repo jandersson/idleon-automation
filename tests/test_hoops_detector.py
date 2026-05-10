@@ -39,7 +39,7 @@ def test_find_rim_locates_template_center():
     # detector's region restriction (right half) finds it.
     place_x, place_y = 600, 200
     frame = _frame_with_template_at("rim.png", 960, 572, (place_x, place_y))
-    pos, conf = find_rim(frame)
+    pos, conf, _scale = find_rim(frame)
     assert pos is not None, f"detection failed (conf={conf:.2f})"
     expected_cx = place_x + tw // 2
     expected_cy = place_y + th // 2
@@ -50,6 +50,6 @@ def test_find_rim_locates_template_center():
 
 def test_find_rim_rejects_blank_frame():
     frame = np.full((572, 960, 4), 30, dtype=np.uint8)
-    pos, conf = find_rim(frame)
+    pos, conf, _scale = find_rim(frame)
     assert pos is None
     assert conf < 0.7

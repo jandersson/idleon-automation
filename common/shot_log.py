@@ -68,7 +68,12 @@ CREATE TABLE IF NOT EXISTS shots (
     predicted_offset INTEGER,
     code_commit TEXT,
     predictor_kind TEXT,
-    source TEXT
+    source TEXT,
+    rim_match_scale REAL,
+    time_since_last_shot_ms INTEGER,
+    ball_flight_ms INTEGER,
+    bob_ymin INTEGER,
+    bob_ymax INTEGER
 )
 """
 
@@ -97,6 +102,14 @@ _LATE_COLUMNS = [
     # ball trajectory looks consistent with the aim (vs. lucky rattle-in).
     # Used by fetch_makes to avoid contaminating predictor training data.
     ("clean_make", "INTEGER"),
+    # Diagnostic columns added in the metrics-backlog batch (closes #11,
+    # #12, #14, #16). All optional, NULL on rows logged before they
+    # existed. See the corresponding issues for rationale.
+    ("rim_match_scale", "REAL"),         # multi-scale rim template match scale
+    ("time_since_last_shot_ms", "INTEGER"),  # gap between this fired_at and the previous
+    ("ball_flight_ms", "INTEGER"),       # first-detected to last-detected across flight frames
+    ("bob_ymin", "INTEGER"),             # observed platform_y range at fire time
+    ("bob_ymax", "INTEGER"),
 ]
 
 

@@ -69,6 +69,7 @@ def summarise_trajectory(
     hoop_x: int,
     hoop_y: int,
     rim_height_tolerance: int = 25,
+    frame_interval_ms: int = 50,
 ) -> dict:
     """Reduce a (frame_idx, x, y) trajectory to summary metrics.
 
@@ -77,6 +78,10 @@ def summarise_trajectory(
         ball_x_at_rim_height  : x at the point where y was closest to hoop_y
                                 (only if within rim_height_tolerance px)
         ball_landing_x        : x of the last detected position
+        ball_flight_ms        : (last_frame_idx - first_frame_idx) *
+                                frame_interval_ms — how long the ball was
+                                visible. Default frame interval matches
+                                the hoops bot's FLIGHT_POLL = 0.05s.
     All values are None if the trajectory is empty.
     """
     if not positions:
@@ -84,16 +89,19 @@ def summarise_trajectory(
             "ball_apex_y": None,
             "ball_x_at_rim_height": None,
             "ball_landing_x": None,
+            "ball_flight_ms": None,
         }
     apex_y = min(p[2] for p in positions)
     landing_x = positions[-1][1]
-    # Closest position to rim height (smallest abs y diff).
     closest = min(positions, key=lambda p: abs(p[2] - hoop_y))
     x_at_rim = closest[1] if abs(closest[2] - hoop_y) <= rim_height_tolerance else None
+    first_idx = positions[0][0]
+    last_idx = positions[-1][0]
     return {
         "ball_apex_y": int(apex_y),
         "ball_x_at_rim_height": int(x_at_rim) if x_at_rim is not None else None,
         "ball_landing_x": int(landing_x),
+        "ball_flight_ms": int((last_idx - first_idx) * frame_interval_ms),
     }
 
 

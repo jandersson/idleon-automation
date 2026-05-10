@@ -13,7 +13,15 @@ def test_empty_trajectory_returns_all_none():
         "ball_apex_y": None,
         "ball_x_at_rim_height": None,
         "ball_landing_x": None,
+        "ball_flight_ms": None,
     }
+
+
+def test_ball_flight_ms_spans_first_to_last_frame():
+    # Frame indices 1 → 9 = 8 frame intervals at the default 50ms.
+    positions = [(1, 100, 400), (3, 200, 200), (9, 300, 350)]
+    out = summarise_trajectory(positions, hoop_x=400, hoop_y=450)
+    assert out["ball_flight_ms"] == 8 * 50
 
 
 def test_apex_is_min_y():

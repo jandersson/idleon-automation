@@ -495,6 +495,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     hoop_x: int | None = None
     hoop_y: int | None = None
     hoop_conf_last: float = 0.0  # carries to shot_log row
+    hoop_scale_last: float = 0.0  # rim_match_scale, carries to shot_log row
+    last_fired_at_ms: float | None = None  # for time_since_last_shot_ms
     hoop_missing_since: float | None = None  # for exit-when-stuck
     x_samples: list[int] = []
     home_x: int | None = None
@@ -526,7 +528,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             return
 
         if target_y is None:
-            hoop_pos, hoop_conf = find_rim(frame)
+            hoop_pos, hoop_conf, hoop_scale = find_rim(frame)
             if hoop_pos is None:
                 if hoop_missing_since is None:
                     hoop_missing_since = time.time()
@@ -547,6 +549,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             hoop_missing_since = None
             hoop_x, hoop_y = hoop_pos
             hoop_conf_last = hoop_conf
+            hoop_scale_last = hoop_scale
             # Reset miss tracking if the hoop has moved (i.e., last shot made
             # and a new hoop spawned). Use ±2px tolerance to absorb detector
             # jitter — a hoop "in the same place" matches if both x and y are
@@ -659,6 +662,12 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # just sampled, biasing every shot by tens of pixels.
                 shot_idx = shot_stats["attempts"] + 1
                 fired_at = datetime.now().isoformat(timespec="seconds")
+                fired_at_ms = time.time() * 1000.0
+                time_since_last_shot_ms = (
+                    int(fired_at_ms - last_fired_at_ms)
+                    if last_fired_at_ms is not None else None
+                )
+                last_fired_at_ms = fired_at_ms
                 # Detect the "Make a shot to start the game!" prompt
                 # *before* firing — it's the in-game signal that this is
                 # the first shot of a fresh game. If the prompt was up
@@ -730,6 +739,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     "ball_apex_y": None,
                     "ball_x_at_rim_height": None,
                     "ball_landing_x": None,
+                    "ball_flight_ms": None,
                 }
                 if shot_dir is not None and MONITOR_FLIGHT:
                     try:
@@ -775,6 +785,12 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 if lives_before is not None and lives_after is not None:
                     if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
                         _, lives_diff_value = score_changed(lives_before, lives_after)
+                # Capture bob range from the recent platform samples for #16.
+                bob_ymin = bob_ymax = None
+                if len(range_samples) >= 10:
+                    ys_at_fire = [p[1] for p in range_samples]
+                    bob_ymin = int(min(ys_at_fire))
+                    bob_ymax = int(max(ys_at_fire))
                 log_shot(
                     shot_db,
                     session_started=session_started,
@@ -808,6 +824,11 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     predicted_offset=int(predicted_offset_value),
                     code_commit=code_commit,
                     predictor_kind=PREDICTOR_KIND if predictor is not None else None,
+                    rim_match_scale=float(hoop_scale_last) if hoop_scale_last else None,
+                    time_since_last_shot_ms=time_since_last_shot_ms,
+                    ball_flight_ms=trajectory.get("ball_flight_ms"),
+                    bob_ymin=bob_ymin,
+                    bob_ymax=bob_ymax,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

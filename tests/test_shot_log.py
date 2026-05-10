@@ -12,8 +12,47 @@ def test_open_db_creates_schema(tmp_path):
     conn = open_db(tmp_path / "shots.db")
     cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     tables = {row[0] for row in cur.fetchall()}
+    # Newly-added diagnostic columns from the metrics-backlog batch must
+    # exist on a fresh DB so callers can write them without an
+    # OperationalError. Catches schema drift if the SCHEMA constant and
+    # _LATE_COLUMNS list disagree.
+    cur = conn.execute("PRAGMA table_info(shots)")
+    cols = {row[1] for row in cur.fetchall()}
     conn.close()
     assert "shots" in tables
+    for col in ("rim_match_scale", "time_since_last_shot_ms",
+                "ball_flight_ms", "bob_ymin", "bob_ymax"):
+        assert col in cols, f"missing column {col!r}"
+
+
+def test_late_column_migration_on_existing_db(tmp_path):
+    """Sanity check: an existing DB without the new diagnostic columns
+    gets them added by open_db's _migrate. Build an old-style schema
+    (the columns the backfill UPDATE references plus a few extras),
+    then re-open and verify the new columns appear and a log_shot
+    using them round-trips."""
+    db_path = tmp_path / "old_shots.db"
+    raw = sqlite3.connect(str(db_path))
+    raw.execute(
+        "CREATE TABLE shots ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_started TEXT, hoop_x INTEGER, "
+        "made INTEGER, ball_landing_x INTEGER)"
+    )
+    raw.commit()
+    raw.close()
+    conn = open_db(db_path)
+    log_shot(
+        conn, session_started="x", hoop_x=700,
+        rim_match_scale=0.92, time_since_last_shot_ms=1234,
+        ball_flight_ms=2900, bob_ymin=290, bob_ymax=510,
+    )
+    row = conn.execute(
+        "SELECT rim_match_scale, time_since_last_shot_ms, ball_flight_ms, "
+        "bob_ymin, bob_ymax FROM shots"
+    ).fetchone()
+    conn.close()
+    assert row == (0.92, 1234, 2900, 290, 510)
 
 
 def test_log_shot_inserts_partial_row(tmp_path):

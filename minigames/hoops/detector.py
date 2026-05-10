@@ -69,7 +69,7 @@ def find_hoop(
 
 def find_rim(
     frame: np.ndarray, threshold: float = 0.45
-) -> tuple[tuple[int, int] | None, float]:
+) -> tuple[tuple[int, int] | None, float, float]:
     """Match just the rim (orange ring + net + small piece of backboard).
 
     Why rim-only and not the full structure: the pole between the rim and
@@ -95,10 +95,10 @@ def find_rim(
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("rim.png")
-    center, val, _scale = match_multiscale_center(bgr, template, region=(w // 2, 0, w, h))
+    center, val, scale = match_multiscale_center(bgr, template, region=(w // 2, 0, w, h))
     if val < threshold:
-        return None, val
-    return center, val
+        return None, val, scale
+    return center, val, scale
 
 
 def find_platform(
