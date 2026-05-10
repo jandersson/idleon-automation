@@ -676,7 +676,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # implicit dependency on the rim detector for the click
                 # target, and eliminates corner-case "click at extreme
                 # screen position" risks.
-                click(left + win_w // 2, top + win_h // 2)
+                click(left + width // 2, top + height // 2)
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
                 shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
