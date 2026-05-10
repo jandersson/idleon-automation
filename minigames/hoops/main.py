@@ -665,9 +665,18 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # before and is gone after, that's a make regardless of
                 # OCR or trajectory checks.
                 prompt_visible_before = find_game_prompt(frame)[0]
-                # Click at the hoop. Click coordinates have no measurable
-                # effect on aim (verified May 3) — could be anywhere.
-                click(left + hoop_x, top + hoop_y)
+                # Click at the center of the game window. Click coordinates
+                # have no measurable effect on aim (verified 2026-05-03 via
+                # CLICK_STRATEGY experiments — see docs/cleanup_backlog.md
+                # "Hoops: click-position machinery"); the only thing that
+                # determines launch trajectory is platform_y at click time.
+                # Using a fixed center-of-window target instead of the
+                # per-shot (hoop_x, hoop_y) means click position is constant
+                # across shots — easier to reason about, removes the
+                # implicit dependency on the rim detector for the click
+                # target, and eliminates corner-case "click at extreme
+                # screen position" risks.
+                click(left + win_w // 2, top + win_h // 2)
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during _try_rescue.
                 shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
