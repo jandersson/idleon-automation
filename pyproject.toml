@@ -59,6 +59,8 @@ mining = "minigames.mining.main:run"
 mining-observe = "minigames.mining.observe:run"
 mining-capture = "minigames.mining.capture:run"
 mining-pick-play-region = "minigames.mining.pick_play_region:run"
+mining-trace = "minigames.mining.trace:run"
+mining-pick-start-button = "minigames.mining.pick_start_button:run"
 
 [build-system]
 requires = ["hatchling"]

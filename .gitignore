@@ -15,6 +15,7 @@ minigames/*/assets/logs/
 minigames/*/assets/shots.db
 minigames/*/assets/diagnostics/
 minigames/*/assets/observations/
+minigames/*/assets/analysis/
 minigames/*/calibration/
 data/
 

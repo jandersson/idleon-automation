@@ -23,10 +23,41 @@ player's head** in whatever world position the player is standing.
 `minigames/mining/assets/captures/capture_20260509_023207_*.png` (60
 frames, gitignored — re-run `mining-capture` if you need them).
 
-The captured run shows the game in its pre-roll state — score is
-"0 PTS" across all 60 frames and the cart never moved, suggesting the
-cart auto-scrolls only after the first input. This is the open
-question tracked in #1.
+The original 60-frame capture (referenced above) was misread: those
+frames were of the overworld with the player standing at the Mining
+Helper NPC, not the active minigame. A proper trace was captured on
+2026-05-15 via `mining-trace`, which clicks the in-game "Play Game"
+button itself and then captures continuously without further clicks.
+
+## Cart behavior (issue #1, resolved 2026-05-15)
+
+**The cart waits for the first jump click. It does NOT auto-scroll.**
+If no input arrives, the attempt self-terminates after ~2-3 seconds
+and the daily-attempts counter still ticks down. From
+`captures/trace_20260515_220235`:
+
+- t=0.0s: bot clicks "Play Game" button
+- t=0.0 → t=~2.4s: cart sits at start of track, identical position
+  every frame (`analysis/trace_kymograph2.png` shows a vertical streak
+  — zero horizontal motion)
+- t=~2.5s: cart + track disappear (attempt ends without a single jump)
+- t=~5s: UI returns to the Play Game prompt, attempts counter dropped
+  5→4
+
+Implication for the click policy (#5): the bot needs an "ignition"
+click to start cart motion, and must fire it within the ~2-3s grace
+window or the attempt is wasted.
+
+## Tooling notes
+
+- `mining-pick-start-button` saves a region around the in-game "Play
+  Game" button. Always grabs a fresh live screenshot — the prompt is
+  only visible in a specific game state, so reusing stale captures
+  doesn't work.
+- `mining-trace --seconds N --startup S` clicks Start, then captures
+  N seconds of frames + logs human clicks. Trace dir contains
+  `frame_NNNN.png` and (on clean exit) `trace.json` with click
+  timestamps tied to frame indices.
 
 ## Pointers
 
