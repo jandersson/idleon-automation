@@ -1,0 +1,148 @@
+"""Render an annotated overlay video from a captured trace.
+
+For each frame in a trace_<stamp>/ directory, runs the detector and
+draws what it found — plank-top line, cart box, pit boxes, ore boxes,
+plus the find_next_terrain result as text. Stitches into an MP4 so we
+can visually QA the entire trace at once.
+
+Usage:
+    uv run mining-render-overlay <trace_dir>
+    uv run mining-render-overlay trace_20260515_220235          # short form
+"""
+import argparse
+import sys
+from pathlib import Path
+
+import cv2
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from minigames.mining.detector import (
+    _cart_search_region,
+    _find_cart_at_plank,
+    _find_plank_top_y,
+    _load_cart_templates,
+    _scan_plank_ore,
+    _scan_plank_pits,
+    CART_SCALES,
+    SCAN_BUFFER_PX,
+    find_next_terrain,
+)
+from common.templates import match_multiscale_center
+
+_HERE = Path(__file__).parent
+CAPTURES_DIR = _HERE / "assets" / "captures"
+ANALYSIS_DIR = _HERE / "assets" / "analysis"
+
+
+def _resolve_trace_dir(arg: str) -> Path:
+    p = Path(arg)
+    if p.exists() and p.is_dir():
+        return p
+    # Try as a short form relative to captures/
+    rel = CAPTURES_DIR / arg
+    if rel.exists():
+        return rel
+    print(f"Trace dir not found: {arg}")
+    sys.exit(1)
+
+
+def _annotate(frame, plank_y, cart, cart_w, pits, ores, next_terrain):
+    """Draw all detector results on a copy of frame, return it."""
+    out = frame.copy()
+    h, w = out.shape[:2]
+    if plank_y is not None:
+        cv2.line(out, (0, plank_y), (w, plank_y), (0, 200, 0), 1)
+    if cart is not None:
+        half = cart_w // 2 if cart_w else 30
+        # Cart box centered on the matched cart position. Cart aspect
+        # ratio is ~2:1 (wide and short), so use half the width as the
+        # height extent on each side.
+        h_extent = max(15, half // 2)
+        cv2.rectangle(out,
+                      (cart[0] - half, cart[1] - h_extent),
+                      (cart[0] + half, cart[1] + h_extent),
+                      (0, 255, 0), 2)
+        cv2.circle(out, cart, 3, (0, 255, 0), -1)
+    if plank_y is not None:
+        for a, b in pits:
+            cv2.rectangle(out, (a, plank_y - 2), (b, plank_y + 8),
+                          (0, 0, 255), 2)  # red
+        for a, b in ores:
+            cv2.rectangle(out, (a, plank_y - 18), (b, plank_y),
+                          (0, 200, 255), 2)  # yellow
+    label = f"plank_y={plank_y} cart={cart} next={next_terrain}"
+    cv2.rectangle(out, (0, 0), (w, 22), (0, 0, 0), -1)
+    cv2.putText(out, label, (5, 15), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (255, 255, 255), 1)
+    return out
+
+
+def _process_frame(frame):
+    """Return (plank_y, cart, cart_w, pits, ores, next_terrain) for the
+    frame — running the same logic find_next_terrain does so the overlay
+    matches the bot's actual decision inputs."""
+    if frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    plank_y = _find_plank_top_y(frame)
+    if plank_y is None:
+        return None, None, 0, [], [], None
+    cart = _find_cart_at_plank(frame, plank_y)
+    cart_w = 0
+    if cart is not None:
+        region = _cart_search_region(frame, plank_y)
+        best_w = 0
+        best_val = -1.0
+        for _name, t in _load_cart_templates():
+            _c, val, scale = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
+            if val > best_val:
+                best_val = val
+                best_w = int(round(t.shape[1] * scale))
+        cart_w = best_w
+    pits = []
+    ores = []
+    if cart is not None:
+        scan_x = cart[0] + cart_w // 2 + SCAN_BUFFER_PX
+        pits = _scan_plank_pits(frame, plank_y, x_start=scan_x)
+        ores = _scan_plank_ore(frame, plank_y, x_start=scan_x)
+    nxt = find_next_terrain(frame, cart)
+    return plank_y, cart, cart_w, pits, ores, nxt
+
+
+def run():
+    parser = argparse.ArgumentParser(description="Render annotated overlay video from a trace")
+    parser.add_argument("trace_dir", help="Path or short name (relative to captures/) of trace directory")
+    parser.add_argument("--fps", type=int, default=10,
+                        help="output video fps (default 10, matches 100ms capture)")
+    args = parser.parse_args()
+
+    trace = _resolve_trace_dir(args.trace_dir)
+    frame_paths = sorted(trace.glob("frame_*.png"))
+    if not frame_paths:
+        print(f"No frame_*.png in {trace}")
+        sys.exit(1)
+
+    first = cv2.imread(str(frame_paths[0]))
+    h, w = first.shape[:2]
+    ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = ANALYSIS_DIR / f"{trace.name}_overlay.mp4"
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(out_path), fourcc, args.fps, (w, h))
+    if not writer.isOpened():
+        print(f"VideoWriter failed to open {out_path}")
+        sys.exit(1)
+
+    print(f"Processing {len(frame_paths)} frames from {trace.name} -> {out_path.name}")
+    for i, p in enumerate(frame_paths):
+        frame = cv2.imread(str(p))
+        plank_y, cart, cart_w, pits, ores, nxt = _process_frame(frame)
+        annotated = _annotate(frame, plank_y, cart, cart_w, pits, ores, nxt)
+        writer.write(annotated)
+        if (i + 1) % 50 == 0:
+            print(f"  {i+1}/{len(frame_paths)} frames")
+    writer.release()
+    print(f"Wrote {out_path} ({len(frame_paths)} frames @ {args.fps} fps)")
+
+
+if __name__ == "__main__":
+    run()

@@ -127,19 +127,25 @@ def _load_cart_templates() -> list[Tuple[str, np.ndarray]]:
     return _cart_templates
 
 
+def _cart_search_region(frame, plank_y: int) -> Tuple[int, int, int, int]:
+    """Return (x0, y0, x1, y1) for the cart-search ROI. The cart can be
+    anywhere from the very top of the minigame overlay (peak of a jump)
+    down to seated on the plank, so we let the search run from frame top
+    to plank_y + 15. The minigame UI is in the upper portion of the
+    window so we also cap at plank_y + 15 below to skip the score row
+    and lower UI."""
+    h, w = frame.shape[:2]
+    return (0, 0, w, min(h, plank_y + 15))
+
+
 def _find_cart_at_plank(frame, plank_y: int) -> Optional[Tuple[int, int]]:
-    """Multi-template match the cart in a band around plank_y. Returns the
-    best match's center, or None if no template scored above
+    """Multi-template match the cart in a band above the plank. Returns
+    the best match's center, or None if no template scored above
     CART_MATCH_THRESHOLD."""
     templates = _load_cart_templates()
     if not templates:
         return None
-    h = frame.shape[0]
-    # Cart fits roughly within plank_y - 30 ≤ y ≤ plank_y + 5 (body above,
-    # wheels at plank top). Give the matcher some slack.
-    y0 = max(0, plank_y - 40)
-    y1 = min(h, plank_y + 15)
-    region = (0, y0, frame.shape[1], y1)
+    region = _cart_search_region(frame, plank_y)
     best_center = None
     best_val = -1.0
     for _name, t in templates:
@@ -158,10 +164,7 @@ def _estimate_cart_half_width(frame, plank_y: int) -> int:
     templates = _load_cart_templates()
     if not templates:
         return 30
-    h = frame.shape[0]
-    y0 = max(0, plank_y - 40)
-    y1 = min(h, plank_y + 15)
-    region = (0, y0, frame.shape[1], y1)
+    region = _cart_search_region(frame, plank_y)
     best_w = 0
     best_val = -1.0
     for _name, t in templates:
