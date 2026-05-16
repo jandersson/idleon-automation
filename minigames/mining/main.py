@@ -5,7 +5,7 @@ is within the trigger-distance window. First-pass policy is jump-only —
 no slam — the goal of this version is just "don't fall into the first
 pit." Tune JUMP_TRIGGER_MIN/MAX and JUMP_COOLDOWN_S empirically.
 
-Every click is logged to assets/jumps.db with the detector state at
+Every click is logged to assets/mining.db with the detector state at
 fire time. After OUTCOME_DELAY_S the outcome (survived/died/unknown) is
 back-filled. Query the DB to find the distance windows that actually
 work: see jump_log.survival_rate_by_distance.
@@ -41,7 +41,7 @@ from minigames.mining.jump_log import open_db, log_jump, set_outcome
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
-JUMPS_DB = _HERE / "assets" / "jumps.db"
+MINING_DB = _HERE / "assets" / "mining.db"
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.03
@@ -82,13 +82,13 @@ def _run_inner():
         print(e)
         return
 
-    conn = open_db(JUMPS_DB)
+    conn = open_db(MINING_DB)
     session_started = datetime.now().isoformat(timespec="seconds")
     code_commit = current_code_commit(_HERE.parent.parent)
     attempt_idx = 1
     jump_idx = 0
     pending_outcomes: list[dict] = []
-    print(f"Jumps DB: {JUMPS_DB} (session={session_started})")
+    print(f"Mining DB: {MINING_DB} (session={session_started})")
 
     # Click Play Game button to start the attempt.
     if not _click_start_button(win_left, win_top, win_w, win_h):

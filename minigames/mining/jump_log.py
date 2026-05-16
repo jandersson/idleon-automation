@@ -16,7 +16,7 @@ Outcomes (filled in after a settle delay):
 
 Usage:
     from minigames.mining.jump_log import open_db, log_jump, set_outcome
-    conn = open_db(Path("minigames/mining/assets/jumps.db"))
+    conn = open_db(Path("minigames/mining/assets/mining.db"))
     row_id = log_jump(conn, session_started="...", jump_idx=1, ...)
     set_outcome(conn, row_id, "survived", measured_ms=1500)
 """

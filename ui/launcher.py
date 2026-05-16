@@ -754,7 +754,7 @@ class Launcher:
         Tailored per-bot since the schemas differ; falls back to a
         generic 'show schema'."""
         name = db_path.name
-        if name == "jumps.db":
+        if name == "mining.db":
             return (
                 "-- Survival rate per pit-distance bin\n"
                 "SELECT (next_distance_px / 10) * 10 AS dist_bin,\n"

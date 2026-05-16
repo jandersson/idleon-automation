@@ -13,7 +13,7 @@ from minigames.mining.jump_log import (
 
 def _tmpdb() -> Path:
     d = Path(tempfile.mkdtemp())
-    return d / "jumps.db"
+    return d / "mining.db"
 
 
 def test_open_db_creates_table():
