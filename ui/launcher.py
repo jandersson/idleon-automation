@@ -93,7 +93,10 @@ MINIGAMES = [
         "setup": [
             ("Observe (you play)", "mining-observe"),
             ("Capture", "mining-capture"),
+            ("Trace (record attempt)", "mining-trace"),
             ("Pick play region", "mining-pick-play-region"),
+            ("Pick start button", "mining-pick-start-button"),
+            ("Render overlay video", "mining-render-overlay"),
         ],
     },
 ]

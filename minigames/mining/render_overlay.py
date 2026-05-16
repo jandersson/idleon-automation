@@ -122,14 +122,28 @@ def _process_frame(frame):
     return plank_y, cart, cart_w, pits, ores, nxt, plank_range
 
 
+def _latest_trace() -> Path | None:
+    traces = sorted(CAPTURES_DIR.glob("trace_*"))
+    return traces[-1] if traces else None
+
+
 def run():
     parser = argparse.ArgumentParser(description="Render annotated overlay video from a trace")
-    parser.add_argument("trace_dir", help="Path or short name (relative to captures/) of trace directory")
+    parser.add_argument("trace_dir", nargs="?",
+                        help="Path or short name (relative to captures/) of trace directory. "
+                             "If omitted, uses the most recent trace_* dir.")
     parser.add_argument("--fps", type=int, default=10,
                         help="output video fps (default 10, matches 100ms capture)")
     args = parser.parse_args()
 
-    trace = _resolve_trace_dir(args.trace_dir)
+    if args.trace_dir:
+        trace = _resolve_trace_dir(args.trace_dir)
+    else:
+        trace = _latest_trace()
+        if trace is None:
+            print("No trace dirs in captures/. Run mining-trace first.")
+            sys.exit(1)
+        print(f"Using most recent trace: {trace.name}")
     frame_paths = sorted(trace.glob("frame_*.png"))
     if not frame_paths:
         print(f"No frame_*.png in {trace}")
