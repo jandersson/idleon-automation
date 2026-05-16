@@ -120,7 +120,8 @@ def _run_inner(args):
         btn_screen_x = left + btn_cx_rel
         btn_screen_y = top + btn_cy_rel
         print(f"Clicking Start at screen ({btn_screen_x}, {btn_screen_y})")
-        bot_click(btn_screen_x, btn_screen_y)
+        # No jitter for the UI button click — see _click_start_button in main.py
+        bot_click(btn_screen_x, btn_screen_y, jitter=0)
         t0 = time.time()
         click_log.append({
             "t_rel": 0.0,
