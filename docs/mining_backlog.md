@@ -51,17 +51,32 @@ T=0, then captures continuously with zero further input).
 
 Implications for downstream issues:
 
-- **#3 find_cart** is essentially a region lookup — the cart's screen
-  position is fixed for the entire run. Save its center to
-  regions.json (`cart` region) and read it.
-- **#4 find_next_terrain** is the real detection work: scan the track
-  to the right of the cart for pits (dark gaps in the wooden plank)
-  and ore (silver-blue chunks). Distance-to-cart-x gives us
-  time-to-impact assuming roughly constant scroll speed.
+- **#3 find_cart** is NOT a trivial region lookup (corrected 2026-05-16).
+  The minigame overlay floats above the player character's world
+  position, so cart screen-x varies between captures —
+  `trace_20260515_220235` had the cart at x_frac=0.52,
+  `trace_20260516_131332` at x_frac=0.146. Needs dynamic detection.
+  Approach: template-match the distinctive cart wheels, or HSV-cluster
+  the cart body where it sits ON the plank. Blocks #4.
+- **#4 find_next_terrain** scanners are implemented (`_scan_plank_pits`,
+  `_scan_plank_ore` in `detector.py`) and validated visually against
+  both traces. The integration that picks the "next obstacle ahead of
+  cart" is blocked on #3 — without dynamic cart x we false-positive on
+  the cart itself.
 - **#5 click policy** has a hard deadline per obstacle equal to its
-  distance from the cart divided by scroll speed. Measure scroll
-  speed from the trace once we have a pit-detector — pick a fixed
-  feature on the track and track its x over consecutive frames.
+  distance from the cart divided by scroll speed. Pit-tracking on
+  `trace_20260515_220235` gives scroll speed ~93 px/s leftward.
+
+## Ore visual signature (verified 2026-05-16)
+
+Ore is **copper/orange-brown chunks protruding UP from the plank
+surface**, not the silver-blue described in the wiki/early backlog.
+HSV signature is similar to the plank itself (H≈10-14, S>=80, V>=80)
+but ore appears in the y-band ABOVE the plank top (normally cave-dark)
+and is contiguous with the plank's bright top row. Slamming on ore
+rebounds the cart upward (free jump) and scores points.
+
+Captured ore frames in `trace_20260516_131332` around frames 35-50.
 
 ## Tooling notes
 
