@@ -28,6 +28,7 @@ Thumbs.db
 
 # Per-user / debug artifacts that have been hanging around untracked
 minigames/darts/assets/darts.db
+minigames/mining/assets/jumps.db
 minigames/darts/assets/wind_samples/
 minigames/hoops/assets/score_calibration.png
 minigames/hoops/assets/score_post_dump.png

@@ -71,6 +71,8 @@ When adding a new minigame, mirror this structure and register entry points in `
 
 - **Don't ask the user to copy-paste anything into source.** Any setup script (region picker, template cropper, calibration) must persist its result to a file the bot reads on next run.
 
+- **Log every decision to a per-bot SQLite DB at `assets/<bot>.db`.** One row per click / shot / throw / jump captures the detector state at fire time + the outcome (measured a beat later). The shape is bot-specific — hoops logs `hoop_x, platform_y, offset, made` etc; darts logs `release_pose_x, launch_angle, hit`; mining logs `cart_x, next_distance_px, outcome`. Don't try to share a schema across bots, but DO follow the same data-tracking pattern: every fired action goes in the DB, with code_commit / session_started / source columns common across bots. Querying answers questions like "at what trigger distance does the bot actually survive?" that grepping log files can't. See `common/shot_log.py` (hoops), `minigames/darts/shot_log.py`, `minigames/mining/jump_log.py` for examples. New bots should mirror this layout: schema module next to `main.py`, `open_db()` + `log_*()` + outcome-update helpers, ALTER TABLE migration list for late-added columns.
+
 ### Coordinate convention
 
 All region constants in source are **window-relative**, not screen-absolute. The window's screen position is resolved at runtime via `common.window.get_bounds(WINDOW_TITLE)`, which matches by case-insensitive title substring. Capture and click coordinates are computed by adding the window's `(left, top)` each tick — so the bot survives the user moving the game window mid-run.
