@@ -21,6 +21,7 @@ from minigames.mining.detector import (
     _cart_search_region,
     _find_cart_at_plank,
     _find_plank_top_y,
+    _find_plank_x_range,
     _load_cart_templates,
     _scan_plank_ore,
     _scan_plank_pits,
@@ -47,12 +48,22 @@ def _resolve_trace_dir(arg: str) -> Path:
     sys.exit(1)
 
 
-def _annotate(frame, plank_y, cart, cart_w, pits, ores, next_terrain):
+def _annotate(frame, plank_y, cart, cart_w, pits, ores, next_terrain, plank_range):
     """Draw all detector results on a copy of frame, return it."""
     out = frame.copy()
     h, w = out.shape[:2]
     if plank_y is not None:
-        cv2.line(out, (0, plank_y), (w, plank_y), (0, 200, 0), 1)
+        # Only draw plank line across the detected plank extent.
+        if plank_range is not None:
+            cv2.line(out, (plank_range[0], plank_y), (plank_range[1], plank_y),
+                     (0, 200, 0), 1)
+            # Faint vertical markers at the plank edges
+            cv2.line(out, (plank_range[0], plank_y - 30), (plank_range[0], plank_y + 5),
+                     (0, 150, 0), 1)
+            cv2.line(out, (plank_range[1], plank_y - 30), (plank_range[1], plank_y + 5),
+                     (0, 150, 0), 1)
+        else:
+            cv2.line(out, (0, plank_y), (w, plank_y), (0, 200, 0), 1)
     if cart is not None:
         half = cart_w // 2 if cart_w else 30
         # Cart box centered on the matched cart position. Cart aspect
@@ -86,7 +97,7 @@ def _process_frame(frame):
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     plank_y = _find_plank_top_y(frame)
     if plank_y is None:
-        return None, None, 0, [], [], None
+        return None, None, 0, [], [], None, None
     cart = _find_cart_at_plank(frame, plank_y)
     cart_w = 0
     if cart is not None:
@@ -101,12 +112,14 @@ def _process_frame(frame):
         cart_w = best_w
     pits = []
     ores = []
+    plank_range = _find_plank_x_range(frame, plank_y)
     if cart is not None:
         scan_x = cart[0] + cart_w // 2 + SCAN_BUFFER_PX
-        pits = _scan_plank_pits(frame, plank_y, x_start=scan_x)
-        ores = _scan_plank_ore(frame, plank_y, x_start=scan_x)
+        x_end = plank_range[1] if plank_range else None
+        pits = _scan_plank_pits(frame, plank_y, x_start=scan_x, x_end=x_end)
+        ores = _scan_plank_ore(frame, plank_y, x_start=scan_x, x_end=x_end)
     nxt = find_next_terrain(frame, cart)
-    return plank_y, cart, cart_w, pits, ores, nxt
+    return plank_y, cart, cart_w, pits, ores, nxt, plank_range
 
 
 def run():
@@ -135,8 +148,8 @@ def run():
     print(f"Processing {len(frame_paths)} frames from {trace.name} -> {out_path.name}")
     for i, p in enumerate(frame_paths):
         frame = cv2.imread(str(p))
-        plank_y, cart, cart_w, pits, ores, nxt = _process_frame(frame)
-        annotated = _annotate(frame, plank_y, cart, cart_w, pits, ores, nxt)
+        plank_y, cart, cart_w, pits, ores, nxt, plank_range = _process_frame(frame)
+        annotated = _annotate(frame, plank_y, cart, cart_w, pits, ores, nxt, plank_range)
         writer.write(annotated)
         if (i + 1) % 50 == 0:
             print(f"  {i+1}/{len(frame_paths)} frames")

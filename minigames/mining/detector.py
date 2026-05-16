@@ -52,15 +52,30 @@ PLANK_S_MIN = 80
 PLANK_V_MIN = 120
 PLANK_MIN_SCORE = 60  # plank-signature pixel count required to claim detection
 
-# Plank visible x range as fraction of window width — outside this is
-# cave wall, not actual track.
-PLANK_X0_FRAC, PLANK_X1_FRAC = 0.20, 0.75
+# Coarse plank x-search range as fraction of window width. The actual
+# plank extent is detected per frame (via _find_plank_x_range) — the
+# minigame overlay is a fixed-pixel-width panel that floats above the
+# player's world position, so we can't hardcode its bounds as a window
+# fraction. These constants only bound the search.
+PLANK_X0_FRAC, PLANK_X1_FRAC = 0.0, 1.0
 
 # Pit scan: rows just below the plank top, in the plank's body. Dark
 # columns (V<PIT_V_MAX) for at least PIT_MIN_WIDTH px == pit.
 PIT_SCAN_DY = (2, 7)  # rows below plank top
 PIT_V_MAX = 80
 PIT_MIN_WIDTH = 5
+
+# Adjacent runs separated by this many or fewer plank-tan columns get
+# merged — one physical pit often has a narrow bright spike inside that
+# would otherwise split it into two false-positive runs.
+MERGE_GAP_PX = 4
+
+# Plank-column clustering gap: while finding the plank's x-extent, gaps
+# wider than this split a cluster (so cave/UI tan-bright pixels far from
+# the plank don't extend the detected plank). Tuned to bridge real pits
+# (typically 30-80px wide) but not the cave wall on the other side of
+# the play area.
+PLANK_CLUSTER_GAP = 100
 
 # Ore scan: rows ABOVE the plank top (chunks protrude up into normally
 # dark cave-wall area). Bright tan-ish columns there == ore.
@@ -96,14 +111,17 @@ def find_next_terrain(frame, cart) -> Optional[dict]:
     plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None
-    # cart[0] is center_x; the cart sprite has a width that varies by
-    # resolution, so estimate cart_right from the template that matched
-    # via _find_cart_at_plank's cached width. As a fallback, use a small
-    # multiple of plank thickness.
+    # cart[0] is center_x; estimate cart_right from the matched template
+    # width.
     cart_right = cart[0] + _estimate_cart_half_width(frame, plank_y)
     scan_x = cart_right + SCAN_BUFFER_PX
-    pits = _scan_plank_pits(frame, plank_y, x_start=scan_x)
-    ores = _scan_plank_ore(frame, plank_y, x_start=scan_x)
+    # Bound the scan to the actual plank x-extent — the minigame overlay
+    # is a fixed-pixel-width panel, not full-window-wide, so cave/UI
+    # beyond the plank edge can otherwise read as obstacles.
+    plank_range = _find_plank_x_range(frame, plank_y)
+    x_end = plank_range[1] if plank_range else None
+    pits = _scan_plank_pits(frame, plank_y, x_start=scan_x, x_end=x_end)
+    ores = _scan_plank_ore(frame, plank_y, x_start=scan_x, x_end=x_end)
     candidates = (
         [("pit", a, b) for a, b in pits] +
         [("ore", a, b) for a, b in ores]
@@ -200,15 +218,18 @@ def _find_plank_top_y(frame) -> Optional[int]:
     return best_y + y_min
 
 
-def _scan_plank_pits(frame, plank_y: int, x_start: Optional[int] = None) -> list[Tuple[int, int]]:
+def _scan_plank_pits(frame, plank_y: int,
+                     x_start: Optional[int] = None,
+                     x_end: Optional[int] = None) -> list[Tuple[int, int]]:
     """Return list of (x_left, x_right) for pits on the plank.
 
-    x_start (default = PLANK_X0_FRAC*w) lets the caller skip past the
-    cart, since the cart itself is dark relative to the plank and would
-    otherwise read as a giant pit."""
+    x_start / x_end constrain the scan to a sub-range. Callers should
+    typically pass the cart's right edge as x_start (so the cart itself
+    isn't read as a pit) and the result of _find_plank_x_range as x_end
+    (so cave wall past the plank isn't either)."""
     h, w = frame.shape[:2]
     x0 = x_start if x_start is not None else int(PLANK_X0_FRAC * w)
-    x1 = int(PLANK_X1_FRAC * w)
+    x1 = x_end if x_end is not None else int(PLANK_X1_FRAC * w)
     y0 = plank_y + PIT_SCAN_DY[0]
     y1 = plank_y + PIT_SCAN_DY[1]
     if y0 < 0 or y1 > h or x1 <= x0:
@@ -220,14 +241,15 @@ def _scan_plank_pits(frame, plank_y: int, x_start: Optional[int] = None) -> list
     return _extract_runs(col_is_pit, offset=x0, min_width=PIT_MIN_WIDTH)
 
 
-def _scan_plank_ore(frame, plank_y: int, x_start: Optional[int] = None) -> list[Tuple[int, int]]:
+def _scan_plank_ore(frame, plank_y: int,
+                    x_start: Optional[int] = None,
+                    x_end: Optional[int] = None) -> list[Tuple[int, int]]:
     """Return list of (x_left, x_right) for ore deposits ABOVE the plank.
 
-    Same x_start convention as the pit scanner — caller passes
-    cart_right_x to skip the cart's own protrusion above the plank."""
+    Same x_start/x_end convention as the pit scanner."""
     h, w = frame.shape[:2]
     x0 = x_start if x_start is not None else int(PLANK_X0_FRAC * w)
-    x1 = int(PLANK_X1_FRAC * w)
+    x1 = x_end if x_end is not None else int(PLANK_X1_FRAC * w)
     y0 = plank_y + ORE_SCAN_DY[0]
     y1 = plank_y + ORE_SCAN_DY[1]
     if y0 < 0 or y1 > h or x1 <= x0:
@@ -242,7 +264,49 @@ def _scan_plank_ore(frame, plank_y: int, x_start: Optional[int] = None) -> list[
     return _extract_runs(col_is_ore, offset=x0, min_width=ORE_MIN_WIDTH)
 
 
-def _extract_runs(col_mask, offset: int, min_width: int) -> list[Tuple[int, int]]:
+def _find_plank_x_range(frame, plank_y: int) -> Optional[Tuple[int, int]]:
+    """Return (x_left, x_right) of the visible plank — the floating
+    minigame overlay is a fixed-pixel-width panel and doesn't extend to
+    the window edges. Detected by scanning a thin y-band at the plank
+    top for plank-tan-signature columns, clustering them with
+    PLANK_CLUSTER_GAP tolerance to bridge real pits, and returning the
+    bounds of the largest cluster. Stray tan-bright pixels elsewhere on
+    screen (UI, cave decoration) don't extend the range. Returns None if
+    no plank found."""
+    h, _w = frame.shape[:2]
+    y0 = plank_y
+    y1 = min(h, plank_y + 3)
+    if y1 <= y0:
+        return None
+    hsv = cv2.cvtColor(frame[y0:y1, :], cv2.COLOR_BGR2HSV)
+    is_plank = ((hsv[:, :, 0] >= PLANK_H_LO) & (hsv[:, :, 0] <= PLANK_H_HI) &
+                (hsv[:, :, 1] >= PLANK_S_MIN) & (hsv[:, :, 2] >= PLANK_V_MIN))
+    col_score = is_plank.sum(axis=0)
+    plank_cols = np.where(col_score >= 2)[0]
+    if len(plank_cols) < 10:
+        return None
+    # Cluster into groups separated by gaps > PLANK_CLUSTER_GAP. Real
+    # pits are typically 30-80px wide; cave-wall stray pixels live in
+    # entirely separate parts of the frame (hundreds of px away).
+    clusters: list[list[int]] = [[int(plank_cols[0])]]
+    for c in plank_cols[1:]:
+        if c - clusters[-1][-1] > PLANK_CLUSTER_GAP:
+            clusters.append([int(c)])
+        else:
+            clusters[-1].append(int(c))
+    # Pick the cluster with the most plank columns (densest), not just
+    # the widest one — UI decorations can span many columns sparsely.
+    best = max(clusters, key=lambda cl: len(cl))
+    return best[0], best[-1] + 1
+
+
+def _extract_runs(col_mask, offset: int, min_width: int,
+                  merge_gap: int = MERGE_GAP_PX) -> list[Tuple[int, int]]:
+    """Find contiguous True runs in col_mask, return (x_left, x_right)
+    pairs offset into frame coords. Adjacent runs separated by <= merge_gap
+    columns of False are merged — a single pit's interior often has small
+    bright spots (spike highlights) that split it into fragments. Final
+    pass filters out runs narrower than min_width."""
     runs: list[Tuple[int, int]] = []
     in_run = False
     start = 0
@@ -254,4 +318,15 @@ def _extract_runs(col_mask, offset: int, min_width: int) -> list[Tuple[int, int]
             in_run = False
     if in_run:
         runs.append((start + offset, len(col_mask) + offset))
+
+    if merge_gap > 0 and len(runs) > 1:
+        merged = [runs[0]]
+        for a, b in runs[1:]:
+            prev_a, prev_b = merged[-1]
+            if a - prev_b <= merge_gap:
+                merged[-1] = (prev_a, b)
+            else:
+                merged.append((a, b))
+        runs = merged
+
     return [(a, b) for (a, b) in runs if (b - a) >= min_width]
