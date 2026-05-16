@@ -46,6 +46,8 @@ def run():
                         help="seconds between frames (default 0.1)")
     parser.add_argument("--startup", type=float, default=8.0,
                         help="seconds before capture starts (default 8) — use this to alt-tab to game")
+    parser.add_argument("--no-bot-click", action="store_true",
+                        help="don't click Play Game — user plays manually, bot only records frames + clicks")
     args = parser.parse_args()
 
     with session_log(LOGS_DIR) as log_path:
@@ -60,20 +62,25 @@ def _run_inner(args):
         print(e)
         return
 
-    start_btn = get_region(_HERE, "start_button", width, height)
-    if start_btn is None:
-        print("No 'start_button' region in regions.json. Run mining-pick-start-button first.")
-        return
-
-    btn_cx_rel = start_btn["left"] + start_btn["width"] // 2
-    btn_cy_rel = start_btn["top"] + start_btn["height"] // 2
-
-    print(f"Window {WINDOW_TITLE!r} at ({left},{top}) size {width}x{height}")
-    print(f"Start button center (window-rel): ({btn_cx_rel}, {btn_cy_rel})")
-    print(f"Startup: {args.startup:.0f}s — bring the minigame Start prompt on-screen.")
-    print(f"Bot will click Start, then capture for {args.seconds:.0f}s @ {args.interval*1000:.0f}ms intervals.")
-    print("Do not click during capture — we want to see if the cart auto-scrolls.")
-    print("Slam mouse to any screen corner to abort.\n")
+    if args.no_bot_click:
+        btn_cx_rel = btn_cy_rel = None
+        print(f"Window {WINDOW_TITLE!r} at ({left},{top}) size {width}x{height}")
+        print(f"Startup: {args.startup:.0f}s — alt-tab to the game.")
+        print(f"Manual mode: you play, bot only records {args.seconds:.0f}s of frames @ "
+              f"{args.interval*1000:.0f}ms + click timestamps.")
+        print("Slam mouse to any screen corner to abort.\n")
+    else:
+        start_btn = get_region(_HERE, "start_button", width, height)
+        if start_btn is None:
+            print("No 'start_button' region in regions.json. Run mining-pick-start-button first.")
+            return
+        btn_cx_rel = start_btn["left"] + start_btn["width"] // 2
+        btn_cy_rel = start_btn["top"] + start_btn["height"] // 2
+        print(f"Window {WINDOW_TITLE!r} at ({left},{top}) size {width}x{height}")
+        print(f"Start button center (window-rel): ({btn_cx_rel}, {btn_cy_rel})")
+        print(f"Startup: {args.startup:.0f}s — bring the minigame Start prompt on-screen.")
+        print(f"Bot will click Start, then capture for {args.seconds:.0f}s @ {args.interval*1000:.0f}ms intervals.")
+        print("Slam mouse to any screen corner to abort.\n")
 
     for s in range(int(args.startup), 0, -1):
         print(f"  starting in {s}...")
@@ -104,20 +111,23 @@ def _run_inner(args):
                 "source": "human",
             })
 
-    # Fire the Start click. T=0 is the moment immediately after this click
-    # returns. We do not capture the pre-click frame — issue #1 is purely
-    # about what happens after Start.
-    btn_screen_x = left + btn_cx_rel
-    btn_screen_y = top + btn_cy_rel
-    print(f"Clicking Start at screen ({btn_screen_x}, {btn_screen_y})")
-    bot_click(btn_screen_x, btn_screen_y)
-    t0 = time.time()
-    click_log.append({
-        "t_rel": 0.0,
-        "x_rel": btn_cx_rel,
-        "y_rel": btn_cy_rel,
-        "source": "bot:start",
-    })
+    if btn_cx_rel is None:
+        # Manual mode — T=0 is just the moment after startup countdown.
+        t0 = time.time()
+    else:
+        # Fire the Start click. T=0 is the moment immediately after this
+        # click returns.
+        btn_screen_x = left + btn_cx_rel
+        btn_screen_y = top + btn_cy_rel
+        print(f"Clicking Start at screen ({btn_screen_x}, {btn_screen_y})")
+        bot_click(btn_screen_x, btn_screen_y)
+        t0 = time.time()
+        click_log.append({
+            "t_rel": 0.0,
+            "x_rel": btn_cx_rel,
+            "y_rel": btn_cy_rel,
+            "source": "bot:start",
+        })
 
     listener = pynput.mouse.Listener(on_click=on_click)
     listener.start()
@@ -144,13 +154,21 @@ def _run_inner(args):
             cv2.imwrite(str(out_dir / f"frame_{i:04d}.png"), bgr)
             frame_times.append(round(time.time() - t0, 3))
             time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("Interrupted — saving what we have.")
+        aborted = True
     finally:
         listener.stop()
         listener.join(timeout=1)
+        _write_metadata(out_dir, args, width, height, frame_times,
+                        list(click_log), aborted)
+        print(f"\nWrote {len(frame_times)} frames to {out_dir}")
 
-    # Attach frame index to each click based on nearest preceding frame time.
-    with click_lock:
-        clicks = list(click_log)
+
+def _write_metadata(out_dir, args, win_w, win_h, frame_times, clicks, aborted):
+    """Attach frame-idx to each click and write trace.json. Robust to
+    partial state — runs from `finally` so a ctrl-C or unexpected exit
+    still produces a usable trace."""
     for c in clicks:
         t = c["t_rel"]
         idx = -1
@@ -160,20 +178,21 @@ def _run_inner(args):
             else:
                 break
         c["frame_idx"] = idx
-
     meta = {
         "window_title": WINDOW_TITLE,
-        "window_size": [width, height],
+        "window_size": [win_w, win_h],
         "interval_s": args.interval,
         "seconds_requested": args.seconds,
         "n_frames": len(frame_times),
         "aborted": aborted,
+        "manual_mode": args.no_bot_click,
         "frame_times": frame_times,
         "clicks": clicks,
     }
-    (out_dir / "trace.json").write_text(json.dumps(meta, indent=2))
-    print(f"\nWrote {len(frame_times)} frames + {len(clicks)} clicks to {out_dir}")
-    print(f"Clicks (frame_idx, t_rel, x, y): {[(c['frame_idx'], c['t_rel'], c['x_rel'], c['y_rel']) for c in clicks]}")
+    try:
+        (out_dir / "trace.json").write_text(json.dumps(meta, indent=2))
+    except Exception as e:
+        print(f"  [trace] failed to write trace.json: {e}")
 
 
 if __name__ == "__main__":
