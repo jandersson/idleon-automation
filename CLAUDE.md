@@ -126,19 +126,32 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 This makes `from common...` and `from minigames...` work whether launched as a module, as a script, or via the `[project.scripts]` console_scripts entry. Keep it when adding new entry-point scripts.
 
+### Idleon clicks are buttons, not pointers
+
+Across the minigames we've investigated, **click position has no
+gameplay effect — only the click event matters.** A click anywhere in
+the play area is equivalent to a "press A" on a console controller: the
+game reads the timing and the in-game state, not the pixel coordinates.
+This is true for hoops (verified by click-position sweep) and for mining
+(jump on click 1, slam on click 2 mid-air; cart x doesn't depend on
+where the click landed). Assume it holds for new minigames unless
+something explicitly proves otherwise.
+
+Implication: bots can fire `click()` at any sane position within the
+game window. Using a detected sprite's coordinates (hoop center, cart
+center) is just a sane default — it's not aiming. Don't try to
+correlate `click_x / click_y` with outcomes in the DB.
+
 ### Hoops: established findings
 
 A few things were settled empirically on 2026-05-03 — don't re-run these
 investigations:
 
-- **Click position has no measurable effect on aim.** Bot fires `click()`
-  at the hoop coordinates because that's a sane default, but it could
-  click anywhere with the same trajectory. The only thing that controls
-  where the ball lands is `platform_y` at click time (driven by `offset`).
-  Verified with `click_sweep` (varied click_y across 320px) and
-  `click_extreme` (window corners) experiments — both produced ball
-  trajectories within the ~20px noise floor. See `docs/cleanup_backlog.md`
-  for the deletion log.
+- **Click position has no measurable effect on aim** — see the
+  cross-cutting note above. Verified by hoops with `click_sweep` (varied
+  click_y across 320px) and `click_extreme` (window corners)
+  experiments; both produced ball trajectories within the ~20px noise
+  floor. See `docs/cleanup_backlog.md` for the deletion log.
 
 - **Score detection requires both OCR + trajectory cross-check.** Tesseract
   occasionally misreads small score digits (`0` → `1`) producing false-

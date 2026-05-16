@@ -218,6 +218,13 @@ def _run_inner():
                 code_commit=code_commit,
                 source="bot",
             )
+            # Click position is decorative — Idleon treats the click as a
+            # button press, not a pointer event. Aiming at the cart is
+            # just a sane default that's guaranteed to be inside the play
+            # area. See CLAUDE.md ("Idleon clicks are buttons, not
+            # pointers"). The thing that controls jump vs slam is the
+            # click *timing* relative to the cart being grounded vs
+            # airborne, not the click coordinates.
             screen_x = win_left + cart[0]
             screen_y = win_top + cart[1]
             print(f"JUMP #{jump_idx} pit_dist={terrain['distance_px']} "
