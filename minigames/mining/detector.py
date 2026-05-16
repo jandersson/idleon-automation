@@ -60,6 +60,14 @@ PLANK_S_MIN = 80
 PLANK_V_MIN = 120
 PLANK_MIN_SCORE = 60  # plank-signature pixel count required to claim detection
 
+# Plank y-search range as fraction of window height. The minigame overlay
+# anchors above the player character's world position; the player is
+# usually in the lower half of the world view, putting the plank in the
+# upper portion. Range is generous to cover different windowed/fullscreen
+# states and aspect ratios.
+PLANK_Y_FRAC_MIN = 0.10
+PLANK_Y_FRAC_MAX = 0.60
+
 # Coarse plank x-search range as fraction of window width. The actual
 # plank extent is detected per frame (via _find_plank_x_range) — the
 # minigame overlay is a fixed-pixel-width panel that floats above the
@@ -235,17 +243,16 @@ def _estimate_cart_half_width(frame, plank_y: int) -> int:
 def _find_plank_top_y(frame) -> Optional[int]:
     """Locate the brightest tan-hued horizontal band — the plank top.
 
-    The minigame overlay sits at roughly 20-45% of window height in both
-    1032- and 572-tall traces, so restrict the search to that window
-    rather than the whole frame. Requires at least PLANK_MIN_SCORE
-    plank-signature pixels in the best row to claim a detection — this
-    keeps overworld tan-textured surfaces from being mistaken for the
-    minigame plank when the minigame isn't active."""
+    Restricted to the upper-middle of the window since the minigame
+    overlay floats above the player (and the player typically stands in
+    the lower half of the world view). PLANK_MIN_SCORE guards against
+    overworld tan-textured surfaces being mistaken for the plank when
+    the minigame isn't active."""
     h, w = frame.shape[:2]
     x0 = int(PLANK_X0_FRAC * w)
     x1 = int(PLANK_X1_FRAC * w)
-    y_min = int(0.20 * h)
-    y_max = int(0.45 * h)
+    y_min = int(PLANK_Y_FRAC_MIN * h)
+    y_max = int(PLANK_Y_FRAC_MAX * h)
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     band = hsv[y_min:y_max, x0:x1]
     is_plank = ((band[:, :, 0] >= PLANK_H_LO) & (band[:, :, 0] <= PLANK_H_HI) &

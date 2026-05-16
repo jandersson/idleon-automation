@@ -64,6 +64,15 @@ OUTCOME_DELAY_S = 1.8
 # giving up — covers brief transitions in/out of the minigame UI.
 PLANK_LOST_TIMEOUT_S = 8.0
 
+# Print a one-line telemetry every TELEMETRY_INTERVAL_S so we can see
+# what the detector is reporting even when no jump fires.
+TELEMETRY_INTERVAL_S = 0.5
+
+# Where to dump the last-seen frame + a debug overlay if the bot exits
+# without ever finding the plank — helps diagnose detection failures
+# in new environments.
+DIAG_DIR = _HERE / "assets" / "diagnostics"
+
 
 def run():
     with session_log(LOGS_DIR) as log_path:
@@ -96,6 +105,9 @@ def _run_inner():
 
     last_click_time = 0.0
     last_plank_seen = time.time()
+    last_telemetry_at = 0.0
+    last_frame: cv2.Mat | None = None  # for diagnostic dump on exit
+    plank_ever_seen = False
 
     while True:
         check_failsafe()
@@ -107,6 +119,7 @@ def _run_inner():
 
         frame_bgra = grab_region(win_left, win_top, win_w, win_h)
         frame = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+        last_frame = frame
 
         plank_y = _find_plank_top_y(frame)
         cart = find_cart(frame)
@@ -116,19 +129,29 @@ def _run_inner():
         pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
                                             cart, plank_y)
 
+        # Periodic telemetry — see what the detector is doing when no
+        # jump fires.
+        if now - last_telemetry_at >= TELEMETRY_INTERVAL_S:
+            last_telemetry_at = now
+            terr = find_next_terrain(frame, cart) if cart else None
+            print(f"  [t+{now - last_plank_seen:5.2f}] "
+                  f"plank_y={plank_y} cart={cart} next={terr}")
+
         if cart is None:
             if time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S:
-                # Resolve any still-pending outcomes as died (game's gone).
                 for p in pending_outcomes:
                     set_outcome(conn, p["row_id"], "died",
                                 int((time.time() - p["click_time"]) * 1000))
                 print(f"Plank lost for >{PLANK_LOST_TIMEOUT_S}s — exiting.")
+                if not plank_ever_seen and last_frame is not None:
+                    _dump_diagnostics(last_frame, win_w, win_h)
                 _print_summary(conn, session_started, attempt_idx)
                 conn.close()
                 return
             time.sleep(POLL_INTERVAL)
             continue
         last_plank_seen = time.time()
+        plank_ever_seen = True
 
         terrain = find_next_terrain(frame, cart)
         if (terrain is not None
@@ -201,6 +224,35 @@ def _print_summary(conn, session_started, attempt_idx):
     if rows:
         summary = ", ".join(f"{o or 'pending'}={n}" for o, n in rows)
         print(f"Session summary (attempt {attempt_idx}): {summary}")
+
+
+def _dump_diagnostics(frame, win_w: int, win_h: int) -> None:
+    """When the bot exits without ever seeing the plank, dump the last
+    frame + an annotated diagnostic image showing where the detector
+    looked. Lets the user pull the saved PNG offline and see why
+    detection failed."""
+    from minigames.mining.detector import (
+        PLANK_X0_FRAC, PLANK_X1_FRAC,
+        PLANK_Y_FRAC_MIN, PLANK_Y_FRAC_MAX,
+    )
+    from datetime import datetime
+    DIAG_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    raw_path = DIAG_DIR / f"no_plank_{stamp}_raw.png"
+    annot_path = DIAG_DIR / f"no_plank_{stamp}_annotated.png"
+    cv2.imwrite(str(raw_path), frame)
+    annot = frame.copy()
+    y0 = int(PLANK_Y_FRAC_MIN * win_h)
+    y1 = int(PLANK_Y_FRAC_MAX * win_h)
+    x0 = int(PLANK_X0_FRAC * win_w)
+    x1 = int(PLANK_X1_FRAC * win_w)
+    cv2.rectangle(annot, (x0, y0), (x1, y1), (0, 255, 0), 2)
+    cv2.putText(annot, f"plank search region ({win_w}x{win_h})",
+                (x0 + 4, y0 + 16), cv2.FONT_HERSHEY_SIMPLEX,
+                0.5, (0, 255, 0), 1)
+    cv2.imwrite(str(annot_path), annot)
+    print(f"Diagnostic: {raw_path.name} + {annot_path.name} "
+          f"(check minigames/mining/assets/diagnostics/)")
 
 
 def _click_start_button(win_left, win_top, win_w, win_h) -> bool:
