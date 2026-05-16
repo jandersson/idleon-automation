@@ -211,7 +211,11 @@ def _click_start_button(win_left, win_top, win_w, win_h) -> bool:
         return False
     cx = win_left + start_btn["left"] + start_btn["width"] // 2
     cy = win_top + start_btn["top"] + start_btn["height"] // 2
-    print(f"Clicking Play Game at screen ({cx}, {cy})")
+    print(f"Play Game button: window-rel rect "
+          f"({start_btn['left']},{start_btn['top']}) "
+          f"{start_btn['width']}x{start_btn['height']} "
+          f"-> screen center ({cx},{cy}) "
+          f"window=({win_left},{win_top}) {win_w}x{win_h}")
     # No jitter for the UI button click — the button sits over the
     # walkable game world, so a ±3px drift can land on bare ground and
     # move the character instead, canceling the minigame entry.
