@@ -29,24 +29,39 @@ Helper NPC, not the active minigame. A proper trace was captured on
 2026-05-15 via `mining-trace`, which clicks the in-game "Play Game"
 button itself and then captures continuously without further clicks.
 
-## Cart behavior (issue #1, resolved 2026-05-15)
+## Cart behavior (issue #1, resolved 2026-05-16)
 
-**The cart waits for the first jump click. It does NOT auto-scroll.**
-If no input arrives, the attempt self-terminates after ~2-3 seconds
-and the daily-attempts counter still ticks down. From
-`captures/trace_20260515_220235`:
+**Game-logic: the cart auto-scrolls forward immediately after Start.**
+**Screen-coordinates: the cart sprite is fixed; the track scrolls past
+it from right to left.** Classic endless-runner camera — same motion,
+two reference frames.
 
-- t=0.0s: bot clicks "Play Game" button
-- t=0.0 → t=~2.4s: cart sits at start of track, identical position
-  every frame (`analysis/trace_kymograph2.png` shows a vertical streak
-  — zero horizontal motion)
-- t=~2.5s: cart + track disappear (attempt ends without a single jump)
-- t=~5s: UI returns to the Play Game prompt, attempts counter dropped
-  5→4
+Evidence: `captures/trace_20260515_220235` (bot clicks Play Game at
+T=0, then captures continuously with zero further input).
 
-Implication for the click policy (#5): the bot needs an "ignition"
-click to start cart motion, and must fire it within the ~2-3s grace
-window or the attempt is wasted.
+- Cart sprite pixels at y≈295-330, x≈290-360 are **byte-identical**
+  between t=0.0s and t=2.0s — `cv2.absdiff` max=0, mean=0.0 in that
+  box. The cart does not move 1 pixel on screen.
+- A pit/gap visible at the right edge of the track in frame 0 slides
+  leftward and is directly under the cart by frame 28 (t=2.8s) — the
+  track moves, not the cart. See `analysis/show_frame_{000,010,020,
+  025,028,030}.png`.
+- Frame 30 (t=3.0s): cart is gone (fell into pit). Frame 144 (t=14.4s):
+  back at Play Game prompt with counter 5→4 (attempt consumed).
+
+Implications for downstream issues:
+
+- **#3 find_cart** is essentially a region lookup — the cart's screen
+  position is fixed for the entire run. Save its center to
+  regions.json (`cart` region) and read it.
+- **#4 find_next_terrain** is the real detection work: scan the track
+  to the right of the cart for pits (dark gaps in the wooden plank)
+  and ore (silver-blue chunks). Distance-to-cart-x gives us
+  time-to-impact assuming roughly constant scroll speed.
+- **#5 click policy** has a hard deadline per obstacle equal to its
+  distance from the cart divided by scroll speed. Measure scroll
+  speed from the trace once we have a pit-detector — pick a fixed
+  feature on the track and track its x over consecutive frames.
 
 ## Tooling notes
 
