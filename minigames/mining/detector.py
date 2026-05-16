@@ -46,6 +46,14 @@ CART_MATCH_THRESHOLD = 0.80
 CART_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
 _cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
 
+# Play Game button matching. The button has a per-attempt counter ("5",
+# "4", ...) rendered on a wheel icon at the right edge, so the template
+# isn't pixel-perfect across captures — a slightly looser threshold
+# accommodates the changing digit.
+PLAY_BUTTON_MATCH_THRESHOLD = 0.65
+PLAY_BUTTON_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
+_play_button_template: Optional[np.ndarray] = None  # lazy-loaded
+
 # Plank-surface signature (HSV): tan/wood — H in [5,20], S>=80, V>=120.
 PLANK_H_LO, PLANK_H_HI = 5, 20
 PLANK_S_MIN = 80
@@ -82,6 +90,37 @@ PLANK_CLUSTER_GAP = 100
 ORE_SCAN_DY = (-15, -2)  # rows above plank top
 ORE_V_MIN = 80
 ORE_MIN_WIDTH = 5
+
+
+def find_play_button(frame) -> Optional[Tuple[int, int]]:
+    """Locate the in-game 'Play Game' button via multi-scale template
+    matching against assets/play_button.png. Returns (center_x, center_y)
+    in frame coords, or None if no match above PLAY_BUTTON_MATCH_THRESHOLD.
+
+    Resilient to environment changes (different window size, player
+    position, etc.) where the saved regions.json fractions wouldn't apply
+    — the button's screen position depends on where the player character
+    stands in the world."""
+    if frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = _load_play_button_template()
+    if template is None:
+        return None
+    center, val, _ = match_multiscale_center(
+        frame, template, scales=PLAY_BUTTON_SCALES,
+    )
+    if center is None or val < PLAY_BUTTON_MATCH_THRESHOLD:
+        return None
+    return center
+
+
+def _load_play_button_template() -> Optional[np.ndarray]:
+    global _play_button_template
+    if _play_button_template is None:
+        p = _HERE / "assets" / "play_button.png"
+        if p.exists():
+            _play_button_template = cv2.imread(str(p))
+    return _play_button_template
 
 
 def find_cart(frame) -> Optional[Tuple[int, int]]:

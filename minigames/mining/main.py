@@ -36,7 +36,7 @@ from common.regions import get_region
 from common.session_log import session_log
 from common.shot_log import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
-from minigames.mining.detector import find_cart, find_next_terrain, _find_plank_top_y, _find_plank_x_range
+from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, _find_plank_top_y, _find_plank_x_range
 from minigames.mining.jump_log import open_db, log_jump, set_outcome
 
 _HERE = Path(__file__).parent
@@ -204,21 +204,32 @@ def _print_summary(conn, session_started, attempt_idx):
 
 
 def _click_start_button(win_left, win_top, win_w, win_h) -> bool:
+    """Click the Play Game button. Preferred path: template-match it
+    visually so the bot survives window/environment changes. Fallback:
+    a saved regions.json rectangle for legacy setups."""
+    frame_bgra = grab_region(win_left, win_top, win_w, win_h)
+    frame = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+    rel = find_play_button(frame)
+    if rel is not None:
+        cx = win_left + rel[0]
+        cy = win_top + rel[1]
+        print(f"Play Game (template-matched): window-rel ({rel[0]},{rel[1]}) "
+              f"-> screen ({cx},{cy})")
+        bot_click(cx, cy, jitter=0)
+        time.sleep(0.5)
+        return True
+
     start_btn = get_region(_HERE, "start_button", win_w, win_h)
     if start_btn is None:
-        print("No 'start_button' region in regions.json. "
-              "Run mining-pick-start-button first.")
+        print("Play Game not template-matched and no 'start_button' region "
+              "saved. Either bring the prompt on-screen, or run "
+              "mining-pick-start-button to save a fallback region.")
         return False
     cx = win_left + start_btn["left"] + start_btn["width"] // 2
     cy = win_top + start_btn["top"] + start_btn["height"] // 2
-    print(f"Play Game button: window-rel rect "
-          f"({start_btn['left']},{start_btn['top']}) "
-          f"{start_btn['width']}x{start_btn['height']} "
-          f"-> screen center ({cx},{cy}) "
-          f"window=({win_left},{win_top}) {win_w}x{win_h}")
-    # No jitter for the UI button click — the button sits over the
-    # walkable game world, so a ±3px drift can land on bare ground and
-    # move the character instead, canceling the minigame entry.
+    print(f"Play Game (region fallback): rect ({start_btn['left']},"
+          f"{start_btn['top']}) {start_btn['width']}x{start_btn['height']} "
+          f"-> screen ({cx},{cy})")
     bot_click(cx, cy, jitter=0)
     time.sleep(0.5)
     return True

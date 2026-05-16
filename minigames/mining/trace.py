@@ -31,6 +31,7 @@ from common.input import check_failsafe, click as bot_click
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
+from minigames.mining.detector import find_play_button
 from minigames.mining.main import WINDOW_TITLE
 
 _HERE = Path(__file__).parent
@@ -70,14 +71,27 @@ def _run_inner(args):
               f"{args.interval*1000:.0f}ms + click timestamps.")
         print("Slam mouse to any screen corner to abort.\n")
     else:
-        start_btn = get_region(_HERE, "start_button", width, height)
-        if start_btn is None:
-            print("No 'start_button' region in regions.json. Run mining-pick-start-button first.")
-            return
-        btn_cx_rel = start_btn["left"] + start_btn["width"] // 2
-        btn_cy_rel = start_btn["top"] + start_btn["height"] // 2
+        # Prefer template-matched Play Game (works across environments).
+        # Fall back to the saved regions.json rectangle if the live grab
+        # doesn't find a match (prompt not on-screen yet, button visually
+        # different, etc.) — region picker is still useful as a backstop.
+        frame_bgra = grab_region(left, top, width, height)
+        frame = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
+        matched = find_play_button(frame)
+        if matched is not None:
+            btn_cx_rel, btn_cy_rel = matched
+            source = "template"
+        else:
+            start_btn = get_region(_HERE, "start_button", width, height)
+            if start_btn is None:
+                print("Play Game not template-matched and no 'start_button' region "
+                      "saved. Run mining-pick-start-button first.")
+                return
+            btn_cx_rel = start_btn["left"] + start_btn["width"] // 2
+            btn_cy_rel = start_btn["top"] + start_btn["height"] // 2
+            source = "region"
         print(f"Window {WINDOW_TITLE!r} at ({left},{top}) size {width}x{height}")
-        print(f"Start button center (window-rel): ({btn_cx_rel}, {btn_cy_rel})")
+        print(f"Start button center ({source}, window-rel): ({btn_cx_rel}, {btn_cy_rel})")
         print(f"Startup: {args.startup:.0f}s — bring the minigame Start prompt on-screen.")
         print(f"Bot will click Start, then capture for {args.seconds:.0f}s @ {args.interval*1000:.0f}ms intervals.")
         print("Slam mouse to any screen corner to abort.\n")
