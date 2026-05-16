@@ -51,13 +51,17 @@ T=0, then captures continuously with zero further input).
 
 Implications for downstream issues:
 
-- **#3 find_cart** is NOT a trivial region lookup (corrected 2026-05-16).
-  The minigame overlay floats above the player character's world
-  position, so cart screen-x varies between captures —
-  `trace_20260515_220235` had the cart at x_frac=0.52,
-  `trace_20260516_131332` at x_frac=0.146. Needs dynamic detection.
-  Approach: template-match the distinctive cart wheels, or HSV-cluster
-  the cart body where it sits ON the plank. Blocks #4.
+- **#3 find_cart** turned out to need dynamic detection. The minigame
+  overlay floats above the player character's world position, so cart
+  screen-x varies between captures. First-pass implementation lands as
+  multi-template matching against `assets/cart_*.png` at multiple
+  scales, anchored to the auto-detected plank-top y. Validated on
+  trace_20260515_220235 (cart correctly tracked at x≈498 across the
+  in-play frames). The trace_20260516_131332 manual capture is less
+  reliable — its minigame-active cart looks different from the
+  templates extracted from frame 0 of each trace, so detection misses
+  many frames in the middle. Plan: extract more templates from clean
+  in-play frames as we capture more attempts at various resolutions.
 - **#4 find_next_terrain** scanners are implemented (`_scan_plank_pits`,
   `_scan_plank_ore` in `detector.py`) and validated visually against
   both traces. The integration that picks the "next obstacle ahead of

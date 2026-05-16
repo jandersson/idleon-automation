@@ -1,9 +1,11 @@
 """Mining detector.
 
 Per the trace analysis (issue #1 resolution), the cart sprite is fixed
-on screen and the track scrolls past it from right to left. So
-`find_cart` returns a constant position and `find_next_terrain` scans
-the plank to the right of the cart for incoming obstacles.
+on screen while the minigame is active and the track scrolls past it
+from right to left. So `find_cart` locates the cart per-frame (its
+screen x depends on the player character's world position when the
+minigame opens), and `find_next_terrain` scans the plank to the right
+of the cart for incoming obstacles.
 
 Obstacle types (verified visually against trace_20260515_220235 and
 trace_20260516_131332):
@@ -15,23 +17,34 @@ trace_20260516_131332):
 
 The plank's screen y-position varies by window size (the minigame UI
 doesn't scale linearly), so we auto-detect the plank-top y per frame
-by scanning for the brightest tan-hued horizontal band. Pit and ore
-scans are then anchored to that y. This keeps the detector
+by scanning for the brightest tan-hued horizontal band. Pit, ore, and
+cart scans are all anchored to that y. This keeps the detector
 window-size-independent.
+
+Cart detection uses multi-template matching against a small set of
+cart sprites captured at different window resolutions. The template
+that scores highest above CART_MATCH_THRESHOLD wins. Add new templates
+to assets/cart_*.png if matching fails at a new resolution.
 """
+from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
-# Cart sprite — currently best-effort. The cart's x is roughly fixed at
-# the left side of the visible plank; we use a fraction-of-width default
-# until #3 puts an actual cart picker in regions.json. Scans start a
-# couple px past the cart's right edge so its trailing-edge pixels don't
-# read as the start of an obstacle.
-CART_X_FRAC = 0.34
-CART_RIGHT_FRAC = 0.40
+from common.templates import match_multiscale_center
+
+_HERE = Path(__file__).parent
+
+# Scans start a few px past the cart's right edge so its trailing-edge
+# pixels don't read as the start of an obstacle.
 SCAN_BUFFER_PX = 10
+
+# Cart matching: try every template in assets/cart_*.png at multi-scale,
+# pick the best match above CART_MATCH_THRESHOLD.
+CART_MATCH_THRESHOLD = 0.80
+CART_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
+_cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
 
 # Plank-surface signature (HSV): tan/wood — H in [5,20], S>=80, V>=120.
 PLANK_H_LO, PLANK_H_HI = 5, 20
@@ -57,16 +70,17 @@ ORE_MIN_WIDTH = 5
 
 
 def find_cart(frame) -> Optional[Tuple[int, int]]:
-    """Return cart sprite center (x, y). The cart's screen position is
-    fixed while the minigame is active; we anchor y to the detected
-    plank-top so window-size doesn't matter."""
+    """Locate the cart sprite. Returns (center_x, center_y) in frame
+    coords, or None if no template matched above CART_MATCH_THRESHOLD.
+
+    Search is restricted to a band around the auto-detected plank-top y;
+    the cart always sits on the plank."""
     if frame.shape[2] == 4:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None
-    w = frame.shape[1]
-    return (int(CART_X_FRAC * w), plank_y - 6)
+    return _find_cart_at_plank(frame, plank_y)
 
 
 def find_next_terrain(frame, cart) -> Optional[dict]:
@@ -82,8 +96,11 @@ def find_next_terrain(frame, cart) -> Optional[dict]:
     plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None
-    w = frame.shape[1]
-    cart_right = int(CART_RIGHT_FRAC * w)
+    # cart[0] is center_x; the cart sprite has a width that varies by
+    # resolution, so estimate cart_right from the template that matched
+    # via _find_cart_at_plank's cached width. As a fallback, use a small
+    # multiple of plank thickness.
+    cart_right = cart[0] + _estimate_cart_half_width(frame, plank_y)
     scan_x = cart_right + SCAN_BUFFER_PX
     pits = _scan_plank_pits(frame, plank_y, x_start=scan_x)
     ores = _scan_plank_ore(frame, plank_y, x_start=scan_x)
@@ -95,6 +112,64 @@ def find_next_terrain(frame, cart) -> Optional[dict]:
         return None
     nearest = min(candidates, key=lambda c: c[1])
     return {"kind": nearest[0], "x": nearest[1], "distance_px": nearest[1] - cart_right}
+
+
+def _load_cart_templates() -> list[Tuple[str, np.ndarray]]:
+    """Lazy-load all assets/cart_*.png templates."""
+    global _cart_templates
+    if _cart_templates is None:
+        templates = []
+        for p in sorted((_HERE / "assets").glob("cart_*.png")):
+            t = cv2.imread(str(p))
+            if t is not None:
+                templates.append((p.stem, t))
+        _cart_templates = templates
+    return _cart_templates
+
+
+def _find_cart_at_plank(frame, plank_y: int) -> Optional[Tuple[int, int]]:
+    """Multi-template match the cart in a band around plank_y. Returns the
+    best match's center, or None if no template scored above
+    CART_MATCH_THRESHOLD."""
+    templates = _load_cart_templates()
+    if not templates:
+        return None
+    h = frame.shape[0]
+    # Cart fits roughly within plank_y - 30 ≤ y ≤ plank_y + 5 (body above,
+    # wheels at plank top). Give the matcher some slack.
+    y0 = max(0, plank_y - 40)
+    y1 = min(h, plank_y + 15)
+    region = (0, y0, frame.shape[1], y1)
+    best_center = None
+    best_val = -1.0
+    for _name, t in templates:
+        center, val, _ = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
+        if center is not None and val > best_val:
+            best_val = val
+            best_center = center
+    if best_val < CART_MATCH_THRESHOLD:
+        return None
+    return best_center
+
+
+def _estimate_cart_half_width(frame, plank_y: int) -> int:
+    """Approximate cart half-width in pixels — used to compute cart_right
+    from cart_center. Derived from the matched template's scaled width."""
+    templates = _load_cart_templates()
+    if not templates:
+        return 30
+    h = frame.shape[0]
+    y0 = max(0, plank_y - 40)
+    y1 = min(h, plank_y + 15)
+    region = (0, y0, frame.shape[1], y1)
+    best_w = 0
+    best_val = -1.0
+    for _name, t in templates:
+        center, val, scale = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
+        if val > best_val:
+            best_val = val
+            best_w = int(round(t.shape[1] * scale))
+    return max(15, best_w // 2)
 
 
 def _find_plank_top_y(frame) -> Optional[int]:
