@@ -22,11 +22,13 @@ Run flow:
        the user slam-corners the mouse.
 """
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
 
 import cv2
+import pynput
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -109,6 +111,24 @@ def _run_inner():
     last_frame: cv2.Mat | None = None  # for diagnostic dump on exit
     plank_ever_seen = False
 
+    # State the human-click listener needs to read. Captured in a closure;
+    # mutated in the main loop each tick. The listener thread reads the
+    # latest detector state when a click happens.
+    detector_state: dict = {
+        "plank_y": None,
+        "cart": None,
+        "terrain": None,
+        "plank_range": None,
+        "win_left": 0, "win_top": 0, "win_w": 0, "win_h": 0,
+    }
+    state_lock = threading.Lock()
+    pending_lock = threading.Lock()  # pending_outcomes touched from listener too
+    listener = _start_human_click_listener(
+        conn, session_started, attempt_idx,
+        detector_state, state_lock, pending_outcomes, pending_lock,
+        code_commit,
+    )
+
     while True:
         check_failsafe()
         try:
@@ -125,9 +145,26 @@ def _run_inner():
         cart = find_cart(frame)
         now = time.time()
 
+        # Publish detector state for the human-click listener thread to
+        # consume on its next click event.
+        with state_lock:
+            detector_state["plank_y"] = plank_y
+            detector_state["cart"] = cart
+            detector_state["plank_range"] = (
+                _find_plank_x_range(frame, plank_y) if plank_y else None
+            )
+            detector_state["terrain"] = (
+                find_next_terrain(frame, cart) if cart else None
+            )
+            detector_state["win_left"] = win_left
+            detector_state["win_top"] = win_top
+            detector_state["win_w"] = win_w
+            detector_state["win_h"] = win_h
+
         # Settle any pending-outcome jumps whose measurement window expired.
-        pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
-                                            cart, plank_y)
+        with pending_lock:
+            pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
+                                                cart, plank_y)
 
         # Periodic telemetry — see what the detector is doing when no
         # jump fires.
@@ -139,13 +176,15 @@ def _run_inner():
 
         if cart is None:
             if time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S:
-                for p in pending_outcomes:
-                    set_outcome(conn, p["row_id"], "died",
-                                int((time.time() - p["click_time"]) * 1000))
+                with pending_lock:
+                    for p in pending_outcomes:
+                        set_outcome(conn, p["row_id"], "died",
+                                    int((time.time() - p["click_time"]) * 1000))
                 print(f"Plank lost for >{PLANK_LOST_TIMEOUT_S}s — exiting.")
                 if not plank_ever_seen and last_frame is not None:
                     _dump_diagnostics(last_frame, win_w, win_h)
                 _print_summary(conn, session_started, attempt_idx)
+                listener.stop()
                 conn.close()
                 return
             time.sleep(POLL_INTERVAL)
@@ -185,7 +224,8 @@ def _run_inner():
                   f"cart=({cart[0]},{cart[1]}) row={row_id}")
             bot_click(screen_x, screen_y)
             last_click_time = now
-            pending_outcomes.append({"row_id": row_id, "click_time": now})
+            with pending_lock:
+                pending_outcomes.append({"row_id": row_id, "click_time": now})
 
         time.sleep(POLL_INTERVAL)
 
@@ -224,6 +264,59 @@ def _print_summary(conn, session_started, attempt_idx):
     if rows:
         summary = ", ".join(f"{o or 'pending'}={n}" for o, n in rows)
         print(f"Session summary (attempt {attempt_idx}): {summary}")
+
+
+def _start_human_click_listener(conn, session_started, attempt_idx,
+                                detector_state, state_lock,
+                                pending_outcomes, pending_lock,
+                                code_commit):
+    """Start a pynput listener that logs every left-click inside the game
+    window to mining.db with source='human'. Returns the listener; caller
+    must call .stop() on exit.
+
+    Each human click reads the most recent detector state (captured in
+    the main loop) so we get cart position + nearest terrain + plank
+    context at click time. Outcome is back-filled the same way bot
+    clicks are."""
+    jump_counter = [0]  # mutable closure cell
+
+    def on_click(screen_x: int, screen_y: int, button, pressed: bool) -> None:
+        if not pressed or button != pynput.mouse.Button.left:
+            return
+        with state_lock:
+            s = dict(detector_state)
+        wl, wt, ww, wh = s["win_left"], s["win_top"], s["win_w"], s["win_h"]
+        if ww == 0 or not (wl <= screen_x <= wl + ww and wt <= screen_y <= wt + wh):
+            return
+        jump_counter[0] += 1
+        row_id = log_jump(
+            conn,
+            session_started=session_started,
+            attempt_idx=attempt_idx,
+            jump_idx=jump_counter[0],
+            clicked_at=datetime.now().isoformat(timespec="milliseconds"),
+            cart_x=s["cart"][0] if s["cart"] else None,
+            cart_y=s["cart"][1] if s["cart"] else None,
+            next_kind=s["terrain"]["kind"] if s["terrain"] else None,
+            next_x=s["terrain"]["x"] if s["terrain"] else None,
+            next_distance_px=s["terrain"]["distance_px"] if s["terrain"] else None,
+            plank_y=s["plank_y"],
+            plank_x_left=s["plank_range"][0] if s["plank_range"] else None,
+            plank_x_right=s["plank_range"][1] if s["plank_range"] else None,
+            window_w=ww,
+            window_h=wh,
+            code_commit=code_commit,
+            source="human",
+        )
+        print(f"  HUMAN click logged: row={row_id} "
+              f"at ({screen_x - wl},{screen_y - wt}) "
+              f"next={s['terrain']}")
+        with pending_lock:
+            pending_outcomes.append({"row_id": row_id, "click_time": time.time()})
+
+    listener = pynput.mouse.Listener(on_click=on_click)
+    listener.start()
+    return listener
 
 
 def _dump_diagnostics(frame, win_w: int, win_h: int) -> None:
