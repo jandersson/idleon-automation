@@ -205,7 +205,13 @@ POST_SHOT_COOLDOWN = 4.0
 # during the early stationary phase, lock in the median as our anchor, and from
 # then on require px to be within X_TOLERANCE of the anchor before firing.
 HOME_X_SAMPLES = 10
-X_TOLERANCE = 9999  # effectively disabled — re-enable with small value (e.g. 4) for score 10+
+# Re-enabled 2026-05-23 for score 10+ moving-platform runs. Starting at 8 —
+# wider than the TODO's suggested 4 to avoid fire-window starvation on the
+# first sessions; the per-cycle y_open/x_open/both diagnostic logged every
+# ~3s should tell us whether to tighten. The fire-window math: y and x must
+# align simultaneously, so both being independently "open" some fraction of
+# the time doesn't guarantee both-open is non-trivial. Watch the ratio.
+X_TOLERANCE = 8
 
 # Mid-flight rescue: after the launch click, watch for the ball. When it crosses
 # over the hoop's X (still above the rim), click on it — the wiki trick that
@@ -547,6 +553,13 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     home_x: int | None = None
     range_samples: deque[tuple[float, int, int]] = deque(maxlen=200)  # (ts, px, py) for range + period diagnostics
     last_range_log = time.time()
+    # Fire-window diagnostics. Reset every range-log window so we see a rate
+    # rather than a monotonically-growing total. y_open = py near target_y;
+    # x_open = px near home_x (vacuous when home_x not yet locked).
+    cycles_window = 0
+    y_open_window = 0
+    x_open_window = 0
+    both_open_window = 0
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0, "session_score": 0}
     # Misses at the current hoop position. Each consecutive miss bumps the
@@ -646,8 +659,24 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         if time.time() - last_range_log > 3.0 and range_samples:
             xs = [p[1] for p in range_samples]
             ys = [p[2] for p in range_samples]
-            print(f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, y={min(ys)}..{max(ys)}, target_y={target_y}")
+            # Fire-window rates: y_open/x_open are independent; both_open is
+            # the actual fireable fraction. If both/cycles is near zero while
+            # y and x are individually open often, X_TOLERANCE is too tight
+            # relative to the platform sweep period.
+            y_pct = (100 * y_open_window / cycles_window) if cycles_window else 0
+            x_pct = (100 * x_open_window / cycles_window) if cycles_window else 0
+            both_pct = (100 * both_open_window / cycles_window) if cycles_window else 0
+            print(
+                f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, "
+                f"y={min(ys)}..{max(ys)}, target_y={target_y} | "
+                f"fire-window {cycles_window} cyc: y={y_pct:.0f}% x={x_pct:.0f}% both={both_pct:.0f}% "
+                f"(home_x={home_x}, X_TOL={X_TOLERANCE})"
+            )
             last_range_log = time.time()
+            cycles_window = 0
+            y_open_window = 0
+            x_open_window = 0
+            both_open_window = 0
 
         if home_x is None:
             x_samples.append(px)
@@ -686,8 +715,21 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         crossed = prev_py is not None and (
             (prev_py - effective_target_y) * (py - effective_target_y) < 0
         )
+        # Fire-window diagnostic counters (per-cycle, reset each 3s log).
+        # Track *fire-eligibility* of each axis independently so we can tell
+        # whether a low both% is starvation (rare overlap) vs. starvation in
+        # one axis alone.
+        y_eligible = in_window or crossed
+        x_eligible = home_x is None or abs(px - home_x) <= X_TOLERANCE
+        cycles_window += 1
+        if y_eligible:
+            y_open_window += 1
+        if x_eligible:
+            x_open_window += 1
+        if y_eligible and x_eligible:
+            both_open_window += 1
         if in_window or crossed:
-            x_ok = home_x is None or abs(px - home_x) <= X_TOLERANCE
+            x_ok = x_eligible
             # Direction from the actual crossing if available, else from history.
             if crossed and prev_py is not None:
                 direction = "up" if py < prev_py else "down"
