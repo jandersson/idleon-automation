@@ -600,8 +600,15 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     print(f"Saved diagnostic frame to {diag_path}")
                 elapsed = time.time() - hoop_missing_since
                 print(f"Rim not found (best confidence={hoop_conf:.2f}, missing for {elapsed:.0f}s)")
-                if elapsed > 20:
-                    print("Rim invisible for >20s — bailing out.")
+                # 5s (was 20): if the rim is gone for more than a few seconds,
+                # we're almost certainly out of the minigame — either the
+                # game-over screen is up (template may not match the higher-
+                # score variant) or a stray click has dropped us back to the
+                # world view. Either way, 20s of dead-time polling is wasted.
+                # See diagnostics/missing_20260523_230553.png for the canonical
+                # "back in world" failure that motivated tightening.
+                if elapsed > 5:
+                    print("Rim invisible for >5s — bailing out (likely game over or exited minigame).")
                     return
                 time.sleep(0.2)
                 continue
