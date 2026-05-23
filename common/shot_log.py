@@ -112,6 +112,12 @@ _LATE_COLUMNS = [
     ("bob_ymin", "INTEGER"),             # observed platform_y range at fire time
     ("bob_ymax", "INTEGER"),
     ("bob_period_ms", "INTEGER"),        # mean ms between consecutive bob peaks (#13)
+    # Rightmost ball x during flight. Compared against ball_landing_x in
+    # clean_make: peak_x >> landing_x means the ball travelled past the
+    # hoop and bounced back (off rim/backboard), not a clean shot. Added
+    # 2026-05-23 after discovering ~25% of historical "clean makes" were
+    # actually backboard-bounce-ins that the landing-x-only filter missed.
+    ("ball_peak_x", "INTEGER"),
 ]
 
 
@@ -120,6 +126,16 @@ _LATE_COLUMNS = [
 # can end up 150-200px off because the last-detected ball position catches
 # a bounce off the backboard.
 CLEAN_MAKE_TOLERANCE = 80
+
+# Maximum backward-drift (ball_peak_x - ball_landing_x) for a make to count
+# as clean. A clean swish or near-swish: ball goes up, comes down, lands
+# near where it peaked → drift ≈ 0. A backboard ricochet: ball flies past
+# the hoop, hits backboard post, deflects back and falls through → peak_x
+# can be hundreds of px past landing_x. Threshold chosen 2026-05-23 from a
+# 30-row sample of "clean" makes where the bimodal distribution showed
+# clean shots clustered at drift 0-30 and bounces at 100-290. 50 sits
+# comfortably between the modes.
+MAX_BACK_DRIFT_PX = 50
 
 
 # Minimum (ball_landing_x - platform_x) for a shot's trajectory to be
@@ -145,23 +161,31 @@ def _migrate(conn: sqlite3.Connection) -> None:
             pass
 
     # Backfill clean_make on existing rows. Rule:
-    # - made = 1 + ball_landing_x within tolerance of hoop_x → clean
+    # - made = 1 + ball_landing_x within tolerance of hoop_x AND
+    #   (peak_x NULL OR peak_x - landing_x within back-drift limit) → clean
     # - made = 1 + ball_landing_x is NULL → trust the make (historical
     #   data without trajectory analysis available; not punishing it)
     # - made = 1 + ball_landing_x outside tolerance → not clean
+    # - made = 1 + peak_x - landing_x > back-drift limit → not clean (bounce)
     # - made = 0 → clean_make = 0
+    #
+    # IS NULL filter preserves the "explicit caller values stick" contract.
+    # Historical reclassification under newer rules is the backfill script's
+    # job (scripts/backfill_peak_x.py), not _migrate's.
     conn.execute(
         '''
         UPDATE shots
            SET clean_make = CASE
              WHEN made IS NOT 1 THEN 0
              WHEN ball_landing_x IS NULL OR hoop_x IS NULL THEN 1
-             WHEN ABS(ball_landing_x - hoop_x) <= ? THEN 1
-             ELSE 0
+             WHEN ABS(ball_landing_x - hoop_x) > ? THEN 0
+             WHEN ball_peak_x IS NOT NULL
+                  AND (ball_peak_x - ball_landing_x) > ? THEN 0
+             ELSE 1
            END
          WHERE clean_make IS NULL
         ''',
-        (CLEAN_MAKE_TOLERANCE,),
+        (CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX),
     )
 
 

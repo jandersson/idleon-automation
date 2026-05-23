@@ -75,6 +75,11 @@ def summarise_trajectory(
 
     Returns a dict with keys:
         ball_apex_y           : min(y) observed, or None
+        ball_peak_x           : max(x) observed — the rightmost point the
+                                ball reached. Compared against ball_landing_x
+                                to detect backward-drift after a bounce off
+                                rim/backboard (peak_x >> landing_x means the
+                                ball travelled past the hoop and came back).
         ball_x_at_rim_height  : x at the point where y was closest to hoop_y
                                 (only if within rim_height_tolerance px)
         ball_landing_x        : x of the last detected position
@@ -87,11 +92,13 @@ def summarise_trajectory(
     if not positions:
         return {
             "ball_apex_y": None,
+            "ball_peak_x": None,
             "ball_x_at_rim_height": None,
             "ball_landing_x": None,
             "ball_flight_ms": None,
         }
     apex_y = min(p[2] for p in positions)
+    peak_x = max(p[1] for p in positions)
     landing_x = positions[-1][1]
     closest = min(positions, key=lambda p: abs(p[2] - hoop_y))
     x_at_rim = closest[1] if abs(closest[2] - hoop_y) <= rim_height_tolerance else None
@@ -99,6 +106,7 @@ def summarise_trajectory(
     last_idx = positions[-1][0]
     return {
         "ball_apex_y": int(apex_y),
+        "ball_peak_x": int(peak_x),
         "ball_x_at_rim_height": int(x_at_rim) if x_at_rim is not None else None,
         "ball_landing_x": int(landing_x),
         "ball_flight_ms": int((last_idx - first_idx) * frame_interval_ms),

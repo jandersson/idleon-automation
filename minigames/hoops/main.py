@@ -14,7 +14,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE
+from common.shot_log import open_db, log_shot, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
 from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
@@ -782,6 +782,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # past the hoop is almost certainly a tesseract misread.
                 trajectory: dict = {
                     "ball_apex_y": None,
+                    "ball_peak_x": None,
                     "ball_x_at_rim_height": None,
                     "ball_landing_x": None,
                     "ball_flight_ms": None,
@@ -815,13 +816,17 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                         clean_make_value = 1
                     else:
                         landing = trajectory.get("ball_landing_x")
+                        peak_x = trajectory.get("ball_peak_x")
                         if landing is None:
                             clean_make_value = 1
-                        elif abs(landing - hoop_x) <= CLEAN_MAKE_TOLERANCE:
-                            clean_make_value = 1
-                        else:
+                        elif abs(landing - hoop_x) > CLEAN_MAKE_TOLERANCE:
                             clean_make_value = 0
                             print(f"  [clean] make rejected for predictor: ball_landing_x={landing} vs hoop_x={hoop_x} (Δ={abs(landing - hoop_x)}px > {CLEAN_MAKE_TOLERANCE}px) — likely rattle-in")
+                        elif peak_x is not None and (peak_x - landing) > MAX_BACK_DRIFT_PX:
+                            clean_make_value = 0
+                            print(f"  [clean] make rejected for predictor: ball_peak_x={peak_x} vs ball_landing_x={landing} (drift={peak_x - landing}px > {MAX_BACK_DRIFT_PX}px) — backboard/rim bounce")
+                        else:
+                            clean_make_value = 1
                 # Compute lives_diff up-front so we can persist it on the
                 # shot row. Only meaningful when the lives region is visibly
                 # populated (during pre-game or "Make a shot to start"
@@ -860,6 +865,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     perturbation=int(perturbation),
                     lives_diff=lives_diff_value,
                     ball_apex_y=trajectory["ball_apex_y"],
+                    ball_peak_x=trajectory["ball_peak_x"],
                     ball_x_at_rim_height=trajectory["ball_x_at_rim_height"],
                     ball_landing_x=trajectory["ball_landing_x"],
                     window_w=int(width),

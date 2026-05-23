@@ -353,6 +353,43 @@ def test_migrate_backfills_clean_make_for_existing_rows(tmp_path):
     assert rows == [(1, 0, 0), (2, 1, 1), (3, 1, 1), (4, 1, 0)]
 
 
+def test_migrate_classifies_backboard_bounce_as_not_clean(tmp_path):
+    """A make with ball_peak_x >> ball_landing_x means the ball flew past
+    the hoop, bounced off the backboard, and dropped back in. The new
+    rule should classify this as clean_make=0 — the bot got lucky, but
+    the trajectory shouldn't be used as a learning target."""
+    db_path = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        'CREATE TABLE shots ('
+        '  id INTEGER PRIMARY KEY, shot_idx INTEGER, hoop_x INTEGER, '
+        '  made INTEGER, ball_landing_x INTEGER, ball_peak_x INTEGER'
+        ')'
+    )
+    conn.executemany(
+        "INSERT INTO shots (shot_idx, hoop_x, made, ball_landing_x, ball_peak_x) VALUES (?,?,?,?,?)",
+        [
+            # Made, landing near hoop, peak near landing → clean
+            (1, 589, 1, 600, 605),
+            # Made, landing near hoop, but peak 284px past → bounce, not clean
+            (2, 589, 1, 603, 887),
+            # Made, landing near hoop, peak NULL (no trajectory) → trust make
+            (3, 589, 1, 600, None),
+            # Made, landing near hoop, peak only 30px past → borderline, still clean
+            (4, 589, 1, 600, 630),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_db(db_path)
+    rows = list(conn.execute(
+        "SELECT shot_idx, clean_make FROM shots ORDER BY shot_idx"
+    ))
+    conn.close()
+    assert rows == [(1, 1), (2, 0), (3, 1), (4, 1)]
+
+
 def test_migrate_does_not_overwrite_explicit_clean_make(tmp_path):
     """If clean_make is already set on a row, the migration leaves it
     alone — only NULL rows get backfilled."""

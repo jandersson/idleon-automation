@@ -11,10 +11,36 @@ def test_empty_trajectory_returns_all_none():
     out = summarise_trajectory([], hoop_x=700, hoop_y=450)
     assert out == {
         "ball_apex_y": None,
+        "ball_peak_x": None,
         "ball_x_at_rim_height": None,
         "ball_landing_x": None,
         "ball_flight_ms": None,
     }
+
+
+def test_peak_x_is_max_x():
+    """Rightmost x along the whole trajectory."""
+    positions = [(1, 100, 400), (2, 600, 200), (3, 300, 350)]
+    out = summarise_trajectory(positions, hoop_x=400, hoop_y=450)
+    assert out["ball_peak_x"] == 600
+
+
+def test_peak_x_minus_landing_x_captures_backboard_bounce():
+    """Ball flies past hoop, peaks at backboard post, deflects back and
+    lands near hoop. peak_x - landing_x is the bounce signature."""
+    hoop_x, hoop_y = 589, 419
+    positions = [
+        (1, 200, 400),
+        (2, 500, 200),  # ascending
+        (3, 700, 350),  # past hoop, still ascending in x
+        (4, 887, 400),  # peak — slammed into backboard post
+        (5, 750, 430),  # bouncing back
+        (6, 603, 500),  # landing in hoop, well left of peak
+    ]
+    out = summarise_trajectory(positions, hoop_x, hoop_y)
+    assert out["ball_peak_x"] == 887
+    assert out["ball_landing_x"] == 603
+    assert out["ball_peak_x"] - out["ball_landing_x"] == 284
 
 
 def test_ball_flight_ms_spans_first_to_last_frame():
