@@ -62,6 +62,42 @@ def test_perturbation_clamps_at_end_of_sequence():
     assert _perturbation_for(big_miss_count) == PERTURBATION_SEQUENCE[-1]
 
 
+def test_perturbation_first_shot_returns_zero_regardless_of_sigma():
+    # miss_count=0 means it's the predictor's first shot at this hoop —
+    # never perturb, regardless of how uncertain the predictor is.
+    for sigma in (None, 0.0, 15.0, 35.0, 100.0):
+        assert _perturbation_for(0, sigma) == 0
+
+
+def test_perturbation_low_sigma_matches_unscaled_sequence():
+    # σ below the first bucket means scale=1.0 → identical to no-σ path.
+    for i in range(len(PERTURBATION_SEQUENCE)):
+        assert _perturbation_for(i, sigma=None) == _perturbation_for(i, sigma=5.0)
+
+
+def test_perturbation_high_sigma_scales_magnitudes_up():
+    # σ in the 20-40 bucket → scale 2.0; σ >=40 → scale 3.0. Higher σ
+    # means larger initial steps so the bot walks to the make zone
+    # faster when the predictor isn't confident.
+    assert _perturbation_for(1, sigma=25.0) == -16  # -8 * 2
+    assert _perturbation_for(1, sigma=50.0) == -24  # -8 * 3
+    assert _perturbation_for(2, sigma=50.0) == 24   # +8 * 3
+    assert _perturbation_for(3, sigma=50.0) == -48  # -16 * 3
+
+
+def test_perturbation_sign_preserved_across_scales():
+    # Scaling magnitudes must not flip the alternating ± pattern that
+    # walks the sweep outward in both directions.
+    for sigma in (None, 5.0, 15.0, 30.0, 100.0):
+        signs = [
+            (1 if _perturbation_for(i, sigma) > 0 else (-1 if _perturbation_for(i, sigma) < 0 else 0))
+            for i in range(1, 9)
+        ]
+        # Same sign pattern as the unscaled sequence (skipping the leading 0).
+        base_signs = [(1 if p > 0 else -1) for p in PERTURBATION_SEQUENCE[1:9]]
+        assert signs == base_signs
+
+
 def _fake_score_crop(value: int) -> np.ndarray:
     """Tiny arbitrary grayscale crop. score_changed needs std >= 5 in
     EITHER pre or post; we make it noisy enough to pass that check.

@@ -394,6 +394,16 @@ class TrajectoryGpPredictor:
     def predict(self, hoop_y: float, hoop_x: float) -> float:
         """Return the platform_y inside the nearby-makes envelope whose
         modelled trajectory lands closest to hoop_x."""
+        py, _ = self.predict_with_std(hoop_y, hoop_x)
+        return py
+
+    def predict_with_std(
+        self, hoop_y: float, hoop_x: float
+    ) -> tuple[float, float]:
+        """Same as predict() but also returns the posterior landing-x std
+        at the chosen platform_y. Mirrors GpPredictor.predict_with_std's
+        interface so callers can scale perturbation steps by predictor
+        confidence regardless of which GP variant is fit."""
         lo, hi = self._envelope(hoop_y, hoop_x)
         scan_pys: list[float] = []
         py = lo
@@ -401,14 +411,14 @@ class TrajectoryGpPredictor:
             scan_pys.append(py)
             py += self._step
         if not scan_pys:
-            return float(lo)
+            return float(lo), 0.0
         landings = self._predict_landing_batch(hoop_y, hoop_x, scan_pys)
-        # Pick the platform_y minimising |predicted landing - hoop_x|.
         best_py, _ = min(
             zip(scan_pys, landings),
             key=lambda pair: abs(pair[1] - hoop_x),
         )
-        return float(best_py)
+        _, std = self.predict_landing_with_std(hoop_y, hoop_x, best_py)
+        return float(best_py), float(std)
 
 
 def fit_trajectory_knn(

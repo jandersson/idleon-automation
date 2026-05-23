@@ -339,6 +339,23 @@ def test_trajectory_gp_matches_predictor_protocol():
     assert isinstance(pred.predict(400, 600), float)
 
 
+def test_trajectory_gp_predict_with_std_returns_py_and_sigma():
+    """predict_with_std mirrors GpPredictor's interface: returns the
+    chosen platform_y plus the posterior landing-x std at that py, so
+    the bot can scale perturbation steps by predictor confidence
+    regardless of which GP variant is fit."""
+    pytest.importorskip("sklearn")
+    rows = _synthetic_trajectory_rows()
+    pred = fit_trajectory_gp(rows, min_samples=10)
+    assert pred is not None
+    py, std = pred.predict_with_std(400, 600)
+    assert isinstance(py, float)
+    assert isinstance(std, float)
+    assert std >= 0
+    # The mean returned by predict_with_std must match predict().
+    assert py == pred.predict(400, 600)
+
+
 def test_fit_trajectory_rf_returns_none_with_too_few_samples():
     pytest.importorskip("sklearn")
     rows = [(400.0, 700.0, 410.0, 690.0)] * 5

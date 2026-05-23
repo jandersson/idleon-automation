@@ -54,6 +54,19 @@ def _predicted_offset(hoop_y: int, hoop_x: int, predictor) -> int:
     return int(round(target_y - hoop_y))
 
 
+def _predicted_std(hoop_y: int, hoop_x: int, predictor) -> float | None:
+    """Posterior std of the prediction, or None if the predictor doesn't
+    expose one. Used to scale perturbation magnitudes by confidence:
+    sparse-region predictions (high σ) take bigger first steps."""
+    if predictor is None or not hasattr(predictor, "predict_with_std"):
+        return None
+    try:
+        _, sigma = predictor.predict_with_std(hoop_y, hoop_x)
+        return float(sigma)
+    except Exception:
+        return None
+
+
 def _compute_offset(hoop_y: int, hoop_x: int, predictor) -> int:
     """Compute the offset the bot will fire with.
 
@@ -129,11 +142,28 @@ PERTURBATION_SEQUENCE = [
 ]
 
 
-def _perturbation_for(miss_count: int) -> int:
+def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
     """Pixels to add to the predicted offset on the (miss_count+1)-th shot at
     a given hoop. miss_count=0 → no perturbation; subsequent misses cycle
-    through the sweep."""
-    return PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
+    through the sweep, with magnitudes scaled by predictor uncertainty so a
+    high-σ (sparse-region) prediction takes bigger steps to reach the make
+    zone before lives run out.
+
+    σ buckets chosen 2026-05-23 from a (710, 415) failure mode where the
+    predictor was ~12px off and ±8 perturbations were too narrow to walk
+    there in the 2-life window. Thresholds rough — tighten when we have
+    more σ data per outcome.
+    """
+    base = PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
+    if sigma is None or sigma < 10:
+        scale = 1.0
+    elif sigma < 20:
+        scale = 1.5
+    elif sigma < 40:
+        scale = 2.0
+    else:
+        scale = 3.0
+    return int(round(base * scale))
 
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -626,7 +656,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 misses_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
             predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
-            perturbation = _perturbation_for(misses_at_current_hoop)
+            predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
+            perturbation = _perturbation_for(misses_at_current_hoop, predictor_sigma)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
             # Cap target_y inside the platform's observed bob range with a
@@ -653,7 +684,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     offset = target_y - hoop_y
             tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
             override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}), offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
+            sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
