@@ -201,17 +201,18 @@ REQUIRED_DIRECTION = "up"
 # pre_shot would show the updated score, but we don't compare across shots).
 POST_SHOT_COOLDOWN = 4.0
 
-# At score >=10 the platform also moves horizontally. We sample the platform's X
-# during the early stationary phase, lock in the median as our anchor, and from
-# then on require px to be within X_TOLERANCE of the anchor before firing.
+# Was originally added to gate fire when the platform moves horizontally at
+# score >=10. Live observation 2026-05-23 showed it's the HOOP that moves at
+# 10+, not the platform; this gate is now off (X_TOLERANCE=9999). Sampling
+# is harmless and the diagnostic still reports home_x for visibility.
 HOME_X_SAMPLES = 10
-# Re-enabled 2026-05-23 for score 10+ moving-platform runs. Starting at 8 —
-# wider than the TODO's suggested 4 to avoid fire-window starvation on the
-# first sessions; the per-cycle y_open/x_open/both diagnostic logged every
-# ~3s should tell us whether to tighten. The fire-window math: y and x must
-# align simultaneously, so both being independently "open" some fraction of
-# the time doesn't guarantee both-open is non-trivial. Watch the ratio.
-X_TOLERANCE = 8
+# Disabled — was set to 8 on 2026-05-23 based on the wiki claim that the
+# platform moves horizontally at score >=10. Live observation at score
+# 20+ that same day confirmed the wiki was wrong: it's the HOOP that
+# moves, not the platform. A platform-x gate solves nothing. Left in
+# place as machinery in case score-30+ behavior surprises us, but
+# X_TOL=9999 means the gate is effectively off.
+X_TOLERANCE = 9999
 
 # Mid-flight rescue: after the launch click, watch for the ball. When it crosses
 # over the hoop's X (still above the rim), click on it — the wiki trick that

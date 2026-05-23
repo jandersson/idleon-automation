@@ -23,11 +23,14 @@ you care about specifics.
   tries are burned, **practice mode is an unlimited budget** for
   growing `shots.db` — no resource cost to building the prior. Run
   freely.
-- **In-game difficulty escalation** within a single attempt:
-  - Score ≥10 → platform moves horizontally as well as vertically
-  - Score ≥20 → hoop pans horizontally between shots
+- **In-game difficulty escalation** within a single attempt (corrected
+  2026-05-23 from live observation; the wiki's framing had the moving
+  subject wrong):
+  - Score ≥10 → hoop starts moving horizontally (subtle, between shots)
+  - Score ≥20 → hoop pans more aggressively / further between shots
   - Score ≥30 → hoop moves on both axes between shots
-  Bot doesn't currently handle any of these. See "Open problems".
+  The platform's motion is purely vertical at every score tier.
+  Bot doesn't currently handle the moving hoop. See "Open problems".
 - **Reward thresholds** (gem-payout Hoops): trophy at a single-game
   score ≥40; Hoops pet at combined-3-try score ≥66; per-tier gem
   values not on any public page I could reach.
@@ -57,11 +60,16 @@ you care about specifics.
   any strategy that *reduces* shot frequency is counterproductive —
   the bot has to fire something to make progress. Build the predictor
   by firing and logging, not by holding back when uncertain.
-- **At score ≥10**, the platform starts moving horizontally. We have
-  `home_x` / `X_TOLERANCE` machinery for this but it's currently disabled
-  (tolerance=9999) because we rarely get past score 10 today.
-- **At score ≥20**, the hoop also moves between frames. Not handled.
-- **At score ≥30**, the hoop moves both axes. Not handled.
+- **At score ≥10**, the hoop starts moving horizontally between shots
+  (corrected 2026-05-23: the wiki claimed the platform was what moved;
+  live observation showed otherwise). The platform stays stationary in x
+  at every score tier. The `home_x` / `X_TOLERANCE` machinery was built
+  for the wrong subject and is disabled (tolerance=9999); left in place
+  as machinery in case score-30+ surprises us.
+- **At score ≥20**, the hoop motion gets more aggressive. Bot reads
+  hoop position once per shot when target_y is None, so by fire time
+  the position can be stale. Not handled yet.
+- **At score ≥30**, the hoop moves on both axes. Not handled.
 
 ## Scoring
 
@@ -149,11 +157,14 @@ back into the predictor on next session.
 
 ## Open problems
 
-1. **Score ≥10 moving platform** — not handled. The `home_x` machinery
-   exists but is disabled. Will need re-enabling before we can clear
-   the trophy (40+ score requires playing through 10/20/30 thresholds).
-2. **Score ≥20 moving hoop** — bot uses a stale hoop position. Will
-   need per-shot re-detection right before the platform crosses target.
+1. **Score ≥10 moving hoop** — bot reads hoop position once when
+   `target_y` is None, then spends ~seconds waiting for the platform
+   to reach target_y. By fire time the hoop has drifted. Fix is to
+   re-detect hoop position right before firing (and recompute target_y
+   off the fresh position) rather than caching the first detection.
+2. **Score ≥30 two-axis hoop motion** — same fix as above probably
+   covers it, since the re-detection picks up both axes. Verify after
+   the score-10 fix lands.
 3. **Tesseract is unreliable on tiny pixel-art digits.** Multi-pass
    voting cuts most misreads but not all. The durable fix is template
    matching against pre-extracted digit PNGs (see

@@ -17,13 +17,14 @@ recent-changes snapshot that don't fit a single issue.
 
 ## Open
 
-- **Hoops scoring 10+** — when the in-game score reaches 10 the platform
-  starts moving horizontally. The `home_x` / `X_TOLERANCE` machinery is
-  scaffolded but disabled (tolerance=9999). Re-enable + tune before
-  attempting the 40+ trophy run.
-- **Hoops scoring 20+** — hoop also moves between frames. Currently we
-  read hoop position once per shot; for moving hoops we'd need to
-  re-detect right before the platform reaches target_y.
+- **Hoops scoring 10+** — at score ≥10 the HOOP starts drifting
+  horizontally between shots (wiki had this wrong; corrected from live
+  observation 2026-05-23). Bot reads hoop position once per shot when
+  `target_y` is None, so by fire time it's stale. Fix: re-detect hoop
+  right before the platform crosses target_y, recompute target_y off
+  the fresh position. Same fix likely covers score-20 and score-30
+  escalations since they're just more-aggressive versions of the
+  same motion.
 - **Catching minigame** — scaffold only; detectors return None. Need
   fly + hoop-gap detectors before this runs.
 - **Chopping** — last verified state was "button click is suspect".
