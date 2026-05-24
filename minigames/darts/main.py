@@ -20,6 +20,7 @@ from common.dart_trajectory import analyse_throw_dir
 from common.shot_log import current_code_commit  # shared with hoops
 from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
 from minigames.darts.shot_log import open_db, log_throw, log_poll
+from minigames.darts.arm_motion import compute_arm_centroid
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -313,6 +314,11 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # relative to this so we can correlate poll rows with throws rows
     # post-hoc without a perfectly synced clock.
     session_t0 = time.time()
+    # Previous frame buffer for arm-motion centroid computation. We diff
+    # current vs previous, AND with player-white mask, and log the centroid
+    # of the result every poll. Continuous signal independent of template-
+    # match timing — the missing data the #25 discriminator needs.
+    prev_bgr_for_motion: np.ndarray | None = None
 
     while True:
         check_failsafe()
@@ -324,6 +330,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             continue
 
         frame = grab_region(left, top, width, height)
+        cur_bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
         # Fast template check for the game-over screen first. Returns
         # (False, 0.0) if the template hasn't been captured yet — falls
@@ -341,9 +348,14 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         match_x = int(pose[0]) if pose else 0
         match_y = int(pose[1]) if pose else 0
         t_ms = int((time.time() - session_t0) * 1000)
+        arm_centroid_y, arm_pixel_count = compute_arm_centroid(cur_bgr, prev_bgr_for_motion)
+        prev_bgr_for_motion = cur_bgr
 
         if conf < RELEASE_THRESHOLD:
-            log_poll(throw_db, session_started, t_ms, conf, match_x, match_y, threw=0)
+            log_poll(
+                throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
+                arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
+            )
             best_recent_conf = max(best_recent_conf, conf)
             # Streak ends whenever pose drops below threshold — reset both
             # diagnostic state vars so the next match starts a fresh streak.
@@ -362,7 +374,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             time.sleep(POLL_INTERVAL)
             continue
 
-        log_poll(throw_db, session_started, t_ms, conf, match_x, match_y, threw=1)
+        log_poll(
+            throw_db, session_started, t_ms, conf, match_x, match_y, threw=1,
+            arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
+        )
         last_pose_time = time.time()
         px, py = pose
         match_streak_len += 1

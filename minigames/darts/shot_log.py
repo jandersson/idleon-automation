@@ -65,7 +65,15 @@ CREATE TABLE IF NOT EXISTS polls (
     conf REAL,          -- template-match conf (unthresholded)
     match_x INTEGER,    -- center x of the best template match
     match_y INTEGER,    -- center y of the best template match
-    threw INTEGER       -- 1 if this poll fired a click, 0 otherwise
+    threw INTEGER,      -- 1 if this poll fired a click, 0 otherwise
+    -- Arm centroid added 2026-05-24 (#25 work): motion-AND-white mask
+    -- vs the previous poll's frame, isolates the swinging arm pixels.
+    -- centroid_y high (small value) = arm cocked back at apex; low = arm
+    -- extended forward at release. Continuous signal independent of
+    -- template-match timing — should discriminate the two firing
+    -- moments where conf/match_y alone failed.
+    arm_centroid_y INTEGER,
+    arm_pixel_count INTEGER
 )
 """
 
@@ -90,10 +98,23 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
+_POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
+    # Per-poll arm-motion centroid added 2026-05-24 for #25 discriminator
+    # work. See _POLLS_SCHEMA comment for semantics.
+    ("arm_centroid_y", "INTEGER"),
+    ("arm_pixel_count", "INTEGER"),
+]
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     for name, decl in _LATE_COLUMNS:
         try:
             conn.execute(f"ALTER TABLE throws ADD COLUMN {name} {decl}")
+        except sqlite3.OperationalError:
+            pass
+    for name, decl in _POLLS_LATE_COLUMNS:
+        try:
+            conn.execute(f"ALTER TABLE polls ADD COLUMN {name} {decl}")
         except sqlite3.OperationalError:
             pass
 
@@ -116,14 +137,21 @@ def log_poll(
     match_x: int,
     match_y: int,
     threw: int,
+    arm_centroid_y: int | None = None,
+    arm_pixel_count: int | None = None,
 ) -> None:
     """Append one row to the polls table. Called once per main-loop
     iteration. No commit per call — caller commits periodically (e.g.
     every fire) to keep write overhead bounded."""
     conn.execute(
-        "INSERT INTO polls (session_started, t_ms, conf, match_x, match_y, threw) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (session_started, int(t_ms), float(conf), int(match_x), int(match_y), int(threw)),
+        "INSERT INTO polls (session_started, t_ms, conf, match_x, match_y, threw, "
+        "arm_centroid_y, arm_pixel_count) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_started, int(t_ms), float(conf), int(match_x), int(match_y), int(threw),
+            int(arm_centroid_y) if arm_centroid_y is not None else None,
+            int(arm_pixel_count) if arm_pixel_count is not None else None,
+        ),
     )
 
 
