@@ -246,15 +246,37 @@ Limitations:
    earlier "all 1-frame" finding was an artifact of the bot firing on
    frame 1 then cooldown-blocking the rest. Two streaks in one burst
    moved in opposite directions: streak 1 y=332→328 (decreasing y =
-   arm ascending = up-swing pass = miss), streak 2 y=326→330
-   (increasing y = arm descending = down-swing pass = hit). The
-   discriminator is the **lead-up conf trajectory**: up-swing has a
-   gradual ramp (0.61 → 0.68 → 0.68 → 0.87) because the arm rises
-   through the release-angle zone, while down-swing snaps in suddenly
-   (0.61 → 0.61 → 0.61 → 0.76) because the arm swings through quickly.
-   **Lead-up gate shipped**: if the last few polls before a fire-eligible
-   match had conf ≥ 0.65, skip — it's an up-swing approach. Otherwise
-   fire — sudden appearance = down-swing.
+   arm ascending), streak 2 y=326→330 (increasing y = arm descending).
+   The streaks also had different lead-up conf patterns: one gradual
+   (0.61 → 0.68 → 0.68 → 0.87), one sudden (0.61 → 0.61 → 0.61 → 0.76).
+
+   **Lead-up gate (commit da45a41) tried and reverted same day.** Built
+   the rule "skip gradual, fire sudden" on the assumption that sudden
+   onset = down-swing = hit. Live session fired 6 throws, ALL at
+   launch_angle +20-23° (apex/up-swing/miss). Hypothesis was either
+   backwards or didn't generalize to a different player spawn position
+   (the captured streaks were observed without bot firing; we have no
+   way to label which streak was hit vs miss from the capture alone).
+
+   **What we now know with high confidence**:
+   - Two distinct firing moments per swing cycle, both produce template
+     matches lasting 100-140ms at 20ms sampling
+   - launch_angle bimodally splits them: hits at -11..-7°, misses at
+     +20..+25°
+   - The visual frame at click time is indistinguishable between the two
+   - Pre-fire signals tested so far (conf magnitude, sub-threshold
+     lead-up, match streak length) don't reliably discriminate
+
+   **Surviving paths (none cheap)**:
+   - Label captured streaks against bot fires by running BOTH the
+     bot and `darts-capture` concurrently, then correlate fire
+     timestamps with capture frames. Builds the labeled dataset
+     needed to train a real discriminator.
+   - Tighter template specific to the down-swing dart angle (the dart
+     may be at a slightly different rotation in the two moments;
+     the current 9x40 px shaft+tip template is too generic).
+   - Multi-template with explicit per-spawn templates so each
+     player spawn gets its own calibrated release-pose.
 
    **Candidate next moves** (none cheap; all need user-driven captures or
    sub-poll-rate observation):
