@@ -83,10 +83,19 @@ transitions.
 ## Within-session mechanics (confirmed 2026-05-24)
 
 - **Startup phase**: bot has to make a successful throw to start the
-  game. Misses during startup are free — they don't consume a life,
-  the bot just keeps throwing until it scores.
+  game. Misses during startup are **genuinely unlimited and free** —
+  they don't consume a life and don't end the session. Bot keeps
+  throwing forever (until either it scores, or until a real
+  `GAME_OVER_NO_POSE_SEC` timeout fires because the scene actually
+  changed).
 - **Game phase**: after the first successful throw, the player has
   **3 lives**. Each miss costs a life; 3 misses = game over.
+- **Safety implication**: with unlimited startup misses and the
+  game-over template threshold at 0.85, a bot with 0% hit rate
+  doesn't self-terminate cleanly — it'll keep throwing until the
+  25s no-pose timeout, which won't fire if the release template
+  keeps intermittently matching. Not currently a problem because the
+  bot does score occasionally, but worth watching.
 - **Total throws per session** therefore = N startup attempts + up
   to ~6 game-phase throws (3 hits + 3 misses interleaved). At the
   bot's current ~20% per-throw hit rate, startup phase dominates
