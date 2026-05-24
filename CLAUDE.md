@@ -10,6 +10,8 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 **Always commit changes.** After completing a logical unit of work, commit it without waiting to be asked. Split unrelated changes into separate commits. Pushing follows the daytime-hours rule from user memory; committing has no time gate.
 
+**Commit message format: Conventional Commits.** `<type>(<scope>): <description>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `build`, `ci`. Scope is the affected area (`hoops`, `darts`, `launcher`, `common`, etc.). Breaking changes use `!` after the type/scope (`feat(hoops)!:`). Body and footer are optional; keep the subject line under ~72 chars and use the body for the *why*. The legacy log has many `scope:` (no type) commits — don't follow that pattern, use the full Conventional format for new work.
+
 **Add unit tests for new stuff.** New pure-logic helpers, parsers, schema modules, regression guards — write a test alongside the change in `tests/`. Match the existing style: fast, self-contained, no live captures. CV-against-real-frames stays manual (visual, calibrated by user).
 
 ## Setup
