@@ -1,5 +1,6 @@
 import time
 import sys
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -87,6 +88,21 @@ FLIGHT_POLL = 0.05
 # cycles (wind change, score animations) while still terminating quickly
 # when the dartboard is actually gone.
 GAME_OVER_NO_POSE_SEC = 25.0
+
+# Up-swing-vs-down-swing discriminator (2026-05-24, see STRATEGY.md
+# "Open problems"). The arm passes through the release angle twice per
+# swing cycle: once on the down-swing (forward release, dart launches at
+# -10°, scores a hit) and once on the up-swing (dart launches at +24°,
+# falls to bottom of screen, misses). The two moments are visually
+# identical at click time. They differ in *lead-up*: up-swing approaches
+# the release angle gradually as the arm rises through it (conf ramps
+# 0.61 → 0.68 → 0.68 → 0.87 over consecutive 20ms polls), while the
+# down-swing snaps in suddenly (conf 0.61 → 0.61 → 0.76 in one poll).
+# So: count recent polls at "tracking" conf — if >= MIN, it's an up-swing
+# approach, skip. Otherwise fire.
+LEAD_UP_CONF_THRESHOLD = 0.65  # below RELEASE_THRESHOLD, above the no-match baseline (~0.61)
+LEAD_UP_MIN_POLLS = 2
+POLL_HISTORY_LEN = 5
 
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
@@ -239,6 +255,9 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # current streak. Both reset whenever pose drops below threshold.
     match_streak_len = 0
     prev_match_y: int | None = None
+    # Rolling window of recent (conf, y) per poll for the up-swing-pass
+    # gate. See LEAD_UP_CONF_THRESHOLD / LEAD_UP_MIN_POLLS at the top.
+    poll_history: deque[tuple[float, int]] = deque(maxlen=POLL_HISTORY_LEN)
 
     while True:
         check_failsafe()
@@ -260,9 +279,14 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                   f"{shot_stats['makes']}/{shot_stats['attempts']} hits.")
             return
 
-        pose, conf = find_release_pose(frame, threshold=RELEASE_THRESHOLD)
+        # Always run the matcher at threshold 0 so we get a position+conf for
+        # every poll, even sub-threshold. The lead-up gate below needs the
+        # full conf history; without it we couldn't see the gradual
+        # ramp-up that distinguishes up-swing from down-swing.
+        pose, conf = find_release_pose(frame, threshold=0.0)
+        poll_history.append((float(conf), int(pose[1]) if pose else 0))
 
-        if pose is None:
+        if conf < RELEASE_THRESHOLD:
             best_recent_conf = max(best_recent_conf, conf)
             # Streak ends whenever pose drops below threshold — reset both
             # diagnostic state vars so the next match starts a fresh streak.
@@ -282,18 +306,28 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
 
         last_pose_time = time.time()
         px, py = pose
+        # Up-swing-vs-down-swing gate. Count recent polls (excluding this
+        # one) that were already at "tracking" conf. Up-swing approaches
+        # release angle gradually → multiple lead-up polls at >= 0.65.
+        # Down-swing snaps in → zero lead-up polls. See top-of-file
+        # constants for the threshold + min-count.
+        lead_up_count = sum(
+            1 for c, _ in list(poll_history)[:-1]
+            if c >= LEAD_UP_CONF_THRESHOLD
+        )
+        if lead_up_count >= LEAD_UP_MIN_POLLS:
+            recent_confs = [f"{c:.2f}" for c, _ in list(poll_history)[-LEAD_UP_MIN_POLLS-1:]]
+            print(f"  [skip] up-swing pass: {lead_up_count} lead-up polls "
+                  f"at conf >= {LEAD_UP_CONF_THRESHOLD} (recent confs {recent_confs}) "
+                  f"— would launch upward")
+            time.sleep(POLL_INTERVAL)
+            continue
+
         match_streak_len += 1
         prev_match_y_for_log = prev_match_y  # capture for log_throw below
         prev_match_y = int(py)
-        # The apex-vs-forward-release verify-poll filter (commit 9453b66) was
-        # reverted 2026-05-24: session log showed zero [apex-skip] events
-        # across 10 throws — both apex (+23° launches) and forward-release
-        # (-13° launches) matches are 1-frame at the 20ms poll rate.
-        # Discriminator isn't observable at this resolution; needs either
-        # a tighter template or finer frame sampling. See STRATEGY.md
-        # "Open problems" item 1.
         print(f"Release pose at ({px},{py}), conf={conf:.2f} "
-              f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
+              f"(down-swing pass — throwing)")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
         # pose detection and click landing drifts the arm a few degrees
@@ -425,6 +459,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # start of a fresh swing cycle, not a continuation of this one.
         match_streak_len = 0
         prev_match_y = None
+        # Clear the lead-up history. Pre-cooldown poll data is ~1.5s stale
+        # and would falsely flag the next swing's first match as up-swing
+        # if any of those old entries had trackable conf.
+        poll_history.clear()
 
 
 if __name__ == "__main__":

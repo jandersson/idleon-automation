@@ -241,6 +241,21 @@ Limitations:
    throws at near-identical release_pose (e.g. (427,324) miss vs (427,325)
    hit) shows visually indistinguishable frames.
 
+   **Update 2026-05-24, finer sampling**: `darts-capture --interval 0.02`
+   showed matches DO sustain across 5-7 polls (100-140ms) — the
+   earlier "all 1-frame" finding was an artifact of the bot firing on
+   frame 1 then cooldown-blocking the rest. Two streaks in one burst
+   moved in opposite directions: streak 1 y=332→328 (decreasing y =
+   arm ascending = up-swing pass = miss), streak 2 y=326→330
+   (increasing y = arm descending = down-swing pass = hit). The
+   discriminator is the **lead-up conf trajectory**: up-swing has a
+   gradual ramp (0.61 → 0.68 → 0.68 → 0.87) because the arm rises
+   through the release-angle zone, while down-swing snaps in suddenly
+   (0.61 → 0.61 → 0.61 → 0.76) because the arm swings through quickly.
+   **Lead-up gate shipped**: if the last few polls before a fire-eligible
+   match had conf ≥ 0.65, skip — it's an up-swing approach. Otherwise
+   fire — sudden appearance = down-swing.
+
    **Candidate next moves** (none cheap; all need user-driven captures or
    sub-poll-rate observation):
    - **Tighter template** that only matches the forward-release dart
