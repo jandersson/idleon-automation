@@ -569,6 +569,19 @@ class Launcher:
         if self.processes.get(name) is not None:
             self._enqueue_log(f"[{name}] already running\n")
             return
+        # Mutual exclusion: bots drive a single mouse/keyboard via pyautogui.
+        # Running two at once produced (on 2026-05-24) darts throws getting
+        # fired mid-arm-swing by hoops's platform clicks, plus polluted DB
+        # rows in both bots. Refuse the launch and tell the user which bot
+        # is holding the slot so they can stop it first.
+        already_running = [n for n, p in self.processes.items() if p is not None]
+        if already_running:
+            holder = already_running[0]
+            self._enqueue_log(
+                f"[{name}] not started — {holder} is running. "
+                f"Stop {holder} first; only one bot at a time.\n"
+            )
+            return
         extra_env: dict[str, str] = {}
         for opt in mg.get("bot_options", []):
             var = self.bot_option_vars.get((name, opt["env"]))
