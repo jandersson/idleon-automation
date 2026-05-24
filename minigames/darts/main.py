@@ -99,6 +99,46 @@ STRIPE_COLOR_BY_INCREMENT: dict[int, str] = {
     1: "gray",
 }
 
+# Valid post-throw score increments. Tesseract loves misreading the +5
+# bullseye as e.g. 195 or -4 (and occasionally NULL); constraining the
+# increment to this set lets us reject obviously wrong OCR reads and
+# vote among candidates that pass the sanity check.
+VALID_SCORE_INCREMENTS = frozenset(STRIPE_COLOR_BY_INCREMENT.keys())
+
+
+def _pick_best_score_after(
+    score_before_int: int | None,
+    post_readings: list,
+) -> tuple:
+    """Choose (score_after_int, score_increment) from a list of OCR
+    candidates by requiring the increment to be in VALID_SCORE_INCREMENTS.
+    Vote among valid candidates by frequency; fall back to the last
+    non-None reading when nothing passes the sanity check.
+
+    Returns (best_after, best_increment). Either can be None if no
+    candidate is usable.
+    """
+    from collections import Counter
+    if score_before_int is None:
+        for c in reversed(post_readings):
+            if c is not None:
+                return c, None
+        return None, None
+    valid = [(c - score_before_int, c) for c in post_readings
+             if c is not None and (c - score_before_int) in VALID_SCORE_INCREMENTS]
+    if valid:
+        incr_counts = Counter(t[0] for t in valid)
+        best_incr = incr_counts.most_common(1)[0][0]
+        best_after = next(a for i, a in valid if i == best_incr)
+        return best_after, best_incr
+    # No valid increment — fall back to last non-None reading (preserves
+    # the pre-multi-pass behavior so we don't lose information when OCR
+    # is completely broken for this throw).
+    for c in reversed(post_readings):
+        if c is not None:
+            return c, c - score_before_int
+    return None, None
+
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
     bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
@@ -353,6 +393,11 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # Sample flight frames during the cooldown instead of just sleeping.
         # Frames go to the throw folder so a later trajectory module can
         # extract dart-landing-x without a second live session.
+        # Also accumulate score-region crops from those same frames for
+        # multi-pass OCR after the cooldown — costs nothing extra in
+        # capture latency since we've already grabbed the full frame.
+        score_region_meta = get_region(_HERE, "score", width, height)
+        score_crops_during_flight: list = []
         if MONITOR_FLIGHT and flight_dir is not None:
             flight_deadline = time.time() + POST_THROW_COOLDOWN + POST_LAND_DELAY
             flight_idx = 0
@@ -362,6 +407,12 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                 f = grab_region(left, top, width, height)
                 bgr = cv2.cvtColor(f, cv2.COLOR_BGRA2BGR)
                 cv2.imwrite(str(flight_dir / f"flight_{flight_idx:03d}.png"), bgr)
+                if score_region_meta is not None:
+                    score_crops_during_flight.append(score_region(
+                        f,
+                        score_region_meta["left"], score_region_meta["top"],
+                        score_region_meta["width"], score_region_meta["height"],
+                    ))
                 time.sleep(FLIGHT_POLL)
         else:
             time.sleep(POST_THROW_COOLDOWN)
@@ -378,10 +429,20 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # rather than just hit/miss. None when tesseract isn't installed
         # or the digit read fails.
         score_before_int = read_score(score_before) if score_before is not None else None
-        score_after_int = read_score(score_after) if score_after is not None else None
-        score_increment: int | None = None
-        if score_before_int is not None and score_after_int is not None:
-            score_increment = score_after_int - score_before_int
+        # Multi-pass: combine the last N flight crops (score should be
+        # post-update by then) with the final score_after. _pick_best_*
+        # filters readings to those producing an increment in {1,2,3,5}
+        # and votes — directly addresses tesseract misreading +5 bullseyes
+        # as 195/-4/null. Falls back to the last reading if no candidate
+        # passes the sanity check, preserving the pre-multi-pass behavior.
+        post_score_candidates = list(score_crops_during_flight[-5:]) + [score_after]
+        post_readings = [
+            read_score(crop) if crop is not None else None
+            for crop in post_score_candidates
+        ]
+        score_after_int, score_increment = _pick_best_score_after(
+            score_before_int, post_readings
+        )
         # Trajectory analysis on the captured flight frames — angle,
         # apex, landing. Empty dict if no flight frames captured this
         # throw or the dart wasn't detected in any frame.
