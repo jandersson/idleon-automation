@@ -282,13 +282,32 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
 
         last_pose_time = time.time()
         px, py = pose
-        # Update the streak counter and capture the previous matched y BEFORE
-        # incrementing — that gives us "y on the prior matched frame this
-        # streak", which is the input to a coarse dart-velocity estimate.
         match_streak_len += 1
         prev_match_y_for_log = prev_match_y  # capture for log_throw below
         prev_match_y = int(py)
-        print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
+        # Apex-vs-forward-release discriminator. Both moments produce a
+        # template match. Hypothesis: top-of-swing apex match sustains for
+        # multiple bot-poll frames (dart pauses at peak); forward-release
+        # match is transient (dart passes through release angle quickly).
+        # Wait one poll, re-detect: if still matching → apex → skip; if
+        # gone → was transient → fire. Adds ~20ms of latency to every fire
+        # but the existing find_release_pose call already takes 15-30ms
+        # (multi-scale match), so this is in the same order of magnitude.
+        # If hypothesis is wrong, the diagnostic columns
+        # (match_streak_len_before_fire) will show streak=1 for both hits
+        # and misses; if right, apex throws will be filtered before fire.
+        time.sleep(POLL_INTERVAL)
+        verify_frame = grab_region(left, top, width, height)
+        verify_pose, verify_conf = find_release_pose(verify_frame, threshold=RELEASE_THRESHOLD)
+        if verify_pose is not None:
+            # Sustained — likely top-of-swing apex. Skip and keep polling.
+            print(f"  [apex-skip] match sustained after {POLL_INTERVAL * 1000:.0f}ms "
+                  f"(conf {conf:.2f}->{verify_conf:.2f}, streak now {match_streak_len + 1}) — skipping")
+            match_streak_len += 1
+            prev_match_y = verify_pose[1]
+            continue
+        print(f"Release pose at ({px},{py}), conf={conf:.2f} "
+              f"(verify dropped to {verify_conf:.2f}, transient match — throwing)")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
         # pose detection and click landing drifts the arm a few degrees

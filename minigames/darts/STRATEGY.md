@@ -227,14 +227,27 @@ Limitations:
    But we can't tell which we're seeing on the first matched frame — the
    distinction is only knowable from subsequent frames.
 
-   **Instrumented as of 2026-05-24** with two new shot_log columns:
-   `match_streak_len_before_fire` and `prev_match_y`. Don't change firing
-   behavior yet — accumulate ~20+ labeled throws with these columns, then
-   build the discriminator. Likely fix: don't fire on the first match;
-   wait one poll, and if the match is still there, it's apex (skip). If
-   it's gone, it was transient (forward release) — but we've missed the
-   moment. Need either (a) accept ~20ms latency penalty, or (b) predict
-   from the prior frame's arm velocity.
+   **Apex-skip filter shipped 2026-05-24** (option (a) from the original
+   plan). After the first template match, the bot waits one POLL_INTERVAL
+   (20ms) and re-runs `find_release_pose`. If still matching → sustained
+   apex → skip. If gone → was transient → fire. Adds ~20ms of latency
+   per fire but the existing template-match call already takes 15-30ms,
+   so the same order of magnitude.
+
+   Caveat: the offline `assets/captures/` burst is at 100ms intervals
+   (10fps), too coarse to verify the sustained-vs-transient hypothesis
+   before shipping — all 4 matches in a 60-frame burst showed as length-1
+   at that resolution. The fix is therefore a *hypothesis-driven*
+   behavior change; validate from live-session data by checking that
+   `match_streak_len_before_fire` is 1 for hits and 2+ for the skipped
+   apex matches (apex skips don't reach log_throw, so we infer their
+   existence from the `[apex-skip]` log lines vs the number of `Release
+   pose at...` lines).
+
+   If hit rate doesn't improve, the hypothesis is wrong and the
+   discriminator is something else — possibly conf magnitude (apex
+   matches tend higher, per the limited 11-throw sample), or arm
+   velocity which requires sub-poll-interval frame tracking.
 
 2. **Wind isn't yet a feature in any predictor.** Wind crops are saved
    per-throw but no model consumes them. The future release-angle
