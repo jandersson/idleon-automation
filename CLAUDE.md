@@ -173,6 +173,16 @@ investigations:
   (2026-05-04); same principle applies wherever a sampled world state
   drives click timing.
 
+- **`trajectory_gp` is not better than `gp`** (settled 2026-05-24,
+  issue #23). An early 3-session window had `trajectory_gp` at 45%
+  vs `gp`'s 23%, but after 9 more sessions (n=103, 7 added 2026-05-23/24)
+  the combined rate landed at 26.2% — statistically tied with `gp`'s
+  25.5% (Wilson 95% CIs overlap heavily: [18.7, 35.5] vs [15.5, 38.9]).
+  The early window was small-N luck. Default stays at `"gp"` in
+  `minigames/hoops/main.py:PREDICTOR_KIND`; `trajectory_gp` remains
+  selectable via the launcher dropdown for further experimentation but
+  shouldn't be promoted without a much larger sample showing separation.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
