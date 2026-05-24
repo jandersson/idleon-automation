@@ -1,5 +1,6 @@
 import time
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -8,11 +9,14 @@ from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
+from common.shot_log import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
+from minigames.chopping.chop_log import open_db, log_chop, set_outcome
 from minigames.chopping.detector import analyze_bar, nearest_red_distance, find_game_over
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
+CHOPPING_DB = _HERE / "assets" / "chopping.db"
 
 WINDOW_TITLE = "Legends Of Idleon"
 
@@ -50,6 +54,16 @@ def _run_inner():
     print(f"Chopping bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
+    conn = open_db(CHOPPING_DB)
+    session_started = datetime.now().isoformat(timespec="seconds")
+    code_commit = current_code_commit(_HERE.parent.parent)
+    chop_idx = 0
+    # The last logged chop sits with outcome=NULL until the next iteration
+    # tells us whether the bot survived (another successful chop) or the
+    # run ended (game_over detected). pending = (row_id, click_time).
+    pending: tuple[int, float] | None = None
+    print(f"Chopping DB: {CHOPPING_DB} (session={session_started})")
+
     last_click: tuple[int, str] | None = None
     stagnation_count = 0
     last_game_over_check = 0.0
@@ -68,7 +82,13 @@ def _run_inner():
             full_frame = grab_region(win_left, win_top, win_w, win_h)
             is_over, conf = find_game_over(full_frame)
             if is_over:
+                if pending is not None:
+                    row_id, click_time = pending
+                    set_outcome(conn, row_id, "game_over",
+                                int((time.time() - click_time) * 1000))
+                    pending = None
                 print(f"Game over detected (conf={conf:.2f}). Stopping.")
+                conn.close()
                 return
 
         bar_region = get_region(_HERE, "bar", win_w, win_h)
@@ -107,6 +127,7 @@ def _run_inner():
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:
                     print(f"Pointer stuck at x={pointer_x} in {zone} for {stagnation_count} clicks — minigame likely over, stopping.")
+                    conn.close()
                     return
             else:
                 stagnation_count = 0
@@ -114,8 +135,40 @@ def _run_inner():
             random_delay(20, 60)
             button_cx = button_region["left"] + button_region["width"] // 2
             button_cy = button_region["top"] + button_region["height"] // 2
-            click(win_left + button_cx, win_top + button_cy)
+            click_x = win_left + button_cx
+            click_y = win_top + button_cy
+            click(click_x, click_y)
+            click_time = time.time()
             last_click = (pointer_x, zone)
+
+            # The previous chop survived — we made it here and clicked again.
+            if pending is not None:
+                prev_row_id, prev_click_time = pending
+                set_outcome(conn, prev_row_id, "survived",
+                            int((click_time - prev_click_time) * 1000))
+
+            chop_idx += 1
+            row_id = log_chop(
+                conn,
+                session_started=session_started,
+                chop_idx=chop_idx,
+                clicked_at=datetime.now().isoformat(timespec="milliseconds"),
+                pointer_x=pointer_x,
+                zone=zone,
+                nearest_red_distance=red_dist,
+                red_safety_margin=RED_SAFETY_MARGIN_PX,
+                bar_left=bar_region["left"],
+                bar_top=bar_region["top"],
+                bar_width=bar_region["width"],
+                bar_height=bar_region["height"],
+                button_click_x=button_cx,
+                button_click_y=button_cy,
+                window_w=win_w,
+                window_h=win_h,
+                code_commit=code_commit,
+                source="bot",
+            )
+            pending = (row_id, click_time)
             time.sleep(COOLDOWN_AFTER_CLICK)
             continue
 
