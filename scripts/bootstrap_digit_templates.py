@@ -95,6 +95,16 @@ def bootstrap_game(game_name: str, verbose: bool = False) -> dict[int, int]:
         f"WHERE {cfg['throw_dir_col']} IS NOT NULL AND {cfg['score_col']} IS NOT NULL "
         f"ORDER BY id"
     ).fetchall()
+    # Every session's throw_idx=1 has score=0 in its pre_throw.png (first
+    # throw hasn't scored yet). Reuse `_extract_pre_frame_score_zero` to
+    # mine these frames for digit "0" without manual labelling. Uses
+    # pre_throw.png (not post_throw.png) so the score is unchanged from
+    # session start.
+    idx_col = "throw_idx" if cfg["table"] == "throws" else "shot_idx"
+    first_throw_dirs = conn.execute(
+        f"SELECT DISTINCT {cfg['throw_dir_col']} FROM {cfg['table']} "
+        f"WHERE {idx_col} = 1 AND {cfg['throw_dir_col']} IS NOT NULL"
+    ).fetchall()
     conn.close()
 
     template_dir = cfg["game_dir"] / "assets" / "digit_templates"
@@ -110,22 +120,38 @@ def bootstrap_game(game_name: str, verbose: bool = False) -> dict[int, int]:
             continue
         override_path = cfg_dir / "assets" / "monitor" / override_dir
         sources.append((str(override_path), override_score))
+    # Inject score=0 candidates from every throw_idx=1's pre_throw.png.
+    # Use a sentinel score value of 0 + force the loop below to read
+    # pre_throw.png instead of post_throw.png via a marker tuple.
+    for (dir_path,) in first_throw_dirs:
+        if dir_path is None:
+            continue
+        sources.append(("PRE:" + dir_path, 0))
 
     for shot_dir, score in sources:
         if shot_dir is None or score is None:
             continue
-        sd = Path(shot_dir)
+        # "PRE:" prefix = use pre_throw.png (score is pre-update); without
+        # it, use post_throw.png (score is post-update). Lets us mine
+        # throw_idx=1's pre-shot frame for digit 0 (score=0 in startup).
+        use_pre = isinstance(shot_dir, str) and shot_dir.startswith("PRE:")
+        sd = Path(shot_dir[4:] if use_pre else shot_dir)
         if not sd.exists():
             continue
-        post_path = sd / "post_throw.png"
-        if not post_path.exists():
-            # hoops uses shot_NNN dirs that don't contain post_throw.png
-            # the same way. Fall back to scanning the parent monitor dir's
-            # last flight frame.
-            flights = sorted(sd.glob("flight_*.png"))
-            if not flights:
+        if use_pre:
+            post_path = sd / "pre_throw.png"
+            if not post_path.exists():
                 continue
-            post_path = flights[-1]
+        else:
+            post_path = sd / "post_throw.png"
+            if not post_path.exists():
+                # hoops uses shot_NNN dirs that don't contain post_throw.png
+                # the same way. Fall back to scanning the parent monitor dir's
+                # last flight frame.
+                flights = sorted(sd.glob("flight_*.png"))
+                if not flights:
+                    continue
+                post_path = flights[-1]
         frame = cv2.imread(str(post_path))
         if frame is None:
             continue
