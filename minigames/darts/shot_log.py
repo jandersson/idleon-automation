@@ -52,7 +52,14 @@ CREATE TABLE IF NOT EXISTS throws (
 # for each on existing DBs (sqlite ignores duplicate-column errors).
 # Keep this list append-only — same pattern as common.shot_log.
 _LATE_COLUMNS: list[tuple[str, str]] = [
-    # (no late columns yet — placeholder for future additions)
+    # Temporal diagnostics added 2026-05-24 to distinguish forward-release
+    # (hit) from top-of-swing apex (miss). Both moments produce a template
+    # match, so the bot can't tell them apart from a single frame — but
+    # the apex match holds for many consecutive poll frames while forward
+    # release passes through quickly. Capture both signals per throw so
+    # we can validate the hypothesis from labeled hit/miss data.
+    ("match_streak_len_before_fire", "INTEGER"),  # consecutive matches incl. the firing frame
+    ("prev_match_y", "INTEGER"),  # dart y on the prior matched frame this streak; NULL if streak_len=1
 ]
 
 

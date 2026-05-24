@@ -232,6 +232,13 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
     last_pose_time = time.time()
     last_wind_crop: np.ndarray | None = None
+    # Temporal diagnostics for the apex-vs-forward-release discriminator
+    # (see STRATEGY.md "Game-physics assumptions"). match_streak_len counts
+    # consecutive POLL_INTERVAL frames where pose was detected; prev_match_y
+    # is the dart y from the immediately preceding matched frame in the
+    # current streak. Both reset whenever pose drops below threshold.
+    match_streak_len = 0
+    prev_match_y: int | None = None
 
     while True:
         check_failsafe()
@@ -257,6 +264,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
 
         if pose is None:
             best_recent_conf = max(best_recent_conf, conf)
+            # Streak ends whenever pose drops below threshold — reset both
+            # diagnostic state vars so the next match starts a fresh streak.
+            match_streak_len = 0
+            prev_match_y = None
             # Game-over signal: the entire dartboard scene is replaced when
             # the trial ends, so the player avatar disappears and the release
             # template can't match. If we haven't seen the player in a while,
@@ -271,7 +282,13 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
 
         last_pose_time = time.time()
         px, py = pose
-        print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}) — throwing")
+        # Update the streak counter and capture the previous matched y BEFORE
+        # incrementing — that gives us "y on the prior matched frame this
+        # streak", which is the input to a coarse dart-velocity estimate.
+        match_streak_len += 1
+        prev_match_y_for_log = prev_match_y  # capture for log_throw below
+        prev_match_y = int(py)
+        print(f"Release pose at ({px},{py}), conf={conf:.2f} (recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
         # pose detection and click landing drifts the arm a few degrees
@@ -380,6 +397,8 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             window_h=int(height),
             code_commit=code_commit,
             source="bot",
+            match_streak_len_before_fire=int(match_streak_len),
+            prev_match_y=prev_match_y_for_log,
         )
         if MONITOR_MODE:
             sub = _save_monitor_throw(
@@ -397,6 +416,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             )
             print(f"  [monitor] saved {sub.name}")
         best_recent_conf = 0.0
+        # Reset streak state after the cooldown — the next match is the
+        # start of a fresh swing cycle, not a continuation of this one.
+        match_streak_len = 0
+        prev_match_y = None
 
 
 if __name__ == "__main__":

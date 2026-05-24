@@ -210,17 +210,43 @@ Limitations:
 
 ## Open problems
 
-1. **Wind isn't yet a feature in any predictor.** Wind crops are saved
+1. **Bot fires at two distinct swing moments without distinguishing them.**
+   Discovered 2026-05-24 from `launch_angle_deg` data on 11 labeled throws:
+   - **Hits**: launch_angle -11.4° to -6.8° (forward-release moment)
+   - **Misses**: launch_angle +23.7° to +24.8° (top-of-swing apex; dart
+     launches upward, falls to bottom of screen — matches the user-visible
+     "dart to bottom" failure mode)
+
+   Zero overlap on launch_angle. The bot picks one or the other on each
+   swing cycle based on which moment comes first after the cooldown ends.
+   Template-match-rising-edge filter is a no-op (each cooldown ends with
+   no prior match, so the first detection is by definition a rising edge).
+   The discriminator is temporal: forward-release is a *transient* match
+   (dart passes through release angle in 1-3 poll frames) while apex is a
+   *sustained* match (dart pauses at the top of the swing for many frames).
+   But we can't tell which we're seeing on the first matched frame — the
+   distinction is only knowable from subsequent frames.
+
+   **Instrumented as of 2026-05-24** with two new shot_log columns:
+   `match_streak_len_before_fire` and `prev_match_y`. Don't change firing
+   behavior yet — accumulate ~20+ labeled throws with these columns, then
+   build the discriminator. Likely fix: don't fire on the first match;
+   wait one poll, and if the match is still there, it's apex (skip). If
+   it's gone, it was transient (forward release) — but we've missed the
+   moment. Need either (a) accept ~20ms latency penalty, or (b) predict
+   from the prior frame's arm velocity.
+
+2. **Wind isn't yet a feature in any predictor.** Wind crops are saved
    per-throw but no model consumes them. The future release-angle
    predictor will need to encode wind state somehow (cluster by visual
    similarity, OCR the indicator if it's numeric, or feed the raw crop
    to a small CNN).
-2. **No release-angle predictor at all yet.** Bot fires on any frame
+3. **No release-angle predictor at all yet.** Bot fires on any frame
    where the captured release pose template matches above threshold —
    meaning it always throws at the same arm angle, and corrections
    come only via swapping the captured release pose template. This is
    the eventual ML target.
-3. **Game-over detection is heuristic.** Currently "no release pose
+4. **Game-over detection is heuristic.** Currently "no release pose
    matched in `GAME_OVER_NO_POSE_SEC=25s`" — fires when the dartboard
    scene is replaced. False fires possible during slow cycles; false
    negatives if the scene happens to keep matching.
