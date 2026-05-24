@@ -44,25 +44,38 @@ def main() -> None:
         sys.exit(1)
     print(f"Analyzing {len(frames)} frames with threshold {threshold}")
 
-    results: list[tuple[int, float, bool]] = []
+    results: list[tuple[int, float, int | None, int | None, bool]] = []
     for i, p in enumerate(frames):
         bgr = cv2.imread(str(p), cv2.IMREAD_COLOR)
         if bgr is None:
             continue
         bgra = cv2.cvtColor(bgr, cv2.COLOR_BGR2BGRA)
-        _, conf = find_release_pose(bgra, threshold=0.0)
+        pose, conf = find_release_pose(bgra, threshold=0.0)
         matched = conf >= threshold
-        results.append((i, conf, matched))
+        # find_release_pose returns None below its internal threshold (0.6)
+        # — fall back to running match_multiscale_center directly so we
+        # always have a dart-y for trajectory analysis.
+        if pose is not None:
+            x, y = pose
+        else:
+            from common.templates import match_multiscale_center
+            template = cv2.imread(
+                str(ROOT / "minigames" / "darts" / "assets" / "release.png"),
+                cv2.IMREAD_COLOR,
+            )
+            (x, y), _, _ = match_multiscale_center(bgr, template)
+        results.append((i, conf, int(x), int(y), matched))
 
     print()
-    print("frame#  conf   matched")
-    for i, conf, matched in results:
+    print("frame#  conf   dart=(x,y)  matched")
+    for i, conf, x, y, matched in results:
         marker = "MATCH" if matched else ""
-        print(f"  {i:>4}  {conf:.2f}   {marker}")
+        print(f"  {i:>4}  {conf:.2f}   ({x},{y})    {marker}")
 
     streaks: list[int] = []
     cur = 0
-    for _, _, m in results:
+    for r in results:
+        m = r[4]
         if m:
             cur += 1
         elif cur > 0:
@@ -70,6 +83,34 @@ def main() -> None:
             cur = 0
     if cur > 0:
         streaks.append(cur)
+
+    # Per-streak y trajectory: which direction was the dart moving in the
+    # few frames leading up to (and during) the match? Down-swing = y
+    # increasing (arm descending on screen) -> hit. Up-swing = y decreasing
+    # -> miss. Sample 3 frames before streak start to capture pre-match
+    # motion direction.
+    print()
+    print("Streak y-trajectories (3 frames pre + during streak):")
+    streak_idx = 0
+    cur_start: int | None = None
+    for j, r in enumerate(results):
+        m = r[4]
+        if m and cur_start is None:
+            cur_start = j
+        elif not m and cur_start is not None:
+            streak_idx += 1
+            lead_start = max(0, cur_start - 3)
+            ys = [results[k][3] for k in range(lead_start, j)]
+            confs = [results[k][1] for k in range(lead_start, j)]
+            direction = (
+                "DESCENDING (down-swing -> hit?)" if ys[-1] > ys[0]
+                else "ASCENDING (up-swing -> miss?)" if ys[-1] < ys[0]
+                else "FLAT"
+            )
+            print(f"  Streak {streak_idx} (frames {cur_start}-{j-1}):")
+            print(f"    y trajectory: {ys}  -> {direction}")
+            print(f"    conf: {[f'{c:.2f}' for c in confs]}")
+            cur_start = None
 
     print()
     print(f"Match streaks ({len(streaks)} total): {streaks}")
