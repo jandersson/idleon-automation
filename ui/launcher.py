@@ -119,6 +119,10 @@ class Launcher:
         # Map predictor_kind -> dict of widget refs for fast updating.
         # Built in _build_bots_tab when the hoops row is constructed.
         self.predictor_cards: dict[str, dict] = {}
+        # Per-game digit-template status labels (template OCR coverage),
+        # keyed by minigame name. Updated on launcher open + after each
+        # template-refresh button click.
+        self.template_status_labels: dict[str, ttk.Label] = {}
         # Snapshot of the shared hoops cooldown anchored to the save
         # mtime it came from: (save_mtime, cd_at_save_time). The display
         # extrapolates remaining = cd - (now - save_mtime). Anchoring
@@ -189,6 +193,15 @@ class Launcher:
                     values=opt["values"], width=max(len(v) for v in opt["values"]) + 2,
                 ).pack(side="left")
 
+            # Score-template coverage row — auto-appears for games that
+            # have a digit_templates/ directory under assets. Lets the
+            # user see which digit glyphs are still missing from the
+            # template library and re-run the bootstrap on demand
+            # (catches new digits from recent sessions).
+            templates_dir = PROJECT_ROOT / "minigames" / mg["name"] / "assets" / "digit_templates"
+            if templates_dir.exists():
+                self._build_templates_row(frame, mg["name"])
+
             # Hoops gets a Pokemon-style stat-card row, one per predictor
             # — see GitHub issue #21. Each card shows Lv (sessions),
             # HP-bar (make rate), and shots/makes. Active predictor
@@ -257,6 +270,74 @@ class Launcher:
         ("trajectory_gp",  "🌐", "T-GP",   "#DAA520"),
         ("trajectory_rf",  "🌲", "T-RF",   "#228B22"),
     ]
+
+    def _build_templates_row(self, parent: ttk.Frame, game_name: str) -> None:
+        """Build the score-template coverage row for a game.
+
+        Shows N/10 captured + which digits are missing, plus a button to
+        rerun the bootstrap script (which scans existing monitor frames
+        and saves any newly-captureable digit templates).
+        """
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Label(row, text="📋 Score templates:").pack(side="left")
+        label = ttk.Label(row, text="—")
+        label.pack(side="left", padx=(4, 8))
+        self.template_status_labels[game_name] = label
+        ttk.Button(
+            row, text="Refresh templates", width=18,
+            command=lambda g=game_name: self._refresh_templates(g),
+        ).pack(side="left")
+        self._update_template_label(game_name)
+
+    def _template_status(self, game_name: str) -> tuple[set[int], set[int]]:
+        """Return (captured_digits, missing_digits) for the game's
+        digit_templates directory."""
+        template_dir = PROJECT_ROOT / "minigames" / game_name / "assets" / "digit_templates"
+        captured: set[int] = set()
+        if template_dir.exists():
+            for d in range(10):
+                if (template_dir / f"{d}.png").exists():
+                    captured.add(d)
+        return captured, set(range(10)) - captured
+
+    def _update_template_label(self, game_name: str) -> None:
+        """Refresh the displayed status text for one game's templates row."""
+        label = self.template_status_labels.get(game_name)
+        if label is None:
+            return
+        captured, missing = self._template_status(game_name)
+        if not missing:
+            text = "all 10 captured ✓"
+            color = "#3a3"
+        else:
+            missing_str = ", ".join(str(d) for d in sorted(missing))
+            text = f"{len(captured)}/10 captured — missing {missing_str}"
+            color = "#a80" if len(captured) >= 7 else "#a00"
+        label.config(text=text, foreground=color)
+
+    def _refresh_templates(self, game_name: str) -> None:
+        """Run the bootstrap script for this game in a background thread,
+        route its stdout into the launcher log, then refresh the row."""
+        import contextlib
+        import io
+        import threading
+
+        def worker() -> None:
+            self.log_queue.put(f"[templates:{game_name}] refreshing...\n")
+            try:
+                from scripts.bootstrap_digit_templates import bootstrap_game
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    bootstrap_game(game_name)
+                for line in buf.getvalue().splitlines():
+                    self.log_queue.put(f"[templates:{game_name}] {line}\n")
+            except Exception as e:
+                self.log_queue.put(f"[templates:{game_name}] failed: {e!r}\n")
+            # UI must update on the Tk main thread.
+            self.root.after(0, lambda: self._update_template_label(game_name))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _build_predictor_cards(self, parent: ttk.Frame) -> None:
         """Build a horizontal row of stat cards, one per predictor kind."""
