@@ -18,7 +18,7 @@ from common.score_ocr import read_score
 from common.dart_trajectory import analyse_throw_dir
 from common.shot_log import current_code_commit  # shared with hoops
 from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
-from minigames.darts.shot_log import open_db, log_throw
+from minigames.darts.shot_log import open_db, log_throw, log_poll
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -239,6 +239,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # current streak. Both reset whenever pose drops below threshold.
     match_streak_len = 0
     prev_match_y: int | None = None
+    # Wall-clock anchor for the polls table. Every poll's t_ms is
+    # relative to this so we can correlate poll rows with throws rows
+    # post-hoc without a perfectly synced clock.
+    session_t0 = time.time()
 
     while True:
         check_failsafe()
@@ -260,9 +264,16 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                   f"{shot_stats['makes']}/{shot_stats['attempts']} hits.")
             return
 
-        pose, conf = find_release_pose(frame, threshold=RELEASE_THRESHOLD)
+        # threshold=0 so we get a position+conf for every poll, including
+        # sub-threshold ones — required for the polls table. The fire
+        # decision still gates on RELEASE_THRESHOLD below.
+        pose, conf = find_release_pose(frame, threshold=0.0)
+        match_x = int(pose[0]) if pose else 0
+        match_y = int(pose[1]) if pose else 0
+        t_ms = int((time.time() - session_t0) * 1000)
 
-        if pose is None:
+        if conf < RELEASE_THRESHOLD:
+            log_poll(throw_db, session_started, t_ms, conf, match_x, match_y, threw=0)
             best_recent_conf = max(best_recent_conf, conf)
             # Streak ends whenever pose drops below threshold — reset both
             # diagnostic state vars so the next match starts a fresh streak.
@@ -273,6 +284,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             # template can't match. If we haven't seen the player in a while,
             # bail.
             if time.time() - last_pose_time > GAME_OVER_NO_POSE_SEC:
+                throw_db.commit()  # flush any unflushed polls before exit
                 print(f"No release pose detected for {GAME_OVER_NO_POSE_SEC:.0f}s — "
                       f"assuming game over. Final session: "
                       f"{shot_stats['makes']}/{shot_stats['attempts']} makes.")
@@ -280,6 +292,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             time.sleep(POLL_INTERVAL)
             continue
 
+        log_poll(throw_db, session_started, t_ms, conf, match_x, match_y, threw=1)
         last_pose_time = time.time()
         px, py = pose
         match_streak_len += 1

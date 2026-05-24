@@ -48,6 +48,28 @@ CREATE TABLE IF NOT EXISTS throws (
 """
 
 
+# Per-poll diagnostic log. The bot writes a row every iteration of its
+# main loop, regardless of whether the template matched. Lets us reconstruct
+# the full conf/y trajectory around each fire post-hoc, with the throws
+# table providing hit/miss ground truth. Built 2026-05-24 to fix the
+# "fire happens but we can't tell which arm-swing pass we caught" problem.
+#
+# threw=1 indicates this poll triggered a click (the matching row in
+# throws will have the same session_started and a fired_at within a few
+# ms of t_ms's wall-clock equivalent). Most rows have threw=0.
+_POLLS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS polls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_started TEXT,
+    t_ms INTEGER,       -- milliseconds since session start
+    conf REAL,          -- template-match conf (unthresholded)
+    match_x INTEGER,    -- center x of the best template match
+    match_y INTEGER,    -- center y of the best template match
+    threw INTEGER       -- 1 if this poll fired a click, 0 otherwise
+)
+"""
+
+
 # New columns added after the original schema. open_db() runs ALTER TABLE
 # for each on existing DBs (sqlite ignores duplicate-column errors).
 # Keep this list append-only — same pattern as common.shot_log.
@@ -75,9 +97,29 @@ def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.execute(_SCHEMA)
+    conn.execute(_POLLS_SCHEMA)
     _migrate(conn)
     conn.commit()
     return conn
+
+
+def log_poll(
+    conn: sqlite3.Connection,
+    session_started: str,
+    t_ms: int,
+    conf: float,
+    match_x: int,
+    match_y: int,
+    threw: int,
+) -> None:
+    """Append one row to the polls table. Called once per main-loop
+    iteration. No commit per call — caller commits periodically (e.g.
+    every fire) to keep write overhead bounded."""
+    conn.execute(
+        "INSERT INTO polls (session_started, t_ms, conf, match_x, match_y, threw) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (session_started, int(t_ms), float(conf), int(match_x), int(match_y), int(threw)),
+    )
 
 
 def log_throw(conn: sqlite3.Connection, **fields) -> None:
