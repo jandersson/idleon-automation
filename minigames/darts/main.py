@@ -285,29 +285,15 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         match_streak_len += 1
         prev_match_y_for_log = prev_match_y  # capture for log_throw below
         prev_match_y = int(py)
-        # Apex-vs-forward-release discriminator. Both moments produce a
-        # template match. Hypothesis: top-of-swing apex match sustains for
-        # multiple bot-poll frames (dart pauses at peak); forward-release
-        # match is transient (dart passes through release angle quickly).
-        # Wait one poll, re-detect: if still matching → apex → skip; if
-        # gone → was transient → fire. Adds ~20ms of latency to every fire
-        # but the existing find_release_pose call already takes 15-30ms
-        # (multi-scale match), so this is in the same order of magnitude.
-        # If hypothesis is wrong, the diagnostic columns
-        # (match_streak_len_before_fire) will show streak=1 for both hits
-        # and misses; if right, apex throws will be filtered before fire.
-        time.sleep(POLL_INTERVAL)
-        verify_frame = grab_region(left, top, width, height)
-        verify_pose, verify_conf = find_release_pose(verify_frame, threshold=RELEASE_THRESHOLD)
-        if verify_pose is not None:
-            # Sustained — likely top-of-swing apex. Skip and keep polling.
-            print(f"  [apex-skip] match sustained after {POLL_INTERVAL * 1000:.0f}ms "
-                  f"(conf {conf:.2f}->{verify_conf:.2f}, streak now {match_streak_len + 1}) — skipping")
-            match_streak_len += 1
-            prev_match_y = verify_pose[1]
-            continue
+        # The apex-vs-forward-release verify-poll filter (commit 9453b66) was
+        # reverted 2026-05-24: session log showed zero [apex-skip] events
+        # across 10 throws — both apex (+23° launches) and forward-release
+        # (-13° launches) matches are 1-frame at the 20ms poll rate.
+        # Discriminator isn't observable at this resolution; needs either
+        # a tighter template or finer frame sampling. See STRATEGY.md
+        # "Open problems" item 1.
         print(f"Release pose at ({px},{py}), conf={conf:.2f} "
-              f"(verify dropped to {verify_conf:.2f}, transient match — throwing)")
+              f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
         # pose detection and click landing drifts the arm a few degrees

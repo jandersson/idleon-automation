@@ -227,27 +227,40 @@ Limitations:
    But we can't tell which we're seeing on the first matched frame — the
    distinction is only knowable from subsequent frames.
 
-   **Apex-skip filter shipped 2026-05-24** (option (a) from the original
-   plan). After the first template match, the bot waits one POLL_INTERVAL
-   (20ms) and re-runs `find_release_pose`. If still matching → sustained
-   apex → skip. If gone → was transient → fire. Adds ~20ms of latency
-   per fire but the existing template-match call already takes 15-30ms,
-   so the same order of magnitude.
+   **Apex-skip filter was tried and reverted (2026-05-24).** Hypothesis:
+   apex match sustains for multiple bot-poll frames, forward release is
+   transient. Implementation: wait one POLL_INTERVAL after first match,
+   re-detect; skip if still matching. Result: zero `[apex-skip]` events
+   across 10 live throws — both apex (+23° launches) and forward-release
+   (-13° launches) matches are 1-frame at the 20ms poll rate.
 
-   Caveat: the offline `assets/captures/` burst is at 100ms intervals
-   (10fps), too coarse to verify the sustained-vs-transient hypothesis
-   before shipping — all 4 matches in a 60-frame burst showed as length-1
-   at that resolution. The fix is therefore a *hypothesis-driven*
-   behavior change; validate from live-session data by checking that
-   `match_streak_len_before_fire` is 1 for hits and 2+ for the skipped
-   apex matches (apex skips don't reach log_throw, so we infer their
-   existence from the `[apex-skip]` log lines vs the number of `Release
-   pose at...` lines).
+   **What this rules out**: the discriminator is NOT match duration at
+   bot-poll resolution. Both moments produce identical 1-frame
+   template matches with overlapping conf distributions (hits 0.87-0.97,
+   misses 0.71-0.98). Visual inspection of pre_throw.png for matched
+   throws at near-identical release_pose (e.g. (427,324) miss vs (427,325)
+   hit) shows visually indistinguishable frames.
 
-   If hit rate doesn't improve, the hypothesis is wrong and the
-   discriminator is something else — possibly conf magnitude (apex
-   matches tend higher, per the limited 11-throw sample), or arm
-   velocity which requires sub-poll-interval frame tracking.
+   **Candidate next moves** (none cheap; all need user-driven captures or
+   sub-poll-rate observation):
+   - **Tighter template** that only matches the forward-release dart
+     orientation. The current template is 9x40 px and apparently matches
+     both swing moments. A template that includes some hand/arm context
+     might disambiguate.
+   - **Finer frame sampling** (sub-20ms) to see if apex is actually
+     sustained when observed faster. `darts-capture` would need a
+     different capture rate, and we'd need a non-firing observe-mode
+     session to gather the data.
+   - **Multi-template at fine dart rotations** — capture release-pose
+     templates at e.g. dart rotations of -5°, 0°, +5°; fire only on the
+     0° match. If apex has the dart at a slightly different rotation
+     than forward release (within the current single template's
+     tolerance), this would separate them.
+   - **Use post-throw `launch_angle_deg` to mark training labels** —
+     filter the predictor's training data to only the forward-release
+     throws (launch_angle < 0). Doesn't fix the bot's firing, but
+     prevents the polluted apex throws from contaminating any future
+     predictor.
 
 2. **Wind isn't yet a feature in any predictor.** Wind crops are saved
    per-throw but no model consumes them. The future release-angle
