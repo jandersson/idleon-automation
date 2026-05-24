@@ -42,7 +42,7 @@ def find_release_pose(
 
 
 def find_game_over(
-    frame: np.ndarray, threshold: float = 0.7
+    frame: np.ndarray, threshold: float = 0.85
 ) -> tuple[bool, float]:
     """Detect the end-of-game screen via multi-scale template match.
 
@@ -50,6 +50,13 @@ def find_game_over(
     main loop falls back to its no-pose timeout heuristic in that case.
     Capture the template via `darts-pick-game-over` while the game-over
     screen is visible.
+
+    Threshold bumped 2026-05-24 from 0.7 to 0.85 after a session
+    ended at conf=0.76 with the player visibly still in the dartboard
+    scene — startup phase has no life cap (player keeps throwing until
+    a hit), so a 7-throw all-miss session can't legitimately end in
+    game-over. The earlier 0.7 was leaving ~6px of headroom against
+    false positives during normal play.
     """
     path = ASSETS / "game_over.png"
     if not path.exists():

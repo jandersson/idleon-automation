@@ -80,6 +80,24 @@ wooden panel, with multiple discrete directional states observed
 either disabled in those moments or the region drifts during scene
 transitions.
 
+## Within-session mechanics (confirmed 2026-05-24)
+
+- **Startup phase**: bot has to make a successful throw to start the
+  game. Misses during startup are free — they don't consume a life,
+  the bot just keeps throwing until it scores.
+- **Game phase**: after the first successful throw, the player has
+  **3 lives**. Each miss costs a life; 3 misses = game over.
+- **Total throws per session** therefore = N startup attempts + up
+  to ~6 game-phase throws (3 hits + 3 misses interleaved). At the
+  bot's current ~20% per-throw hit rate, startup phase dominates
+  (averages ~5 attempts to land the first hit), so most session rows
+  in `darts.db` are pre-startup-hit misses.
+- **Implication for game-over detection**: a session with zero hits
+  shouldn't legitimately end in game-over (still in startup). If
+  `find_game_over` fires during an all-miss session, it's a false
+  positive. The detector's threshold was bumped from 0.7 to 0.85
+  after such an event (commit fixing this in detector.py).
+
 ## Stripe scoring (verified from monitor screenshots)
 
 The badge row at the top of the playfield shows **+1, +2, +3, +5** —
