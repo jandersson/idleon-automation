@@ -5,6 +5,7 @@ from pathlib import Path
 
 from minigames.chopping.chop_log import (
     log_chop,
+    log_poll,
     open_db,
     outcome_rate_by_red_distance,
     set_outcome,
@@ -73,3 +74,51 @@ def test_outcome_rate_buckets_by_red_distance():
     rates = outcome_rate_by_red_distance(conn, bin_px=4)
     assert (8, 3, 1, 2) in rates
     assert (12, 2, 2, 0) in rates
+
+
+def test_open_db_creates_polls_table():
+    conn = open_db(_tmpdb())
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='polls'"
+    )
+    assert cur.fetchone() == ("polls",)
+
+
+def test_log_poll_inserts_row():
+    conn = open_db(_tmpdb())
+    log_poll(
+        conn,
+        session_started="2026-05-24T17:00:00",
+        t_ms=12345,
+        pointer_x=110,
+        zone="green",
+        nearest_red_distance=14,
+        bar_pixel_count=4200,
+        fired=1,
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT t_ms, pointer_x, zone, nearest_red_distance, bar_pixel_count, fired "
+        "FROM polls"
+    ).fetchone()
+    assert row == (12345, 110, "green", 14, 4200, 1)
+
+
+def test_log_poll_accepts_null_pointer_and_red_distance():
+    conn = open_db(_tmpdb())
+    log_poll(
+        conn,
+        session_started="2026-05-24T17:00:00",
+        t_ms=100,
+        pointer_x=None,
+        zone="none",
+        nearest_red_distance=None,
+        bar_pixel_count=12,
+        fired=0,
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT pointer_x, nearest_red_distance, zone, bar_pixel_count "
+        "FROM polls"
+    ).fetchone()
+    assert row == (None, None, "none", 12)

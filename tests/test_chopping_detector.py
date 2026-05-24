@@ -1,7 +1,7 @@
 """Tests for chopping detector — leftmost-column and analyze_bar zone lookup."""
 import numpy as np
 
-from minigames.chopping.detector import _leftmost_column, analyze_bar
+from minigames.chopping.detector import _leftmost_column, analyze_bar, bar_pixel_count
 
 
 def test_leftmost_column_finds_first_qualifying_column():
@@ -82,3 +82,16 @@ def test_analyze_bar_returns_none_when_leaf_absent():
     leaf_x, zone = analyze_bar(bar, leaf_frame=leaf)
     assert leaf_x is None
     assert zone == "none"
+
+
+def test_bar_pixel_count_high_when_zones_present():
+    bar = _bar_with_zones()
+    # Bar is 20 rows × 100 cols, fully colored — expect thousands of pixels.
+    assert bar_pixel_count(bar) > 500
+
+
+def test_bar_pixel_count_near_zero_when_bar_blank():
+    # All-neutral (black) frame — no green/red/gold should match.
+    blank = np.zeros((20, 100, 4), dtype=np.uint8)
+    blank[..., 3] = 255
+    assert bar_pixel_count(blank) < 30

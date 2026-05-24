@@ -118,3 +118,20 @@ def find_game_over(
         return False, 0.0
     _, val, _scale = match_multiscale_center(bgr, template)
     return val >= threshold, val
+
+
+def bar_pixel_count(bar_frame: np.ndarray) -> int:
+    """Count of green+red+gold pixels in the bar region. While the round
+    is in progress the bar is fully colored (hundreds-to-thousands of
+    pixels depending on resolution). When the round ends the bar is
+    replaced with neutral UI and the count collapses to ~0.
+
+    More reliable than template-matching a specific game-over banner —
+    the bar's presence IS the game state."""
+    bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    green = _mask(hsv, *GREEN_HSV)
+    gold = _mask(hsv, *GOLD_HSV)
+    red = cv2.bitwise_or(_mask(hsv, *RED_HSV_LOW), _mask(hsv, *RED_HSV_HIGH))
+    combined = cv2.bitwise_or(cv2.bitwise_or(green, gold), red)
+    return int((combined > 0).sum())

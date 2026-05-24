@@ -49,7 +49,36 @@ CREATE TABLE IF NOT EXISTS chops (
 """
 
 
+# Per-poll diagnostic log. The bot writes a row every loop iteration
+# (sub-sampled to keep write rate sane), regardless of whether a click
+# fired. Lets us reconstruct what the bar looked like *between* chops —
+# pointer x, zone under the leaf, distance to red, total colored bar
+# pixels. The chops table provides ground truth for the click
+# decisions, polls provides the surrounding context.
+#
+# fired=1 indicates this poll triggered a click (the matching row in
+# chops has the same session_started and a clicked_at within a few ms
+# of t_ms's wall-clock equivalent). Most rows have fired=0.
+_POLLS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS polls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_started TEXT,
+    t_ms INTEGER,
+    pointer_x INTEGER,
+    zone TEXT,
+    nearest_red_distance INTEGER,
+    bar_pixel_count INTEGER,
+    fired INTEGER
+)
+"""
+
+
 _LATE_COLUMNS: list[tuple[str, str]] = [
+    # (no late columns yet — placeholder for future additions)
+]
+
+
+_POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # (no late columns yet — placeholder for future additions)
 ]
 
@@ -60,15 +89,47 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE chops ADD COLUMN {name} {decl}")
         except sqlite3.OperationalError:
             pass
+    for name, decl in _POLLS_LATE_COLUMNS:
+        try:
+            conn.execute(f"ALTER TABLE polls ADD COLUMN {name} {decl}")
+        except sqlite3.OperationalError:
+            pass
 
 
 def open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.execute(_SCHEMA)
+    conn.execute(_POLLS_SCHEMA)
     _migrate(conn)
     conn.commit()
     return conn
+
+
+def log_poll(
+    conn: sqlite3.Connection,
+    session_started: str,
+    t_ms: int,
+    pointer_x: int | None,
+    zone: str,
+    nearest_red_distance: int | None,
+    bar_pixel_count: int,
+    fired: int,
+) -> None:
+    """Append one row to the polls table. No per-row commit — caller
+    commits periodically (e.g. once per fire) to bound write overhead."""
+    conn.execute(
+        "INSERT INTO polls (session_started, t_ms, pointer_x, zone, "
+        "nearest_red_distance, bar_pixel_count, fired) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_started, int(t_ms),
+            int(pointer_x) if pointer_x is not None else None,
+            zone,
+            int(nearest_red_distance) if nearest_red_distance is not None else None,
+            int(bar_pixel_count), int(fired),
+        ),
+    )
 
 
 def log_chop(conn: sqlite3.Connection, **fields) -> int:
