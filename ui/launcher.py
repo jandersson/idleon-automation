@@ -19,6 +19,7 @@ from tkinter import ttk
 from PIL import Image, ImageTk
 
 from common import tries_counter
+from common.hoops_cooldown_observer import record_observation as _record_hoops_cooldown_observation
 from common.idleon_save import read_minigame_plays_shared, read_hoops_cooldown
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -582,6 +583,15 @@ class Launcher:
             # extrapolating from save_mtime keeps the math exact.
             anchor = self._save_mtime() or time.time()
             self.hoops_cooldown_snapshot = (anchor, cd)
+            # Append one row to the cooldown-observation JSONL each
+            # time the save flushes — feeds the formula-derivation
+            # work in issue #22. Cheap (one extra load_save on
+            # mtime-change ticks only) and gitignored output.
+            try:
+                _record_hoops_cooldown_observation()
+            except Exception as e:  # never let observation logging block the UI
+                if not silent:
+                    self._enqueue_log(f"[cooldown-obs] skipped: {e}\n")
         plays = read_minigame_plays_shared()
         if plays is None:
             self.tries_label.config(text="(save not found)")
