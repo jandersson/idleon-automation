@@ -274,9 +274,17 @@ class Launcher:
     def _build_templates_row(self, parent: ttk.Frame, game_name: str) -> None:
         """Build the score-template coverage row for a game.
 
-        Shows N/10 captured + which digits are missing, plus a button to
-        rerun the bootstrap script (which scans existing monitor frames
-        and saves any newly-captureable digit templates).
+        Shows N/10 captured + which digits are missing, plus two ways to
+        add new templates:
+          - Refresh templates: scan existing monitor frames + manual
+            labels for digits the OCR already could read
+          - Capture from current game: grab the live game window, crop
+            the score region, and extract digit templates assuming the
+            current visible score equals what the user typed in the
+            adjacent field. Use this to add missing digits without
+            waiting for the bot to encounter them organically (e.g.
+            digit 0 only appears at session start, before any throw is
+            logged to the DB).
         """
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=(4, 0))
@@ -285,9 +293,17 @@ class Launcher:
         label.pack(side="left", padx=(4, 8))
         self.template_status_labels[game_name] = label
         ttk.Button(
-            row, text="Refresh templates", width=18,
+            row, text="Refresh from DB", width=15,
             command=lambda g=game_name: self._refresh_templates(g),
         ).pack(side="left")
+        ttk.Label(row, text="  Capture from game — score now:").pack(side="left", padx=(12, 4))
+        score_var = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=score_var, width=6)
+        entry.pack(side="left")
+        ttk.Button(
+            row, text="Capture", width=8,
+            command=lambda g=game_name, v=score_var: self._capture_templates_from_game(g, v),
+        ).pack(side="left", padx=(4, 0))
         self._update_template_label(game_name)
 
     def _template_status(self, game_name: str) -> tuple[set[int], set[int]]:
@@ -315,6 +331,89 @@ class Launcher:
             text = f"{len(captured)}/10 captured — missing {missing_str}"
             color = "#a80" if len(captured) >= 7 else "#a00"
         label.config(text=text, foreground=color)
+
+    def _capture_templates_from_game(self, game_name: str, score_var: tk.StringVar) -> None:
+        """Grab the live game frame, crop the score region, extract digit
+        components, and save any new templates assuming the digits line up
+        with the user-entered score. Done on the main thread (fast — single
+        grab + a few mss/cv2 ops). Skips save if the component count doesn't
+        match the score's digit count (which would mean a stale region pick
+        or the wrong game on screen)."""
+        raw = score_var.get().strip()
+        try:
+            score = int(raw)
+            if score < 0:
+                raise ValueError("negative score")
+        except ValueError:
+            self.log_queue.put(
+                f"[templates:{game_name}] capture: '{raw}' is not a non-negative int\n"
+            )
+            return
+        try:
+            import cv2
+            from common.capture import grab_region
+            from common.regions import get_region
+            from common.score_template_ocr import extract_digit_components, save_template
+            from common.window import get_bounds, WindowNotFoundError
+
+            # All bots share the same window title constant — defined on
+            # each minigame's main module. Import lazily to avoid module-
+            # load-time penalty when the launcher starts.
+            mod = __import__(f"minigames.{game_name}.main", fromlist=["WINDOW_TITLE"])
+            window_title = mod.WINDOW_TITLE
+            try:
+                left, top, width, height = get_bounds(window_title)
+            except WindowNotFoundError as e:
+                self.log_queue.put(f"[templates:{game_name}] capture: {e}\n")
+                return
+            frame = grab_region(left, top, width, height)
+            bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            game_dir = PROJECT_ROOT / "minigames" / game_name
+            region = get_region(game_dir, "score", width, height)
+            if region is None:
+                self.log_queue.put(
+                    f"[templates:{game_name}] capture: no score region picked "
+                    f"(run '{game_name}-pick-score-region' first)\n"
+                )
+                return
+            crop = bgr[
+                region["top"]:region["top"] + region["height"],
+                region["left"]:region["left"] + region["width"],
+            ]
+            components = extract_digit_components(crop)
+            score_str = str(score)
+            if len(components) != len(score_str):
+                self.log_queue.put(
+                    f"[templates:{game_name}] capture: extracted {len(components)} "
+                    f"digit components but score '{score_str}' has {len(score_str)} digits — "
+                    f"is the game visible and score region picked correctly?\n"
+                )
+                return
+            template_dir = game_dir / "assets" / "digit_templates"
+            saved: list[int] = []
+            skipped: list[int] = []
+            for (patch, _box), digit_char in zip(components, score_str):
+                digit = int(digit_char)
+                target = template_dir / f"{digit}.png"
+                if target.exists():
+                    skipped.append(digit)
+                    continue
+                save_template(template_dir, digit, patch)
+                saved.append(digit)
+            if saved:
+                self.log_queue.put(
+                    f"[templates:{game_name}] capture: saved "
+                    f"{', '.join(str(d) for d in saved)}\n"
+                )
+            if skipped:
+                self.log_queue.put(
+                    f"[templates:{game_name}] capture: skipped "
+                    f"{', '.join(str(d) for d in skipped)} (already present)\n"
+                )
+            score_var.set("")
+        except Exception as e:
+            self.log_queue.put(f"[templates:{game_name}] capture failed: {e!r}\n")
+        self._update_template_label(game_name)
 
     def _refresh_templates(self, game_name: str) -> None:
         """Run the bootstrap script for this game in a background thread,
