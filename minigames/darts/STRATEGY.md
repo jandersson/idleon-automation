@@ -305,6 +305,22 @@ Limitations:
    - Multi-template with explicit per-spawn templates so each
      player spawn gets its own calibrated release-pose.
 
+   **Update 2026-05-24, arm-motion area gate shipped.** Per-poll motion-
+   AND-white pixel count (`arm_pixel_count` in the polls table)
+   discriminates cleanly on N=16 labeled fires:
+
+       HIT  arm_pixel_count at fire: 174..197 (max 197)
+       MISS arm_pixel_count at fire: 204..1665 (min 204)
+
+   Physical interpretation: at top-of-swing apex (miss-firing moment)
+   the arm is reversing direction so motion-AND-white captures more
+   changed pixels. At mid-swing forward release (hit) the arm is
+   moving steadily in one direction, fewer pixels change per frame.
+
+   Gate: skip the fire when `arm_pixel_count > MAX_ARM_AREA_AT_FIRE`
+   (defaulted to 210 — between observed max-hit 197 and min-miss 204,
+   with safety margin). Implemented in `darts/main.py`.
+
    **Candidate next moves** (none cheap; all need user-driven captures or
    sub-poll-rate observation):
    - **Tighter template** that only matches the forward-release dart

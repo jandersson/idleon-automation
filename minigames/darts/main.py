@@ -108,6 +108,20 @@ FLIGHT_POLL = 0.05
 # when the dartboard is actually gone.
 GAME_OVER_NO_POSE_SEC = 25.0
 
+# Apex-vs-forward-release discriminator (#25). At the top-of-swing apex
+# (miss-firing moment), the arm is reversing direction so the motion-AND-
+# white mask captures noticeably more pixels than at mid-swing forward
+# release (hit moment). Calibration on N=16 labeled fires (2026-05-24):
+#
+#   HIT  arm_pixel_count at fire: 174..197 (max 197)
+#   MISS arm_pixel_count at fire: 204..1665 (min 204)
+#
+# Clean separation at ~200. Threshold 210 leaves ~10px of safety margin
+# against the boundary between observed max-hit and min-miss. Skip the
+# fire when the arm-motion area exceeds this — almost certainly an apex
+# moment that would launch upward to the bottom of the screen.
+MAX_ARM_AREA_AT_FIRE = 210
+
 # Stripe color → score-increment mapping (confirmed 2026-05-24 from user
 # session reporting 3 red/bullseye hits + the +1/+2/+3/+5 stripe values
 # in STRATEGY.md). Lookup is increment → color so log_throw can derive
@@ -371,6 +385,25 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                       f"assuming game over. Final session: "
                       f"{shot_stats['makes']}/{shot_stats['attempts']} makes.")
                 return
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        # Apex skip-gate (#25). Bot's about to fire but the per-poll
+        # arm-motion area is too high — likely the top-of-swing reversal
+        # where the dart launches upward (lands at bottom of screen).
+        # Logs the candidate as threw=0 so the polls table reflects the
+        # skip, then continues without clicking.
+        if (
+            arm_pixel_count is not None
+            and arm_pixel_count > MAX_ARM_AREA_AT_FIRE
+        ):
+            log_poll(
+                throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
+                arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
+            )
+            last_pose_time = time.time()  # don't fire, but keep game-over heuristic happy
+            print(f"  [skip] apex-gate: arm_area={arm_pixel_count} > "
+                  f"{MAX_ARM_AREA_AT_FIRE} — likely upward launch")
             time.sleep(POLL_INTERVAL)
             continue
 
