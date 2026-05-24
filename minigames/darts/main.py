@@ -14,7 +14,8 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
-from common.score_ocr import read_score
+from common.score_ocr import read_score as _read_score_tesseract
+from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
 from common.shot_log import current_code_commit  # shared with hoops
 from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
@@ -27,6 +28,24 @@ REPO_ROOT = _HERE.parent.parent
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
+
+# Template-based score reader (replaces tesseract). Templates live in
+# assets/digit_templates/ and are bootstrapped from past clean OCR reads
+# via scripts/bootstrap_digit_templates.py. Falls back to tesseract when
+# the template reader returns None (missing digit template → don't lose
+# what tesseract could have caught even if imperfect). Closes the read-
+# side gap from #27.
+_template_reader = make_score_reader(_HERE / "assets" / "digit_templates")
+
+
+def read_score(crop):
+    """Read the darts score from a region crop. Tries template OCR first
+    (deterministic, no false 195/-4 reads); falls back to tesseract when
+    a digit isn't in the template library yet."""
+    val = _template_reader(crop)
+    if val is not None:
+        return val
+    return _read_score_tesseract(crop)
 
 # Template-match confidence threshold for the release pose. The hand sweeps
 # through other angles where the template matches weakly; threshold gates

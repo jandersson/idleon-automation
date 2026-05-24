@@ -19,13 +19,30 @@ from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn,
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
-from common.score_ocr import read_score
+from common.score_ocr import read_score as _read_score_tesseract
+from common.score_template_ocr import make_score_reader
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, find_game_prompt, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 SHOT_DB_PATH = _HERE / "assets" / "shots.db"
+
+
+# Template-based score reader (replaces tesseract for the common case;
+# falls back when a digit isn't yet in the template library). Templates
+# bootstrap from past clean OCR reads via
+# scripts/bootstrap_digit_templates.py. Closes #15.
+_template_reader = make_score_reader(_HERE / "assets" / "digit_templates")
+
+
+def read_score(crop):
+    """Read the hoops score from a region crop. Template OCR first
+    (deterministic), tesseract fallback for digits not yet captured."""
+    val = _template_reader(crop)
+    if val is not None:
+        return val
+    return _read_score_tesseract(crop)
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
