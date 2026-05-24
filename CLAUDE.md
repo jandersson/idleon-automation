@@ -12,14 +12,7 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 **Commit message format: Conventional Commits.** `<type>(<scope>): <description>`. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `build`, `ci`. Scope is the affected area (`hoops`, `darts`, `launcher`, `common`, etc.). Breaking changes use `!` after the type/scope (`feat(hoops)!:`). Body and footer are optional; keep the subject line under ~72 chars and use the body for the *why*. The legacy log has many `scope:` (no type) commits — don't follow that pattern, use the full Conventional format for new work.
 
-**Branch and PR workflow.** Don't push directly to `main`. For each logical change:
-1. Create a topic branch named `claude/<short-slug>` (e.g. `claude/darts-arm-centroid`, `claude/launcher-templates-row`). Slug should be short and descriptive — mirrors the Conventional Commit subject.
-2. Commit + push the branch.
-3. Open a PR with `gh pr create --title "..." --body "..."`. The repo has Claude-powered code-review workflows (#28) that will comment on the PR.
-4. Wait for the user to review and merge. Don't `gh pr merge` automatically.
-5. After merge, the branch can be deleted (`gh pr merge --delete-branch` is fine if the user explicitly asks for that).
-
-Exception: small auto-commit artifacts (e.g. `shots_snapshot.json` refreshes from the bot's auto-commit flow) still go directly to `main` since they're machine-generated and reviewing them adds no value.
+**Push directly to `main`.** Solo repo; the per-change PR roundtrip isn't worth the overhead. Was tried briefly on 2026-05-24 (#29, #30) and reverted — branches added latency without value. The Claude PR review bot (#28) is still wired up for any PRs that do get opened (e.g. external contributions), but the default flow is commit + push to main.
 
 **Add unit tests for new stuff.** New pure-logic helpers, parsers, schema modules, regression guards — write a test alongside the change in `tests/`. Match the existing style: fast, self-contained, no live captures. CV-against-real-frames stays manual (visual, calibrated by user).
 
