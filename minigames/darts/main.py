@@ -88,6 +88,17 @@ FLIGHT_POLL = 0.05
 # when the dartboard is actually gone.
 GAME_OVER_NO_POSE_SEC = 25.0
 
+# Stripe color → score-increment mapping (confirmed 2026-05-24 from user
+# session reporting 3 red/bullseye hits + the +1/+2/+3/+5 stripe values
+# in STRATEGY.md). Lookup is increment → color so log_throw can derive
+# stripe_color directly from score_increment without OCR-color detection.
+STRIPE_COLOR_BY_INCREMENT: dict[int, str] = {
+    5: "red",     # bullseye, center stripe
+    3: "green",
+    2: "yellow",
+    1: "gray",
+}
+
 
 def _crop_wind(frame_bgra) -> np.ndarray | None:
     bgr = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
@@ -391,6 +402,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         bullseye = (
             1 if score_increment == 5 else (0 if score_increment is not None else None)
         )
+        stripe_color = STRIPE_COLOR_BY_INCREMENT.get(score_increment) if score_increment else None
         log_throw(
             throw_db,
             session_started=session_started,
@@ -416,6 +428,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             source="bot",
             match_streak_len_before_fire=int(match_streak_len),
             prev_match_y=prev_match_y_for_log,
+            stripe_color=stripe_color,
         )
         if MONITOR_MODE:
             sub = _save_monitor_throw(

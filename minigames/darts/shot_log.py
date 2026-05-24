@@ -82,6 +82,11 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # we can validate the hypothesis from labeled hit/miss data.
     ("match_streak_len_before_fire", "INTEGER"),  # consecutive matches incl. the firing frame
     ("prev_match_y", "INTEGER"),  # dart y on the prior matched frame this streak; NULL if streak_len=1
+    # Stripe color hit, derived from score_increment via STRIPE_COLOR_BY_INCREMENT
+    # in main.py. NULL when score OCR failed. Lets us slice analytics by
+    # color without re-decoding score_increment each query, and surfaces
+    # color shifts in trajectory data (e.g. landing_x vs stripe).
+    ("stripe_color", "TEXT"),
 ]
 
 
