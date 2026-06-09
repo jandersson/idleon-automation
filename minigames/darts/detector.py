@@ -19,6 +19,50 @@ def _load(name: str) -> np.ndarray:
     return img
 
 
+def compute_dart_dy(
+    prev_bgr: np.ndarray | None,
+    match_x: int,
+    match_y: int,
+    template: np.ndarray | None = None,
+    window: int = 70,
+    min_conf: float = 0.5,
+) -> int | None:
+    """Vertical displacement (px, positive = downward) of the dart between
+    the previous frame and the current template match at (match_x, match_y).
+
+    Fire-time pass discriminator groundwork (#26): the release template
+    matches on two swing passes — the up-swing (dart moving up fast,
+    launch angle >15°, 0/40 hits) and the forward release (dart level,
+    20/20 hits). Pose position can't tell them apart (spawn height shifts
+    both passes together), but the dart's motion between two consecutive
+    frames can. Re-matches the template at fixed scale inside a window
+    around the current match in the PREVIOUS frame — which the main loop
+    already holds for arm-motion computation, so this costs one
+    small-crop matchTemplate and adds no extra capture before the click.
+
+    Returns match_y(cur) - prev_match_y, or None when there is no
+    previous frame or the dart isn't confidently found in the window
+    (swung in from outside it, or the live match scale is far from the
+    template's native scale).
+    """
+    if prev_bgr is None:
+        return None
+    if template is None:
+        template = _load("release.png")
+    h, w = prev_bgr.shape[:2]
+    x0, x1 = max(0, match_x - window), min(w, match_x + window)
+    y0, y1 = max(0, match_y - window), min(h, match_y + window)
+    crop = prev_bgr[y0:y1, x0:x1]
+    if crop.shape[0] < template.shape[0] or crop.shape[1] < template.shape[1]:
+        return None
+    res = cv2.matchTemplate(crop, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+    if max_val < min_conf:
+        return None
+    prev_cy = y0 + max_loc[1] + template.shape[0] // 2
+    return match_y - prev_cy
+
+
 def find_release_pose(
     frame: np.ndarray, threshold: float = 0.6
 ) -> tuple[tuple[int, int] | None, float]:

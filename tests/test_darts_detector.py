@@ -29,3 +29,47 @@ def test_find_game_over_returns_false_when_template_unreadable(tmp_path, monkeyp
     is_over, conf = detector.find_game_over(frame)
     assert is_over is False
     assert conf == 0.0
+
+
+def _frame_with_dart(dart_y: int, dart_x: int = 200, size=(400, 400)) -> np.ndarray:
+    """Noisy background with a distinctive textured 'dart' patch at (x, y).
+    The patch must have internal variance — TM_CCOEFF_NORMED is degenerate
+    on constant templates."""
+    rng = np.random.RandomState(7)
+    img = rng.randint(0, 60, (*size, 3), dtype=np.uint8)
+    patt = ((np.indices((8, 24)).sum(axis=0) * 31) % 180 + 70).astype(np.uint8)
+    img[dart_y - 4:dart_y + 4, dart_x - 12:dart_x + 12] = np.stack([patt] * 3, axis=-1)
+    return img
+
+
+def test_compute_dart_dy_measures_vertical_motion():
+    """Dart moved down 9px between prev and cur frame: dy = +9.
+    Regression scaffolding for the #26 swing-pass discriminator."""
+    from minigames.darts.detector import compute_dart_dy
+    prev = _frame_with_dart(191)
+    cur = _frame_with_dart(200)
+    template = cur[196:204, 188:212].copy()  # crop the dart from cur
+    dy = compute_dart_dy(prev, 200, 200, template=template)
+    assert dy is not None
+    assert abs(dy - 9) <= 1
+
+
+def test_compute_dart_dy_upswing_is_negative():
+    from minigames.darts.detector import compute_dart_dy
+    prev = _frame_with_dart(230)
+    cur = _frame_with_dart(200)  # dart moved UP 30px
+    template = cur[196:204, 188:212].copy()
+    dy = compute_dart_dy(prev, 200, 200, template=template)
+    assert dy is not None
+    assert abs(dy - (-30)) <= 1
+
+
+def test_compute_dart_dy_none_without_prev_or_match():
+    from minigames.darts.detector import compute_dart_dy
+    cur = _frame_with_dart(200)
+    template = cur[196:204, 188:212].copy()
+    assert compute_dart_dy(None, 200, 200, template=template) is None
+    # Prev frame has no dart anywhere near the window → no confident match.
+    rng = np.random.RandomState(8)
+    empty = rng.randint(0, 60, (400, 400, 3), dtype=np.uint8)
+    assert compute_dart_dy(empty, 200, 200, template=template) is None

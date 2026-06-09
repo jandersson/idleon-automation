@@ -112,3 +112,17 @@ def test_log_throw_handles_bullseye_flag(tmp_path):
     ))
     conn.close()
     assert rows == [(1, 5, 1), (2, 2, 0), (3, None, None)]
+
+
+def test_poll_and_throw_carry_dart_dy(tmp_path):
+    """dart_dy (polls) and dart_dy_at_fire (throws) round-trip — the #26
+    swing-pass discriminator instrumentation."""
+    from minigames.darts.shot_log import open_db, log_poll, log_throw
+    conn = open_db(tmp_path / "darts.db")
+    log_poll(conn, "s", 100, 0.81, 410, 320, threw=1,
+             arm_centroid_y=330, arm_pixel_count=190, dart_dy=-28)
+    conn.commit()
+    log_throw(conn, session_started="s", throw_idx=1, dart_dy_at_fire=-28, hit=0)
+    assert conn.execute("SELECT dart_dy FROM polls").fetchone()[0] == -28
+    assert conn.execute("SELECT dart_dy_at_fire FROM throws").fetchone()[0] == -28
+    conn.close()

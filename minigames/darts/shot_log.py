@@ -98,6 +98,13 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # color without re-decoding score_increment each query, and surfaces
     # color shifts in trajectory data (e.g. landing_x vs stripe).
     ("stripe_color", "TEXT"),
+    # Dart vertical displacement (px, positive = downward) between the
+    # previous frame and the firing match — the fire-time swing-pass
+    # discriminator candidate (#26). Up-swing fires should show strongly
+    # negative dy; release fires near zero. Validate against the
+    # launch-angle ground truth (<=15° = 20/20 hits, >15° = 0/40)
+    # before gating on it.
+    ("dart_dy_at_fire", "INTEGER"),
 ]
 
 
@@ -106,6 +113,9 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # work. See _POLLS_SCHEMA comment for semantics.
     ("arm_centroid_y", "INTEGER"),
     ("arm_pixel_count", "INTEGER"),
+    # Dart dy vs the previous frame, computed only on polls whose template
+    # match cleared RELEASE_THRESHOLD (#26). NULL elsewhere.
+    ("dart_dy", "INTEGER"),
 ]
 
 
@@ -126,18 +136,20 @@ def log_poll(
     threw: int,
     arm_centroid_y: int | None = None,
     arm_pixel_count: int | None = None,
+    dart_dy: int | None = None,
 ) -> None:
     """Append one row to the polls table. Called once per main-loop
     iteration. No commit per call — caller commits periodically (e.g.
     every fire) to keep write overhead bounded."""
     conn.execute(
         "INSERT INTO polls (session_started, t_ms, conf, match_x, match_y, threw, "
-        "arm_centroid_y, arm_pixel_count) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "arm_centroid_y, arm_pixel_count, dart_dy) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_started, int(t_ms), float(conf), int(match_x), int(match_y), int(threw),
             int(arm_centroid_y) if arm_centroid_y is not None else None,
             int(arm_pixel_count) if arm_pixel_count is not None else None,
+            int(dart_dy) if dart_dy is not None else None,
         ),
     )
 
