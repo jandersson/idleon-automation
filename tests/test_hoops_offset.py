@@ -56,10 +56,13 @@ def test_perturbation_sweeps_outward():
     assert all(a <= b for a, b in zip(mags, mags[1:]))
 
 
-def test_perturbation_clamps_at_end_of_sequence():
-    # Past the end of the sequence: stay at the last (largest) value, don't crash.
-    big_miss_count = len(PERTURBATION_SEQUENCE) + 5
-    assert _perturbation_for(big_miss_count) == PERTURBATION_SEQUENCE[-1]
+def test_perturbation_cycles_past_end_of_sequence():
+    # Past the end of the sweep: cycle through it again, don't pin at the
+    # last value (pinning produced 25 identical shots at one hoop —
+    # session 2026-06-09 20:43).
+    n = len(PERTURBATION_SEQUENCE)
+    for i in range(n):
+        assert _perturbation_for(n + i) == PERTURBATION_SEQUENCE[i]
 
 
 def test_perturbation_first_shot_returns_zero_regardless_of_sigma():

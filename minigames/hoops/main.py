@@ -218,7 +218,13 @@ def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
     there in the 2-life window. Thresholds rough — tighten when we have
     more σ data per outcome.
     """
-    base = PERTURBATION_SEQUENCE[min(miss_count, len(PERTURBATION_SEQUENCE) - 1)]
+    # Past the end of the sweep, cycle through it again rather than pin at
+    # the last entry — pinning fired 25 IDENTICAL +32 shots at one hoop
+    # (session 2026-06-09 20:43) where the outcome was pure velocity luck.
+    # Cycling keeps sampling the whole neighborhood, which both varies the
+    # bob phase the platform crosses each target at and feeds the predictor
+    # diverse rows instead of duplicates.
+    base = PERTURBATION_SEQUENCE[miss_count % len(PERTURBATION_SEQUENCE)]
     if sigma is None or sigma < 10:
         scale = 1.0
     elif sigma < 20:
