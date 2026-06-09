@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-06-09T20:07:22",
-  "total_shots": 627,
+  "generated_at": "2026-06-09T20:14:22",
+  "total_shots": 631,
   "total_makes": 133,
-  "make_rate": 0.212,
+  "make_rate": 0.211,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -368,6 +368,11 @@
       "started": "2026-06-09T20:06:36",
       "shots": 5,
       "makes": 2
+    },
+    {
+      "started": "2026-06-09T20:13:42",
+      "shots": 4,
+      "makes": 0
     }
   ],
   "buckets": [
@@ -554,7 +559,7 @@
     {
       "hoop_x_bucket": 610,
       "hoop_y_bucket": 380,
-      "shots": 6,
+      "shots": 9,
       "makes": 1
     },
     {
@@ -1040,7 +1045,7 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 40,
+      "shots": 41,
       "makes": 25
     },
     {
