@@ -165,6 +165,18 @@ def test_unknown_digit_in_score_returns_none():
             for px in range(w_six):
                 if six[py, px] > 127:
                     crop[4 + py, 4 + px] = (249, 249, 249)
-        # Plant an unknown shape (small 5x5 block) at x=20 with a gap
-        crop[6:11, 20:25] = (249, 249, 249)
+        # Plant an unknown FULL-HEIGHT shape at x=20 with a gap. Height
+        # matters: sub-height blobs (like the "Score:" colon dot) are
+        # filtered as noise by extract_digit_components, but an unknown
+        # glyph of digit height must fail the whole reading.
+        crop[4:4 + h_six, 20:25] = (249, 249, 249)
         assert reader(crop) is None
+        # A sub-height noise blob next to a known digit is ignored and
+        # the digit still reads (the 2026-06-10 colon-dot case).
+        crop2 = np.full((18, 40, 3), (0, 16, 58), dtype=np.uint8)
+        for py in range(h_six):
+            for px in range(w_six):
+                if six[py, px] > 127:
+                    crop2[4 + py, 4 + px] = (249, 249, 249)
+        crop2[6:11, 20:25] = (249, 249, 249)  # 5px tall vs 9px digit
+        assert reader(crop2) == 6

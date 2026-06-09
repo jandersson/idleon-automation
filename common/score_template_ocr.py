@@ -67,6 +67,14 @@ def extract_digit_components(crop: np.ndarray) -> list[tuple[np.ndarray, tuple[i
         # at the same y range.
         patch = ((labels[y:y + h, x:x + w] == label_id).astype(np.uint8)) * 255
         components.append((patch, (int(x), int(y), int(w), int(h))))
+    # Digits in a score readout share one glyph height; anything much
+    # shorter is punctuation or noise that slipped past the absolute
+    # minima — e.g. the bottom dot of the "Score:" colon (6px) next to
+    # 9px digits when a region crop starts near the label (darts,
+    # 2026-06-10). Filter relative to the tallest component.
+    if components:
+        max_h = max(c[1][3] for c in components)
+        components = [c for c in components if c[1][3] >= 0.75 * max_h]
     components.sort(key=lambda c: c[1][0])
     return components
 
