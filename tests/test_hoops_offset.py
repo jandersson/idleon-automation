@@ -300,10 +300,28 @@ def test_platform_velocity_uses_only_recent_window():
     assert abs(vy) < 2.0
 
 
+def test_platform_velocity_works_at_real_loop_cadence():
+    """The main loop samples every ~200-1000ms (observed 2026-06-09), not
+    every 20ms. A handful of sparse samples must still produce a slope —
+    this is the regression test for the all-NULL platform_vy session."""
+    from minigames.hoops.main import _platform_velocity
+    # 50 px/s descent sampled every 400ms — 4 samples in the 1.5s window.
+    samples = [(i * 0.4, 136, int(round(400 + 50 * i * 0.4))) for i in range(4)]
+    vy = _platform_velocity(samples)
+    assert vy is not None
+    assert abs(vy - 50.0) < 3.0
+    # Even two samples qualify when they span enough time.
+    two = [(0.0, 136, 400), (0.5, 136, 425)]
+    vy2 = _platform_velocity(two)
+    assert vy2 is not None
+    assert abs(vy2 - 50.0) < 3.0
+
+
 def test_platform_velocity_too_few_samples_returns_none():
     from minigames.hoops.main import _platform_velocity
     assert _platform_velocity([]) is None
     assert _platform_velocity([(0.0, 136, 400)]) is None
+    # Two samples 20ms apart: span below min_span_s — jitter-dominated.
     assert _platform_velocity([(0.0, 136, 400), (0.02, 136, 401)]) is None
 
 

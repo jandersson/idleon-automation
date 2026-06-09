@@ -152,22 +152,29 @@ def _estimate_bob_period_ms(
 
 def _platform_velocity(
     samples: list[tuple[float, int, int]],
-    window_s: float = 0.3,
+    window_s: float = 1.5,
+    min_span_s: float = 0.2,
 ) -> float | None:
     """Platform vertical velocity (px/s, positive = downward) at the time
     of the newest sample, from the (timestamp, px, py) buffer.
 
     Least-squares slope of py over the samples inside `window_s` of the
-    newest timestamp — a plain endpoint difference would amplify the
-    ±1-2px detector jitter at the ~20-30ms sample spacing. Returns None
-    with fewer than 3 samples in the window (slope too jitter-dominated
-    to be meaningful).
+    newest timestamp. The window is wide because the main loop's actual
+    sample cadence is ~200-1000ms per tick (observed session 2026-06-09
+    20:06 — fire-window diag showed 3-17 cycles per 3s), far slower than
+    the 15-30ms the POLL_INTERVAL comment suggests; a 300ms window
+    usually held a single sample and the helper always returned None.
+    At 1.5s the window is still ~15% of the ~10s bob period, so the
+    slope is a meaningfully local velocity.
+
+    Requires at least 2 samples spanning at least `min_span_s` — slopes
+    over shorter spans are dominated by the ±1-2px detector jitter.
     """
     if not samples:
         return None
     t_end = samples[-1][0]
     recent = [(t, py) for t, _, py in samples if t_end - t <= window_s]
-    if len(recent) < 3:
+    if len(recent) < 2 or (recent[-1][0] - recent[0][0]) < min_span_s:
         return None
     n = len(recent)
     mean_t = sum(t for t, _ in recent) / n
