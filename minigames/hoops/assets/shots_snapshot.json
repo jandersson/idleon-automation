@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-10T00:21:03",
+  "generated_at": "2026-06-10T00:25:19",
   "total_shots": 854,
   "total_makes": 161,
   "make_rate": 0.189,
@@ -5176,6 +5176,38 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    }
+  ],
+  "vy_coverage": [
+    {
+      "required_direction": "down",
+      "region": "band",
+      "shots": 15,
+      "makes": 3
+    },
+    {
+      "required_direction": "down",
+      "region": "low",
+      "shots": 3,
+      "makes": 1
+    },
+    {
+      "required_direction": "up",
+      "region": "band",
+      "shots": 36,
+      "makes": 2
+    },
+    {
+      "required_direction": "up",
+      "region": "low",
+      "shots": 139,
+      "makes": 2
+    },
+    {
+      "required_direction": "up",
+      "region": "mid_far",
+      "shots": 26,
+      "makes": 19
     }
   ]
 }

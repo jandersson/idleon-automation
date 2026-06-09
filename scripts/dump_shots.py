@@ -147,6 +147,29 @@ def main() -> None:
         key=lambda b: (b["hoop_x_bucket"], b["hoop_y_bucket"]),
     )
 
+    # #38 data-readiness view: velocity-instrumented rows by firing
+    # direction x hoop region (region cuts mirror the direction-policy
+    # thresholds in minigames/hoops/main.py at time of writing). The
+    # make-probability model needs positives in the hard regions under
+    # dir=down before a fit is meaningful.
+    vy_coverage = []
+    if "platform_vy" in cols_now:
+        for row in conn.execute(
+            "SELECT required_direction, "
+            "CASE WHEN hoop_y >= 530 THEN 'low' "
+            "     WHEN hoop_x <= 640 THEN 'band' "
+            "     ELSE 'mid_far' END AS region, "
+            "COUNT(*) AS n, SUM(made) AS makes "
+            "FROM shots WHERE platform_vy IS NOT NULL "
+            "GROUP BY required_direction, region"
+        ):
+            vy_coverage.append({
+                "required_direction": row["required_direction"],
+                "region": row["region"],
+                "shots": row["n"],
+                "makes": int(row["makes"] or 0),
+            })
+
     snapshot = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "total_shots": total_shots,
@@ -155,6 +178,7 @@ def main() -> None:
         "sessions": sessions,
         "buckets": bucket_list,
         "makes": makes,
+        "vy_coverage": vy_coverage,
     }
 
     OUT_PATH.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
