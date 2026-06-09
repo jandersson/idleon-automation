@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS shots (
     ball_flight_ms INTEGER,
     bob_ymin INTEGER,
     bob_ymax INTEGER,
-    bob_period_ms INTEGER
+    bob_period_ms INTEGER,
+    platform_vy REAL
 )
 """
 
@@ -118,6 +119,13 @@ _LATE_COLUMNS = [
     # 2026-05-23 after discovering ~25% of historical "clean makes" were
     # actually backboard-bounce-ins that the landing-x-only filter missed.
     ("ball_peak_x", "INTEGER"),
+    # Platform vertical velocity (px/s, positive = downward in screen
+    # coords) at fire time, least-squares slope over the platform samples
+    # in the ~300ms before the click. Added 2026-06-09 (#37): misses are
+    # bimodal (way short / way long) at identical (hoop, offset), and the
+    # suspected hidden variable is the platform velocity the ball inherits
+    # at launch — this column is the instrument to confirm or refute that.
+    ("platform_vy", "REAL"),
 ]
 
 

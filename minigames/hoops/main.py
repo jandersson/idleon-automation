@@ -150,6 +150,35 @@ def _estimate_bob_period_ms(
     return int(sum(deltas) / len(deltas) * 1000)
 
 
+def _platform_velocity(
+    samples: list[tuple[float, int, int]],
+    window_s: float = 0.3,
+) -> float | None:
+    """Platform vertical velocity (px/s, positive = downward) at the time
+    of the newest sample, from the (timestamp, px, py) buffer.
+
+    Least-squares slope of py over the samples inside `window_s` of the
+    newest timestamp — a plain endpoint difference would amplify the
+    ±1-2px detector jitter at the ~20-30ms sample spacing. Returns None
+    with fewer than 3 samples in the window (slope too jitter-dominated
+    to be meaningful).
+    """
+    if not samples:
+        return None
+    t_end = samples[-1][0]
+    recent = [(t, py) for t, _, py in samples if t_end - t <= window_s]
+    if len(recent) < 3:
+        return None
+    n = len(recent)
+    mean_t = sum(t for t, _ in recent) / n
+    mean_y = sum(y for _, y in recent) / n
+    denom = sum((t - mean_t) ** 2 for t, _ in recent)
+    if denom == 0:
+        return None
+    slope = sum((t - mean_t) * (y - mean_y) for t, y in recent) / denom
+    return slope
+
+
 PERTURBATION_SEQUENCE = [
     0, -8, 8, -16, 16, -24, 24, -32, 32,
     -48, 48, -64, 64, -80, 80,
@@ -793,6 +822,10 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     bob_ymin = int(min(ys_at_fire))
                     bob_ymax = int(max(ys_at_fire))
                 bob_period_ms_value = _estimate_bob_period_ms(list(range_samples))
+                # Velocity at fire: range_samples hasn't been appended to
+                # since the sample that triggered the shot, so the window
+                # ends exactly at fire time.
+                platform_vy_value = _platform_velocity(list(range_samples))
                 log_shot(
                     shot_db,
                     session_started=session_started,
@@ -833,6 +866,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     bob_ymin=bob_ymin,
                     bob_ymax=bob_ymax,
                     bob_period_ms=bob_period_ms_value,
+                    platform_vy=platform_vy_value,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → bump for next attempt.

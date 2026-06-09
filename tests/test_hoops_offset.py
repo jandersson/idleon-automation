@@ -238,3 +238,53 @@ def test_log_shot_prompt_alone_does_not_create_make_without_score_increment():
     )
     assert made is False
     assert stats["makes"] == 0
+
+
+def test_platform_velocity_recovers_constant_slope():
+    """Platform descending at 50 px/s, sampled every 20ms — the
+    least-squares slope must recover the velocity closely."""
+    from minigames.hoops.main import _platform_velocity
+    samples = [(i * 0.02, 136, int(round(400 + 50 * i * 0.02))) for i in range(20)]
+    vy = _platform_velocity(samples)
+    assert vy is not None
+    assert abs(vy - 50.0) < 3.0
+
+
+def test_platform_velocity_sign_convention():
+    """Platform moving up (py decreasing) must give negative vy."""
+    from minigames.hoops.main import _platform_velocity
+    samples = [(i * 0.02, 136, 400 - i) for i in range(15)]  # -50 px/s
+    vy = _platform_velocity(samples)
+    assert vy is not None and vy < 0
+
+
+def test_platform_velocity_uses_only_recent_window():
+    """Old samples outside the window must not contaminate the slope:
+    platform fell for a while, then held still — vy at the end is ~0."""
+    from minigames.hoops.main import _platform_velocity
+    falling = [(i * 0.02, 136, 400 + i * 2) for i in range(50)]   # 0..0.98s
+    still = [(1.0 + i * 0.02, 136, 498) for i in range(20)]       # 1.0..1.38s
+    vy = _platform_velocity(falling + still, window_s=0.3)
+    assert vy is not None
+    assert abs(vy) < 2.0
+
+
+def test_platform_velocity_too_few_samples_returns_none():
+    from minigames.hoops.main import _platform_velocity
+    assert _platform_velocity([]) is None
+    assert _platform_velocity([(0.0, 136, 400)]) is None
+    assert _platform_velocity([(0.0, 136, 400), (0.02, 136, 401)]) is None
+
+
+def test_platform_velocity_tolerates_detector_jitter():
+    """±2px jitter on a 50 px/s ramp shouldn't swing the estimate far."""
+    import random
+    from minigames.hoops.main import _platform_velocity
+    rng = random.Random(0)
+    samples = [
+        (i * 0.02, 136, int(round(400 + 50 * i * 0.02)) + rng.randint(-2, 2))
+        for i in range(16)
+    ]
+    vy = _platform_velocity(samples)
+    assert vy is not None
+    assert abs(vy - 50.0) < 15.0
