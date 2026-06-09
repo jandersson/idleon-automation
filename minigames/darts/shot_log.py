@@ -19,6 +19,8 @@ Usage:
 import sqlite3
 from pathlib import Path
 
+from common.db_log import open_log_db, insert_row
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS throws (
@@ -107,27 +109,11 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    for name, decl in _LATE_COLUMNS:
-        try:
-            conn.execute(f"ALTER TABLE throws ADD COLUMN {name} {decl}")
-        except sqlite3.OperationalError:
-            pass
-    for name, decl in _POLLS_LATE_COLUMNS:
-        try:
-            conn.execute(f"ALTER TABLE polls ADD COLUMN {name} {decl}")
-        except sqlite3.OperationalError:
-            pass
-
-
 def open_db(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.execute(_SCHEMA)
-    conn.execute(_POLLS_SCHEMA)
-    _migrate(conn)
-    conn.commit()
-    return conn
+    return open_log_db(
+        path, [_SCHEMA, _POLLS_SCHEMA],
+        {"throws": _LATE_COLUMNS, "polls": _POLLS_LATE_COLUMNS},
+    )
 
 
 def log_poll(
@@ -156,16 +142,10 @@ def log_poll(
     )
 
 
-def log_throw(conn: sqlite3.Connection, **fields) -> None:
+def log_throw(conn: sqlite3.Connection, **fields) -> int:
     """Insert a throw row. Caller passes whichever columns they have;
-    the rest default to NULL."""
-    cols = ", ".join(fields)
-    placeholders = ", ".join("?" * len(fields))
-    conn.execute(
-        f"INSERT INTO throws ({cols}) VALUES ({placeholders})",
-        tuple(fields.values()),
-    )
-    conn.commit()
+    the rest default to NULL. Returns the rowid."""
+    return insert_row(conn, "throws", fields)
 
 
 def fetch_hits(

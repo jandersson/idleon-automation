@@ -22,6 +22,8 @@ Usage:
 import sqlite3
 from pathlib import Path
 
+from common.db_log import open_log_db, insert_row, update_row
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chops (
@@ -83,27 +85,11 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    for name, decl in _LATE_COLUMNS:
-        try:
-            conn.execute(f"ALTER TABLE chops ADD COLUMN {name} {decl}")
-        except sqlite3.OperationalError:
-            pass
-    for name, decl in _POLLS_LATE_COLUMNS:
-        try:
-            conn.execute(f"ALTER TABLE polls ADD COLUMN {name} {decl}")
-        except sqlite3.OperationalError:
-            pass
-
-
 def open_db(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.execute(_SCHEMA)
-    conn.execute(_POLLS_SCHEMA)
-    _migrate(conn)
-    conn.commit()
-    return conn
+    return open_log_db(
+        path, [_SCHEMA, _POLLS_SCHEMA],
+        {"chops": _LATE_COLUMNS, "polls": _POLLS_LATE_COLUMNS},
+    )
 
 
 def log_poll(
@@ -135,24 +121,14 @@ def log_poll(
 def log_chop(conn: sqlite3.Connection, **fields) -> int:
     """Insert a chop row, return its rowid so callers can set_outcome
     on it later."""
-    cols = ", ".join(fields)
-    placeholders = ", ".join("?" * len(fields))
-    cur = conn.execute(
-        f"INSERT INTO chops ({cols}) VALUES ({placeholders})",
-        tuple(fields.values()),
-    )
-    conn.commit()
-    return cur.lastrowid
+    return insert_row(conn, "chops", fields)
 
 
 def set_outcome(conn: sqlite3.Connection, row_id: int, outcome: str,
                 measured_ms: int) -> None:
     """Fill in outcome + outcome_measured_ms on an existing chop row."""
-    conn.execute(
-        "UPDATE chops SET outcome = ?, outcome_measured_ms = ? WHERE id = ?",
-        (outcome, measured_ms, row_id),
-    )
-    conn.commit()
+    update_row(conn, "chops", row_id,
+               {"outcome": outcome, "outcome_measured_ms": measured_ms})
 
 
 def outcome_rate_by_red_distance(

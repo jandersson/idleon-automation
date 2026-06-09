@@ -16,6 +16,8 @@ Querying: `sqlite3 minigames/hoops/assets/shots.db` and run SQL.
 import sqlite3
 from pathlib import Path
 
+from common.db_log import open_log_db, insert_row, update_row
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,17 +158,10 @@ MAX_BACK_DRIFT_PX = 50
 MIN_TRAJECTORY_DISTANCE_PX = 300
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Add any new columns to an existing shots table that didn't have them.
-    Then backfill `clean_make` for any made-row that's missing it, using
-    the same rule we apply at log time."""
-    for name, decl in _LATE_COLUMNS:
-        try:
-            conn.execute(f'ALTER TABLE shots ADD COLUMN {name} {decl}')
-        except sqlite3.OperationalError:
-            # Already exists — duplicate column error.
-            pass
-
+def _backfill_clean_make(conn: sqlite3.Connection) -> None:
+    """Backfill `clean_make` for any made-row that's missing it, using the
+    same rule we apply at log time. Runs on every open_db, after the
+    shared schema/late-column migration."""
     # Backfill clean_make on existing rows. Rule:
     # - made = 1 + ball_landing_x within tolerance of hoop_x AND
     #   (peak_x NULL OR peak_x - landing_x within back-drift limit) → clean
@@ -178,7 +173,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     #
     # IS NULL filter preserves the "explicit caller values stick" contract.
     # Historical reclassification under newer rules is the backfill script's
-    # job (scripts/backfill_peak_x.py), not _migrate's.
+    # job (scripts/backfill_peak_x.py), not this function's.
     conn.execute(
         '''
         UPDATE shots
@@ -197,14 +192,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def open_db(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False so observe-mode's threading.Timer callbacks
-    # (post-shot OCR + log_shot, fired from a worker thread) can use the
-    # same connection. SQLite serialises writes internally so concurrent
-    # log_shot calls from multiple threads are safe.
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.execute(SCHEMA)
-    _migrate(conn)
+    conn = open_log_db(path, [SCHEMA], {"shots": _LATE_COLUMNS})
+    _backfill_clean_make(conn)
     conn.commit()
     return conn
 
@@ -212,15 +201,8 @@ def open_db(path: Path) -> sqlite3.Connection:
 def log_shot(conn: sqlite3.Connection, **fields) -> int:
     """Insert a shot row and return its rowid (so outcome corrections can
     target it later). Caller passes whichever columns they have; the rest
-    default to NULL. `offset` is a SQLite-quoted column name."""
-    cols = ", ".join(f'"{k}"' if k == "offset" else k for k in fields)
-    placeholders = ", ".join("?" * len(fields))
-    cur = conn.execute(
-        f"INSERT INTO shots ({cols}) VALUES ({placeholders})",
-        tuple(fields.values()),
-    )
-    conn.commit()
-    return cur.lastrowid
+    default to NULL."""
+    return insert_row(conn, "shots", fields)
 
 
 def set_make(
@@ -232,11 +214,9 @@ def set_make(
 ) -> None:
     """Retroactively correct a shot's make verdict (e.g. when the hoop
     respawn proves a shot made after OCR failed to confirm it)."""
-    conn.execute(
-        "UPDATE shots SET made = ?, clean_make = ?, made_source = ? WHERE id = ?",
-        (made, clean_make, made_source, shot_id),
-    )
-    conn.commit()
+    update_row(conn, "shots", shot_id, {
+        "made": made, "clean_make": clean_make, "made_source": made_source,
+    })
 
 
 def fetch_makes(

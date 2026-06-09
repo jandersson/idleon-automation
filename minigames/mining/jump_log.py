@@ -23,6 +23,8 @@ Usage:
 import sqlite3
 from pathlib import Path
 
+from common.db_log import open_log_db, insert_row, update_row
+
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jumps (
@@ -54,44 +56,21 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
-def _migrate(conn: sqlite3.Connection) -> None:
-    for name, decl in _LATE_COLUMNS:
-        try:
-            conn.execute(f"ALTER TABLE jumps ADD COLUMN {name} {decl}")
-        except sqlite3.OperationalError:
-            pass
-
-
 def open_db(path: Path) -> sqlite3.Connection:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), check_same_thread=False)
-    conn.execute(_SCHEMA)
-    _migrate(conn)
-    conn.commit()
-    return conn
+    return open_log_db(path, [_SCHEMA], {"jumps": _LATE_COLUMNS})
 
 
 def log_jump(conn: sqlite3.Connection, **fields) -> int:
     """Insert a jump row, return its rowid so callers can set_outcome
     on it later."""
-    cols = ", ".join(fields)
-    placeholders = ", ".join("?" * len(fields))
-    cur = conn.execute(
-        f"INSERT INTO jumps ({cols}) VALUES ({placeholders})",
-        tuple(fields.values()),
-    )
-    conn.commit()
-    return cur.lastrowid
+    return insert_row(conn, "jumps", fields)
 
 
 def set_outcome(conn: sqlite3.Connection, row_id: int, outcome: str,
                 measured_ms: int) -> None:
     """Fill in outcome + outcome_measured_ms on an existing jump row."""
-    conn.execute(
-        "UPDATE jumps SET outcome = ?, outcome_measured_ms = ? WHERE id = ?",
-        (outcome, measured_ms, row_id),
-    )
-    conn.commit()
+    update_row(conn, "jumps", row_id,
+               {"outcome": outcome, "outcome_measured_ms": measured_ms})
 
 
 def survival_rate_by_distance(conn: sqlite3.Connection,
