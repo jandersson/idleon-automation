@@ -262,6 +262,16 @@ def _shot_arrival_x(
     return ball_x_at_rim
 
 
+# An in-band miss is worth re-firing (rim luck converts at ~64%), but only
+# a couple of times: at clank-prone hoops the flat-arc arrival reads
+# "in-band" every single shot and never drops — session 2026-06-09 21:23
+# re-fired the same target through 20 holds across a 54-shot loop at
+# (691,550) before the user killed it. After this many consecutive holds
+# without a make, assume the geometry (not luck) is the problem and let
+# the sweep move.
+MAX_CONSECUTIVE_HOLDS = 2
+
+
 def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     """After a miss, decide whether the perturbation sweep steps to the
     next entry. False when the ball arrived within IN_BAND_RESIDUAL_PX of
@@ -275,6 +285,21 @@ def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     if arrival_x is None or hoop_x is None:
         return True
     return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
+
+
+def _sweep_step(
+    arrival_x: int | None,
+    hoop_x: int | None,
+    consecutive_holds: int,
+) -> tuple[bool, int]:
+    """Combine the in-band hold rule with the hold cap. Returns
+    (advance, new_consecutive_holds)."""
+    if (
+        _sweep_should_advance(arrival_x, hoop_x)
+        or consecutive_holds >= MAX_CONSECUTIVE_HOLDS
+    ):
+        return True, 0
+    return False, consecutive_holds + 1
 
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -720,6 +745,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     # make, the game spawns a new hoop).
     current_hoop_key: tuple[int, int] | None = None
     misses_at_current_hoop: int = 0
+    consecutive_holds: int = 0  # in-band re-fires since the sweep last moved
     # State of the most recent logged shot, kept so a hoop respawn can
     # retroactively correct a make the OCR failed to confirm.
     last_shot: dict | None = None
@@ -807,6 +833,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     last_shot = None
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
+                consecutive_holds = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
             predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
             predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
@@ -1110,6 +1137,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # the same target rather than stepping away from it).
                 if made:
                     misses_at_current_hoop = 0
+                    consecutive_holds = 0
                     current_hoop_key = None
                 else:
                     arrival_x = _shot_arrival_x(
@@ -1117,7 +1145,10 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                         trajectory["ball_peak_x"],
                         trajectory["ball_landing_x"],
                     )
-                    if _sweep_should_advance(arrival_x, hoop_x):
+                    advance, consecutive_holds = _sweep_step(
+                        arrival_x, hoop_x, consecutive_holds,
+                    )
+                    if advance:
                         misses_at_current_hoop += 1
                     else:
                         resid = arrival_x - hoop_x
@@ -1127,7 +1158,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                             and arrival_x != trajectory["ball_x_at_rim_height"]
                             else ""
                         )
-                        print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (sweep not advanced)")
+                        print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (hold {consecutive_holds}/{MAX_CONSECUTIVE_HOLDS})")
                 # Print the lives tick if it happened (signal for bot watching).
                 if lives_diff_value is not None and lives_diff_value > 3:
                     print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")

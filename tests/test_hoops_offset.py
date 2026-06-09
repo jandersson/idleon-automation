@@ -508,3 +508,33 @@ def test_arrival_x_missing_data_falls_back():
     assert _shot_arrival_x(650, None, 300) == 650
     assert _shot_arrival_x(650, 900, None) == 650
     assert _shot_arrival_x(None, None, None) is None
+
+
+def test_sweep_step_caps_consecutive_holds():
+    """Regression for session 2026-06-09 21:23: at a clank-prone hoop the
+    bounce-aware arrival reads in-band on every shot, so the hold rule
+    re-fired the same target through a 54-shot loop. After
+    MAX_CONSECUTIVE_HOLDS in-band misses without a make, the sweep moves
+    anyway."""
+    from minigames.hoops.main import _sweep_step, MAX_CONSECUTIVE_HOLDS
+    holds = 0
+    decisions = []
+    for _ in range(6):
+        advance, holds = _sweep_step(700, 695, holds)  # always in-band
+        decisions.append(advance)
+    # Pattern: hold, hold, advance, hold, hold, advance.
+    expected = []
+    h = 0
+    for _ in range(6):
+        if h >= MAX_CONSECUTIVE_HOLDS:
+            expected.append(True); h = 0
+        else:
+            expected.append(False); h += 1
+    assert decisions == expected
+
+
+def test_sweep_step_advance_resets_hold_counter():
+    from minigames.hoops.main import _sweep_step
+    # Way-off miss advances and resets regardless of prior holds.
+    advance, holds = _sweep_step(900, 600, 1)
+    assert advance and holds == 0
