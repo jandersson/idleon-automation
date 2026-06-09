@@ -3,6 +3,7 @@ import random
 import time
 import sys
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -704,6 +705,374 @@ def _direction(history: deque) -> str:
     return "flat"
 
 
+@dataclass
+class _HoopTracking:
+    """Per-hoop state: which hoop we're shooting at and how the
+    miss-driven sweep is doing there. Reset whenever the hoop moves."""
+    key: tuple[int, int] | None = None
+    misses: int = 0   # sweep position (advances on way-off misses)
+    holds: int = 0    # consecutive in-band re-fires since the sweep moved
+    shots: int = 0    # total fired at this hoop (gates free-shot exploration)
+
+    def reset_for_new_hoop(self, key: tuple[int, int] | None) -> None:
+        self.key = key
+        self.misses = 0
+        self.holds = 0
+        self.shots = 0
+
+
+@dataclass
+class _Target:
+    """Everything _select_target decided for the current hoop."""
+    target_y: int
+    offset: int
+    perturbation: int
+    predicted_offset: int
+    target_source: str   # "predictor" | "sweep" | "explore"
+    required_dir: str
+    predictor_fit: bool  # whether a fitted predictor (vs cold start) aimed this
+
+
+def _maybe_retro_make(
+    shot_db,
+    shot_stats: dict,
+    last_shot: dict | None,
+    prev_key: tuple[int, int] | None,
+    new_key: tuple[int, int],
+    hoop_conf: float,
+) -> dict | None:
+    """Hoop moved: if the respawn proves the last logged shot actually
+    made (see _respawn_implies_make), retro-correct its row and the
+    session stats. Returns the new last_shot value (None once consumed)."""
+    if last_shot is None or not _respawn_implies_make(
+        prev_key, new_key, last_shot["made"],
+        shot_stats.get("session_score", 0), hoop_conf,
+    ):
+        return last_shot
+    clean_value, _ = _classify_clean_make(
+        True, last_shot["landing"], last_shot["peak"], last_shot["hoop_x"],
+    )
+    set_make(shot_db, last_shot["id"], 1, clean_value, "respawn")
+    shot_stats["makes"] += 1
+    # Keep the anchor in step with the real score so the NEXT make's
+    # increment doesn't get double-attributed — unless post-shot OCR
+    # already advanced it (make was rejected on other grounds but the
+    # score was seen).
+    if not last_shot["anchor_advanced"]:
+        shot_stats["session_score"] += 1
+    print(
+        f"  [respawn] hoop {last_shot['hoop_key']} -> {new_key} after an unconfirmed shot — "
+        f"retro-marking shot id={last_shot['id']} as MAKE (clean={clean_value}) | "
+        f"confident makes {shot_stats['makes']}/{shot_stats['attempts']}"
+    )
+    return None
+
+
+def _select_target(
+    frame,
+    hoop_x: int,
+    hoop_y: int,
+    hoop_conf: float,
+    predictors: dict,
+    tracking: _HoopTracking,
+    range_samples,
+) -> _Target:
+    """Pick this hoop's firing direction, predictor, and target_y —
+    predictor aim plus the miss-driven sweep, overridden by free-shot
+    exploration while the start prompt is up, then capped inside the
+    observed bob range."""
+    required_dir = _required_direction_for(hoop_y, hoop_x)
+    predictor = predictors.get(required_dir)
+    base_offset = _compute_offset(hoop_y, hoop_x, predictor)
+    predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
+    predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
+    perturbation = _perturbation_for(tracking.misses, predictor_sigma)
+    offset = base_offset + perturbation
+    target_y = hoop_y + offset
+    target_source = "sweep" if perturbation else "predictor"
+    # Free-shot exploration: pre-game misses cost no lives, so once the
+    # predictor-aimed first shot has missed, sample targets across the
+    # whole bob range instead of grinding the predictor's neighborhood —
+    # every free shot becomes a (platform_y, vy) → outcome training row
+    # (#37). The prompt check costs one template match, only on shots
+    # where the target is being (re)computed.
+    if (
+        tracking.shots >= 1
+        and len(range_samples) >= 40
+        and find_game_prompt(frame)[0]
+    ):
+        explore_y = _explore_target([p[2] for p in range_samples])
+        if explore_y is not None:
+            target_y = explore_y
+            offset = target_y - hoop_y
+            perturbation = offset - predicted_offset_value
+            target_source = "explore"
+    # Cap target_y inside the platform's observed bob range with a small
+    # margin so the platform passes through (rather than only kissing at
+    # the apex). Without this, a perturbation that lands target_y exactly
+    # at ymin/ymax produces a stuck loop: the dir=up + position-matched
+    # sample is ephemeral at the bob extreme, and the bot spins waiting
+    # for it (observed 2026-05-09 in session 20:18:44, perturb +16 →
+    # target=510, bob ymax=510, never fired).
+    cap_tag = ""
+    if len(range_samples) >= 40:
+        ys_seen = [p[2] for p in range_samples]
+        ymin_seen, ymax_seen = min(ys_seen), max(ys_seen)
+        upper = ymax_seen - PERTURBATION_BOB_MARGIN
+        lower = ymin_seen + PERTURBATION_BOB_MARGIN
+        if upper >= lower and target_y > upper:
+            cap_tag = f" [capped target_y {target_y}->{upper}, bob ymax={ymax_seen}]"
+            target_y = upper
+            offset = target_y - hoop_y
+        elif upper >= lower and target_y < lower:
+            cap_tag = f" [capped target_y {target_y}->{lower}, bob ymin={ymin_seen}]"
+            target_y = lower
+            offset = target_y - hoop_y
+    if target_source == "explore":
+        tag = f", explore (free shot, {tracking.shots} fired at this hoop)"
+    else:
+        tag = f", perturb={perturbation:+d} (miss #{tracking.misses})" if perturbation else ""
+    override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
+    sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
+    dir_tag = f", dir={required_dir}" if required_dir != REQUIRED_DIRECTION else ""
+    print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{dir_tag}, target launch y={target_y}")
+    return _Target(
+        target_y=target_y,
+        offset=offset,
+        perturbation=perturbation,
+        predicted_offset=predicted_offset_value,
+        target_source=target_source,
+        required_dir=required_dir,
+        predictor_fit=predictor is not None,
+    )
+
+
+@dataclass
+class _FiredShot:
+    """Everything known at fire time about a shot that was just clicked.
+    _record_shot_outcome fills in the rest (score, trajectory, verdict)."""
+    left: int
+    top: int
+    width: int
+    height: int
+    shot_idx: int
+    fired_at: str
+    time_since_last_shot_ms: int | None
+    prompt_visible_before: bool
+    score_before: object
+    lives_before: object
+    shot_dir: Path | None
+    hoop_x: int
+    hoop_y: int
+    hoop_conf: float
+    hoop_scale: float
+    px: int
+    py: int
+    clamped: bool
+    eff_target_y: int
+    direction: str
+    target: _Target
+
+
+def _record_shot_outcome(
+    shot: _FiredShot,
+    shot_db,
+    shot_stats: dict,
+    tracking: _HoopTracking,
+    range_samples,
+    session_started: str,
+    code_commit: str | None,
+) -> dict:
+    """Post-click bookkeeping: capture the flight, wait out the cooldown,
+    read the score, classify the outcome, persist the row, and update the
+    per-hoop sweep state. Returns the last_shot record the respawn
+    corrector needs. The click has already happened — nothing here is
+    latency-sensitive."""
+    left, top, width, height = shot.left, shot.top, shot.width, shot.height
+    if MONITOR_FLIGHT and shot.shot_dir is not None:
+        flight_deadline = time.time() + POST_SHOT_COOLDOWN
+        flight_idx = 0
+        while time.time() < flight_deadline:
+            check_failsafe()
+            flight_idx += 1
+            f = grab_region(left, top, width, height)
+            bgr = cv2.cvtColor(f, cv2.COLOR_BGRA2BGR)
+            cv2.imwrite(str(shot.shot_dir / f"flight_{flight_idx:03d}.png"), bgr)
+            time.sleep(FLIGHT_POLL)
+    else:
+        time.sleep(POST_SHOT_COOLDOWN)
+    score_after = _capture_score_region(left, top, width, height)
+    lives_after = _capture_lives_region(left, top, width, height)
+    # Re-check the prompt only if it was up before the shot — cheap to
+    # skip the post grab + template match entirely when there's no
+    # signal to derive.
+    prompt_disappeared = False
+    if shot.prompt_visible_before:
+        post_full_frame = grab_region(left, top, width, height)
+        prompt_disappeared = not find_game_prompt(post_full_frame)[0]
+    # OCR the actual score numbers — used as the primary make signal
+    # (the diff-based heuristic was noisy on the wider score region).
+    # None if tesseract binary isn't installed. `score_increment` here is
+    # just the per-shot pre→post diff for diagnostic logging; the actual
+    # make-detection logic in _log_shot_result uses the running
+    # session_score anchor, which is much more robust to pre-shot OCR
+    # failures.
+    score_before_int = read_score(shot.score_before) if shot.score_before is not None else None
+    score_after_int = read_score(score_after) if score_after is not None else None
+    # Ball trajectory metrics from the captured flight frames — done
+    # BEFORE _log_shot_result so we can cross-check OCR against physics:
+    # a "make" with the ball flying 100+ px past the hoop is almost
+    # certainly a tesseract misread.
+    trajectory: dict = {
+        "ball_apex_y": None,
+        "ball_peak_x": None,
+        "ball_x_at_rim_height": None,
+        "ball_landing_x": None,
+        "ball_flight_ms": None,
+    }
+    if shot.shot_dir is not None and MONITOR_FLIGHT:
+        try:
+            trajectory = analyse_shot_dir(shot.shot_dir, shot.hoop_x, shot.hoop_y)
+        except Exception as e:
+            print(f"  [trajectory] analysis failed (non-fatal): {e}")
+    anchor_before = shot_stats.get("session_score", 0)
+    made, score_diff, score_increment = _log_shot_result(
+        shot_stats, shot.score_before, score_after,
+        score_before_int=score_before_int,
+        score_after_int=score_after_int,
+        ball_x_at_rim=trajectory["ball_x_at_rim_height"],
+        hoop_x=shot.hoop_x,
+        prompt_disappeared=prompt_disappeared,
+        prompt_visible_before=shot.prompt_visible_before,
+    )
+    # Clean-make filter for predictor training — see _classify_clean_make.
+    # The prompt-disappeared signal deliberately plays no role here: it
+    # confirms the MAKE (handled in _log_shot_result), not the aim.
+    clean_make_value, clean_reject_reason = _classify_clean_make(
+        made,
+        trajectory.get("ball_landing_x"),
+        trajectory.get("ball_peak_x"),
+        shot.hoop_x,
+    )
+    if clean_reject_reason:
+        print(f"  [clean] make rejected for predictor: {clean_reject_reason}")
+    # Compute lives_diff up-front so we can persist it on the shot row.
+    # Only meaningful when the lives region is visibly populated (during
+    # pre-game or "Make a shot to start" screens it's blank, std() near
+    # zero).
+    lives_diff_value: float | None = None
+    if shot.lives_before is not None and lives_after is not None:
+        if float(shot.lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
+            _, lives_diff_value = score_changed(shot.lives_before, lives_after)
+    # Capture bob range from the recent platform samples for #16 and the
+    # bob period for #13.
+    bob_ymin = bob_ymax = None
+    if len(range_samples) >= 10:
+        ys_at_fire = [p[2] for p in range_samples]
+        bob_ymin = int(min(ys_at_fire))
+        bob_ymax = int(max(ys_at_fire))
+    bob_period_ms_value = _estimate_bob_period_ms(list(range_samples))
+    # Velocity at fire: range_samples hasn't been appended to since the
+    # sample that triggered the shot, so the window ends exactly at fire
+    # time.
+    platform_vy_value = _platform_velocity(list(range_samples))
+    shot_row_id = log_shot(
+        shot_db,
+        session_started=session_started,
+        shot_idx=shot.shot_idx,
+        fired_at=shot.fired_at,
+        hoop_x=shot.hoop_x,
+        hoop_y=shot.hoop_y,
+        hoop_conf=float(shot.hoop_conf),
+        platform_x=int(shot.px),
+        platform_y=int(shot.py),
+        offset=int(shot.target.offset),
+        target_y=int(shot.target.target_y),
+        eff_target_y=int(shot.eff_target_y),
+        clamped=int(bool(shot.clamped)),
+        direction=shot.direction,
+        required_direction=shot.target.required_dir,
+        score_diff=float(score_diff) if score_diff is not None else None,
+        made=int(bool(made)) if made is not None else None,
+        shot_dir=str(shot.shot_dir) if shot.shot_dir is not None else None,
+        perturbation=int(shot.target.perturbation),
+        lives_diff=lives_diff_value,
+        ball_apex_y=trajectory["ball_apex_y"],
+        ball_peak_x=trajectory["ball_peak_x"],
+        ball_x_at_rim_height=trajectory["ball_x_at_rim_height"],
+        ball_landing_x=trajectory["ball_landing_x"],
+        window_w=int(width),
+        window_h=int(height),
+        score_before_int=score_before_int,
+        score_after_int=score_after_int,
+        score_increment=score_increment,
+        clean_make=clean_make_value,
+        predicted_offset=int(shot.target.predicted_offset),
+        code_commit=code_commit,
+        predictor_kind=PREDICTOR_KIND if shot.target.predictor_fit else None,
+        rim_match_scale=float(shot.hoop_scale) if shot.hoop_scale else None,
+        time_since_last_shot_ms=shot.time_since_last_shot_ms,
+        ball_flight_ms=trajectory.get("ball_flight_ms"),
+        bob_ymin=bob_ymin,
+        bob_ymax=bob_ymax,
+        bob_period_ms=bob_period_ms_value,
+        platform_vy=platform_vy_value,
+        prompt_up=int(bool(shot.prompt_visible_before)),
+        target_source=shot.target.target_source,
+    )
+    # Update perturbation tracking. Made → reset (next hoop will be in a
+    # new position anyway). Miss → advance the sweep, unless the ball
+    # arrived in-band (aim was right; re-fire the same target rather
+    # than stepping away from it).
+    if made:
+        tracking.reset_for_new_hoop(None)
+    else:
+        arrival_x = _shot_arrival_x(
+            trajectory["ball_x_at_rim_height"],
+            trajectory["ball_peak_x"],
+            trajectory["ball_landing_x"],
+        )
+        advance, tracking.holds = _sweep_step(arrival_x, shot.hoop_x, tracking.holds)
+        if advance:
+            tracking.misses += 1
+        else:
+            resid = arrival_x - shot.hoop_x
+            bounce_tag = (
+                " [bounce-aware: peak_x]"
+                if arrival_x == trajectory["ball_peak_x"]
+                and arrival_x != trajectory["ball_x_at_rim_height"]
+                else ""
+            )
+            print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (hold {tracking.holds}/{MAX_CONSECUTIVE_HOLDS})")
+    # Print the lives tick if it happened (signal for bot watching).
+    if lives_diff_value is not None and lives_diff_value > 3:
+        print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")
+    if shot.shot_dir is not None:
+        post_frame = grab_region(left, top, width, height)
+        save_frame(shot.shot_dir / "post_shot.png", post_frame)
+        save_meta(
+            shot.shot_dir / "meta.txt",
+            hoop=f"({shot.hoop_x},{shot.hoop_y})",
+            platform=f"({shot.px},{shot.py})",
+            offset=shot.target.offset,
+            target_y=shot.target.target_y,
+            eff_target_y=shot.eff_target_y,
+            clamped=shot.clamped,
+            direction=shot.direction,
+        )
+    # Remember the row so a hoop respawn before the next shot can
+    # retroactively correct an OCR-missed make.
+    return {
+        "id": shot_row_id,
+        "made": made,
+        "landing": trajectory["ball_landing_x"],
+        "peak": trajectory["ball_peak_x"],
+        "hoop_x": shot.hoop_x,
+        "hoop_key": (shot.hoop_x, shot.hoop_y),
+        "anchor_advanced": shot_stats.get("session_score", 0) > anchor_before,
+    }
+
+
 REPO_ROOT = _HERE.parent.parent
 SNAPSHOT_REL = "minigames/hoops/assets/shots_snapshot.json"
 
@@ -793,10 +1162,8 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     time.sleep(2)
 
     platform_history: deque[int] = deque(maxlen=5)
-    target_y: int | None = None
+    target: _Target | None = None
     target_set_at: float = 0.0  # for the stale-target watchdog
-    required_dir: str = REQUIRED_DIRECTION  # per-hoop, set with each target
-    predictor = None  # the direction-appropriate predictor for the current hoop
     hoop_x: int | None = None
     hoop_y: int | None = None
     hoop_conf_last: float = 0.0  # carries to shot_log row
@@ -813,13 +1180,9 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     y_open_window = 0
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0, "session_score": 0}
-    # Misses at the current hoop position. Each consecutive miss bumps the
-    # offset perturbation. Reset when the hoop position changes (after a
-    # make, the game spawns a new hoop).
-    current_hoop_key: tuple[int, int] | None = None
-    misses_at_current_hoop: int = 0
-    consecutive_holds: int = 0  # in-band re-fires since the sweep last moved
-    shots_at_current_hoop: int = 0  # gates free-shot exploration (first shot stays on predictor aim)
+    # Per-hoop sweep state — reset when the hoop position changes (after
+    # a make, the game spawns a new hoop).
+    tracking = _HoopTracking()
     # State of the most recent logged shot, kept so a hoop respawn can
     # retroactively correct a make the OCR failed to confirm.
     last_shot: dict | None = None
@@ -841,14 +1204,14 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
             return
 
-        if target_y is not None and time.time() - target_set_at > STALE_TARGET_TIMEOUT_S:
+        if target is not None and time.time() - target_set_at > STALE_TARGET_TIMEOUT_S:
             print(
-                f"  [stale] no shot for {STALE_TARGET_TIMEOUT_S:.0f}s at target_y={target_y} — "
+                f"  [stale] no shot for {STALE_TARGET_TIMEOUT_S:.0f}s at target_y={target.target_y} — "
                 f"re-detecting hoop and recomputing target"
             )
-            target_y = None
+            target = None
 
-        if target_y is None:
+        if target is None:
             hoop_pos, hoop_conf, hoop_scale = find_rim(frame)
             if hoop_pos is None:
                 if hoop_missing_since is None:
@@ -883,89 +1246,14 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             # jitter — a hoop "in the same place" matches if both x and y are
             # within a couple of pixels.
             new_key = (hoop_x, hoop_y)
-            if current_hoop_key is None or abs(new_key[0] - current_hoop_key[0]) > 2 or abs(new_key[1] - current_hoop_key[1]) > 2:
-                if last_shot is not None and _respawn_implies_make(
-                    current_hoop_key, new_key, last_shot["made"],
-                    shot_stats.get("session_score", 0), hoop_conf,
-                ):
-                    clean_value, _ = _classify_clean_make(
-                        True, last_shot["landing"], last_shot["peak"], last_shot["hoop_x"],
-                    )
-                    set_make(shot_db, last_shot["id"], 1, clean_value, "respawn")
-                    shot_stats["makes"] += 1
-                    # Keep the anchor in step with the real score so the
-                    # NEXT make's increment doesn't get double-attributed —
-                    # unless post-shot OCR already advanced it (make was
-                    # rejected on other grounds but the score was seen).
-                    if not last_shot["anchor_advanced"]:
-                        shot_stats["session_score"] += 1
-                    print(
-                        f"  [respawn] hoop {last_shot['hoop_key']} -> {new_key} after an unconfirmed shot — "
-                        f"retro-marking shot id={last_shot['id']} as MAKE (clean={clean_value}) | "
-                        f"confident makes {shot_stats['makes']}/{shot_stats['attempts']}"
-                    )
-                    last_shot = None
-                current_hoop_key = new_key
-                misses_at_current_hoop = 0
-                consecutive_holds = 0
-                shots_at_current_hoop = 0
-            required_dir = _required_direction_for(hoop_y, hoop_x)
-            predictor = predictors.get(required_dir)
-            base_offset = _compute_offset(hoop_y, hoop_x, predictor)
-            predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
-            predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
-            perturbation = _perturbation_for(misses_at_current_hoop, predictor_sigma)
-            offset = base_offset + perturbation
-            target_y = hoop_y + offset
-            target_source = "sweep" if perturbation else "predictor"
-            # Free-shot exploration: pre-game misses cost no lives, so
-            # once the predictor-aimed first shot has missed, sample
-            # targets across the whole bob range instead of grinding the
-            # predictor's neighborhood — every free shot becomes a
-            # (platform_y, vy) → outcome training row (#37). The prompt
-            # check costs one template match, only on shots where the
-            # target is being (re)computed.
-            if (
-                shots_at_current_hoop >= 1
-                and len(range_samples) >= 40
-                and find_game_prompt(frame)[0]
-            ):
-                explore_y = _explore_target([p[2] for p in range_samples])
-                if explore_y is not None:
-                    target_y = explore_y
-                    offset = target_y - hoop_y
-                    perturbation = offset - predicted_offset_value
-                    target_source = "explore"
-            # Cap target_y inside the platform's observed bob range with a
-            # small margin so the platform passes through (rather than only
-            # kissing at the apex). Without this, a perturbation that
-            # lands target_y exactly at ymin/ymax produces a stuck loop:
-            # the dir=up + position-matched sample is ephemeral at the
-            # bob extreme, and the bot spins waiting for it (observed
-            # 2026-05-09 in session 20:18:44, perturb +16 → target=510,
-            # bob ymax=510, never fired).
-            cap_tag = ""
-            if len(range_samples) >= 40:
-                ys_seen = [p[2] for p in range_samples]
-                ymin_seen, ymax_seen = min(ys_seen), max(ys_seen)
-                upper = ymax_seen - PERTURBATION_BOB_MARGIN
-                lower = ymin_seen + PERTURBATION_BOB_MARGIN
-                if upper >= lower and target_y > upper:
-                    cap_tag = f" [capped target_y {target_y}->{upper}, bob ymax={ymax_seen}]"
-                    target_y = upper
-                    offset = target_y - hoop_y
-                elif upper >= lower and target_y < lower:
-                    cap_tag = f" [capped target_y {target_y}->{lower}, bob ymin={ymin_seen}]"
-                    target_y = lower
-                    offset = target_y - hoop_y
-            if target_source == "explore":
-                tag = f", explore (free shot, {shots_at_current_hoop} fired at this hoop)"
-            else:
-                tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
-            override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
-            sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
-            dir_tag = f", dir={required_dir}" if required_dir != REQUIRED_DIRECTION else ""
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{dir_tag}, target launch y={target_y}")
+            if tracking.key is None or abs(new_key[0] - tracking.key[0]) > 2 or abs(new_key[1] - tracking.key[1]) > 2:
+                last_shot = _maybe_retro_make(
+                    shot_db, shot_stats, last_shot, tracking.key, new_key, hoop_conf,
+                )
+                tracking.reset_for_new_hoop(new_key)
+            target = _select_target(
+                frame, hoop_x, hoop_y, hoop_conf, predictors, tracking, range_samples,
+            )
             target_set_at = time.time()
 
         platform_pos, platform_conf = find_platform(frame)
@@ -983,7 +1271,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             y_pct = (100 * y_open_window / cycles_window) if cycles_window else 0
             print(
                 f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, "
-                f"y={min(ys)}..{max(ys)}, target_y={target_y} | "
+                f"y={min(ys)}..{max(ys)}, target_y={target.target_y} | "
                 f"fire-window {cycles_window} cyc: y={y_pct:.0f}%"
             )
             last_range_log = time.time()
@@ -996,27 +1284,27 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
         # fire gate (see _retarget_within_bob).
         if len(range_samples) >= 40:
             ys_seen = [p[2] for p in range_samples]
-            new_target = _retarget_within_bob(target_y, ys_seen)
-            if new_target != target_y:
+            new_target = _retarget_within_bob(target.target_y, ys_seen)
+            if new_target != target.target_y:
                 print(
-                    f"  [cap] target_y {target_y} within {PERTURBATION_BOB_MARGIN}px of bob extreme "
+                    f"  [cap] target_y {target.target_y} within {PERTURBATION_BOB_MARGIN}px of bob extreme "
                     f"({min(ys_seen)}..{max(ys_seen)}) -> {new_target}"
                 )
-                target_y = new_target
-                offset = target_y - hoop_y
+                target.target_y = new_target
+                target.offset = target.target_y - hoop_y
 
         # Clamp target_y to platform's observed reachable range. If the hoop
         # repositions outside the platform's bob, we still want to fire — even
         # a miss forces the hoop to reposition, breaking the deadlock.
-        effective_target_y = target_y
+        effective_target_y = target.target_y
         clamped = False
         if len(range_samples) >= 40:
             ys = [p[2] for p in range_samples]
             ymin, ymax = min(ys), max(ys)
-            if target_y > ymax:
+            if target.target_y > ymax:
                 effective_target_y = ymax
                 clamped = True
-            elif target_y < ymin:
+            elif target.target_y < ymin:
                 effective_target_y = ymin
                 clamped = True
 
@@ -1043,18 +1331,18 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 direction = _direction(platform_history)
             # When clamped, the platform only crosses the target at a bob extreme,
             # where direction is whatever-it-just-was → never matches. Bypass.
-            direction_ok = clamped or required_dir == "any" or direction == required_dir
+            direction_ok = clamped or target.required_dir == "any" or direction == target.required_dir
             if direction_ok:
                 tag = " [crossed]" if crossed and not in_window else ""
                 if clamped:
                     tag += " [clamped]"
-                print(f"Platform at ({px},{py}) (target_y={target_y}, dir={direction}) — shooting{tag}")
+                print(f"Platform at ({px},{py}) (target_y={target.target_y}, dir={direction}) — shooting{tag}")
                 # Fire immediately. Bookkeeping (disk writes, extra grabs,
                 # randomized delay) happens after the click — anything done
                 # before it shifts platform_y away from what the cross-detector
                 # just sampled, biasing every shot by tens of pixels.
                 shot_idx = shot_stats["attempts"] + 1
-                shots_at_current_hoop += 1
+                tracking.shots += 1
                 fired_at = datetime.now().isoformat(timespec="seconds")
                 fired_at_ms = time.time() * 1000.0
                 time_since_last_shot_ms = (
@@ -1091,197 +1379,34 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 score_before = _capture_score_region(left, top, width, height)
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
-                if MONITOR_FLIGHT and shot_dir is not None:
-                    flight_deadline = time.time() + POST_SHOT_COOLDOWN
-                    flight_idx = 0
-                    while time.time() < flight_deadline:
-                        check_failsafe()
-                        flight_idx += 1
-                        f = grab_region(left, top, width, height)
-                        bgr = cv2.cvtColor(f, cv2.COLOR_BGRA2BGR)
-                        cv2.imwrite(str(shot_dir / f"flight_{flight_idx:03d}.png"), bgr)
-                        time.sleep(FLIGHT_POLL)
-                else:
-                    time.sleep(POST_SHOT_COOLDOWN)
-                score_after = _capture_score_region(left, top, width, height)
-                lives_after = _capture_lives_region(left, top, width, height)
-                # Re-check the prompt only if it was up before the shot —
-                # cheap to skip the post grab + template match entirely
-                # when there's no signal to derive.
-                prompt_disappeared = False
-                if prompt_visible_before:
-                    post_full_frame = grab_region(left, top, width, height)
-                    prompt_disappeared = not find_game_prompt(post_full_frame)[0]
-                # OCR the actual score numbers — used as the primary make
-                # signal (the diff-based heuristic was noisy on the wider
-                # score region). None if tesseract binary isn't installed.
-                # `score_increment` here is just the per-shot pre→post diff
-                # for diagnostic logging; the actual make-detection logic in
-                # _log_shot_result uses the running session_score anchor,
-                # which is much more robust to pre-shot OCR failures.
-                score_before_int = read_score(score_before) if score_before is not None else None
-                score_after_int = read_score(score_after) if score_after is not None else None
-                # Ball trajectory metrics from the captured flight frames —
-                # done BEFORE _log_shot_result so we can cross-check OCR
-                # against physics: a "make" with the ball flying 100+ px
-                # past the hoop is almost certainly a tesseract misread.
-                trajectory: dict = {
-                    "ball_apex_y": None,
-                    "ball_peak_x": None,
-                    "ball_x_at_rim_height": None,
-                    "ball_landing_x": None,
-                    "ball_flight_ms": None,
-                }
-                if shot_dir is not None and MONITOR_FLIGHT:
-                    try:
-                        trajectory = analyse_shot_dir(shot_dir, hoop_x, hoop_y)
-                    except Exception as e:
-                        print(f"  [trajectory] analysis failed (non-fatal): {e}")
-                anchor_before = shot_stats.get("session_score", 0)
-                made, score_diff, score_increment = _log_shot_result(
-                    shot_stats, score_before, score_after,
-                    score_before_int=score_before_int,
-                    score_after_int=score_after_int,
-                    ball_x_at_rim=trajectory["ball_x_at_rim_height"],
-                    hoop_x=hoop_x,
-                    prompt_disappeared=prompt_disappeared,
-                    prompt_visible_before=prompt_visible_before,
-                )
-                # Clean-make filter for predictor training — see
-                # _classify_clean_make. The prompt-disappeared signal
-                # deliberately plays no role here: it confirms the MAKE
-                # (handled in _log_shot_result), not the aim.
-                clean_make_value, clean_reject_reason = _classify_clean_make(
-                    made,
-                    trajectory.get("ball_landing_x"),
-                    trajectory.get("ball_peak_x"),
-                    hoop_x,
-                )
-                if clean_reject_reason:
-                    print(f"  [clean] make rejected for predictor: {clean_reject_reason}")
-                # Compute lives_diff up-front so we can persist it on the
-                # shot row. Only meaningful when the lives region is visibly
-                # populated (during pre-game or "Make a shot to start"
-                # screens it's blank, std() near zero).
-                lives_diff_value: float | None = None
-                if lives_before is not None and lives_after is not None:
-                    if float(lives_before.std()) >= 5.0 or float(lives_after.std()) >= 5.0:
-                        _, lives_diff_value = score_changed(lives_before, lives_after)
-                # Capture bob range from the recent platform samples for #16
-                # and the bob period for #13.
-                bob_ymin = bob_ymax = None
-                if len(range_samples) >= 10:
-                    ys_at_fire = [p[2] for p in range_samples]
-                    bob_ymin = int(min(ys_at_fire))
-                    bob_ymax = int(max(ys_at_fire))
-                bob_period_ms_value = _estimate_bob_period_ms(list(range_samples))
-                # Velocity at fire: range_samples hasn't been appended to
-                # since the sample that triggered the shot, so the window
-                # ends exactly at fire time.
-                platform_vy_value = _platform_velocity(list(range_samples))
-                shot_row_id = log_shot(
-                    shot_db,
-                    session_started=session_started,
-                    shot_idx=shot_idx,
-                    fired_at=fired_at,
-                    hoop_x=hoop_x,
-                    hoop_y=hoop_y,
-                    hoop_conf=float(hoop_conf_last),
-                    platform_x=int(px),
-                    platform_y=int(py),
-                    offset=int(offset),
-                    target_y=int(target_y),
-                    eff_target_y=int(effective_target_y),
-                    clamped=int(bool(clamped)),
-                    direction=direction,
-                    required_direction=required_dir,
-                    score_diff=float(score_diff) if score_diff is not None else None,
-                    made=int(bool(made)) if made is not None else None,
-                    shot_dir=str(shot_dir) if shot_dir is not None else None,
-                    perturbation=int(perturbation),
-                    lives_diff=lives_diff_value,
-                    ball_apex_y=trajectory["ball_apex_y"],
-                    ball_peak_x=trajectory["ball_peak_x"],
-                    ball_x_at_rim_height=trajectory["ball_x_at_rim_height"],
-                    ball_landing_x=trajectory["ball_landing_x"],
-                    window_w=int(width),
-                    window_h=int(height),
-                    score_before_int=score_before_int,
-                    score_after_int=score_after_int,
-                    score_increment=score_increment,
-                    clean_make=clean_make_value,
-                    predicted_offset=int(predicted_offset_value),
-                    code_commit=code_commit,
-                    predictor_kind=PREDICTOR_KIND if predictor is not None else None,
-                    rim_match_scale=float(hoop_scale_last) if hoop_scale_last else None,
-                    time_since_last_shot_ms=time_since_last_shot_ms,
-                    ball_flight_ms=trajectory.get("ball_flight_ms"),
-                    bob_ymin=bob_ymin,
-                    bob_ymax=bob_ymax,
-                    bob_period_ms=bob_period_ms_value,
-                    platform_vy=platform_vy_value,
-                    prompt_up=int(bool(prompt_visible_before)),
-                    target_source=target_source,
-                )
-                # Remember the row so a hoop respawn before the next shot
-                # can retroactively correct an OCR-missed make.
-                last_shot = {
-                    "id": shot_row_id,
-                    "made": made,
-                    "landing": trajectory["ball_landing_x"],
-                    "peak": trajectory["ball_peak_x"],
-                    "hoop_x": hoop_x,
-                    "hoop_key": (hoop_x, hoop_y),
-                    "anchor_advanced": shot_stats.get("session_score", 0) > anchor_before,
-                }
-                # Update perturbation tracking. Made → reset (next hoop will
-                # be in a new position anyway). Miss → advance the sweep,
-                # unless the ball arrived in-band (aim was right; re-fire
-                # the same target rather than stepping away from it).
-                if made:
-                    misses_at_current_hoop = 0
-                    consecutive_holds = 0
-                    shots_at_current_hoop = 0
-                    current_hoop_key = None
-                else:
-                    arrival_x = _shot_arrival_x(
-                        trajectory["ball_x_at_rim_height"],
-                        trajectory["ball_peak_x"],
-                        trajectory["ball_landing_x"],
-                    )
-                    advance, consecutive_holds = _sweep_step(
-                        arrival_x, hoop_x, consecutive_holds,
-                    )
-                    if advance:
-                        misses_at_current_hoop += 1
-                    else:
-                        resid = arrival_x - hoop_x
-                        bounce_tag = (
-                            " [bounce-aware: peak_x]"
-                            if arrival_x == trajectory["ball_peak_x"]
-                            and arrival_x != trajectory["ball_x_at_rim_height"]
-                            else ""
-                        )
-                        print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (hold {consecutive_holds}/{MAX_CONSECUTIVE_HOLDS})")
-                # Print the lives tick if it happened (signal for bot watching).
-                if lives_diff_value is not None and lives_diff_value > 3:
-                    print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")
-                if shot_dir is not None:
-                    post_frame = grab_region(left, top, width, height)
-                    save_frame(shot_dir / "post_shot.png", post_frame)
-                    save_meta(
-                        shot_dir / "meta.txt",
-                        hoop=f"({hoop_x},{hoop_y})",
-                        platform=f"({px},{py})",
-                        offset=offset,
-                        target_y=target_y,
-                        eff_target_y=effective_target_y,
+                last_shot = _record_shot_outcome(
+                    _FiredShot(
+                        left=left, top=top, width=width, height=height,
+                        shot_idx=shot_idx,
+                        fired_at=fired_at,
+                        time_since_last_shot_ms=time_since_last_shot_ms,
+                        prompt_visible_before=prompt_visible_before,
+                        score_before=score_before,
+                        lives_before=lives_before,
+                        shot_dir=shot_dir,
+                        hoop_x=hoop_x, hoop_y=hoop_y,
+                        hoop_conf=hoop_conf_last, hoop_scale=hoop_scale_last,
+                        px=px, py=py,
                         clamped=clamped,
+                        eff_target_y=effective_target_y,
                         direction=direction,
-                    )
+                        target=target,
+                    ),
+                    shot_db=shot_db,
+                    shot_stats=shot_stats,
+                    tracking=tracking,
+                    range_samples=range_samples,
+                    session_started=session_started,
+                    code_commit=code_commit,
+                )
                 platform_history.clear()
                 prev_py = None
-                target_y = None  # re-detect hoop after it repositions
+                target = None  # re-detect hoop after it repositions
                 continue
 
         prev_py = py
