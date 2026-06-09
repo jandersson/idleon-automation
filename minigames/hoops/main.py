@@ -389,11 +389,27 @@ REQUIRED_DIRECTION = "up"
 # 480-529 band stays on "up" until data says otherwise.
 LOW_HOOP_DOWN_THRESHOLD = 530
 
+# Near hoops (the x<=640 "clank band", weekly-review #32) also fire
+# dir=down. With dir=up, arrivals there are ON TARGET but clip the rim
+# front from every launch state — session 2026-06-09 22:26 swept platform_y
+# 302-471 / vy -126..-6 at (592,348) and every arrival was a structure
+# clank (peak_x within ~10px of the hoop); vy-instrumented record in the
+# band is 2/36. Same bracketing logic that solved the low hoops: the
+# flatter dir=down arc approaches lower and may pass under the clank
+# point. Experiment started 2026-06-09; mid/far hoops (x>640, where
+# dir=up makes at ~80% in the instrumented slice) are not touched.
+CLANK_BAND_X_MAX = 640
 
-def _required_direction_for(hoop_y: int) -> str:
-    """Direction policy: dir=down at very low hoops (see
-    LOW_HOOP_DOWN_THRESHOLD rationale), the default direction elsewhere."""
-    return "down" if hoop_y >= LOW_HOOP_DOWN_THRESHOLD else REQUIRED_DIRECTION
+
+def _required_direction_for(hoop_y: int, hoop_x: int) -> str:
+    """Direction policy: dir=down at very low hoops and in the near
+    "clank band" (see LOW_HOOP_DOWN_THRESHOLD / CLANK_BAND_X_MAX
+    rationale), the default direction elsewhere."""
+    if hoop_y >= LOW_HOOP_DOWN_THRESHOLD:
+        return "down"
+    if hoop_x <= CLANK_BAND_X_MAX:
+        return "down"
+    return REQUIRED_DIRECTION
 
 # Click position is fixed at the hoop (hoop_x, hoop_y). Earlier experiments
 # (May 3 click_sweep + click_extreme) confirmed click position has no
@@ -892,7 +908,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 misses_at_current_hoop = 0
                 consecutive_holds = 0
                 shots_at_current_hoop = 0
-            required_dir = _required_direction_for(hoop_y)
+            required_dir = _required_direction_for(hoop_y, hoop_x)
             predictor = predictors.get(required_dir)
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
             predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)

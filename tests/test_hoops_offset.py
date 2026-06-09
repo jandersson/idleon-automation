@@ -571,11 +571,24 @@ def test_direction_policy_down_at_low_hoops():
     """dir=up is mapped futile at y>=530 (56-shot exploration sweep at
     (691,550), session 2026-06-09 21:41: every launch state overshot by
     68px+). Low hoops fire on the downward crossing for a flatter,
-    shorter arc; everything else keeps the default direction."""
+    shorter arc; mid/far hoops keep the default direction."""
     from minigames.hoops.main import (
         _required_direction_for, LOW_HOOP_DOWN_THRESHOLD, REQUIRED_DIRECTION,
     )
-    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD) == "down"
-    assert _required_direction_for(550) == "down"
-    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD - 1) == REQUIRED_DIRECTION
-    assert _required_direction_for(350) == REQUIRED_DIRECTION
+    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD, 700) == "down"
+    assert _required_direction_for(550, 700) == "down"
+    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD - 1, 700) == REQUIRED_DIRECTION
+    assert _required_direction_for(350, 700) == REQUIRED_DIRECTION
+
+
+def test_direction_policy_down_in_clank_band():
+    """Near hoops (x<=640): dir=up arrives on target but clanks the rim
+    front from every launch state (2/36 in the vy-instrumented record;
+    session 2026-06-09 22:26 clanked across the full explore sweep).
+    Same flatter-arc bracketing experiment as the low hoops."""
+    from minigames.hoops.main import (
+        _required_direction_for, CLANK_BAND_X_MAX, REQUIRED_DIRECTION,
+    )
+    assert _required_direction_for(350, CLANK_BAND_X_MAX) == "down"
+    assert _required_direction_for(404, 617) == "down"
+    assert _required_direction_for(350, CLANK_BAND_X_MAX + 1) == REQUIRED_DIRECTION
