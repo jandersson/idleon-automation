@@ -237,17 +237,44 @@ def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
     return max(-PERTURBATION_MAX, min(PERTURBATION_MAX, scaled))
 
 
-def _sweep_should_advance(ball_x_at_rim: int | None, hoop_x: int | None) -> bool:
+def _shot_arrival_x(
+    ball_x_at_rim: int | None,
+    peak_x: int | None,
+    landing_x: int | None,
+) -> int | None:
+    """Best estimate of where the shot arrived at the hoop, bounce-aware.
+
+    When the ball deflects backward off the hoop structure (peak_x well
+    past landing_x), ball_x_at_rim_height catches the post-bounce descent
+    and reads as a huge short miss. Observed session 2026-06-09 20:59:
+    9 of 14 shots at hoop (579,350) had peak_x within 26px of hoop_x —
+    on-target clanks — but rim-height residuals of -111..-325 drove the
+    sweep away from correct aim. The rightmost x the ball reached is the
+    honest arrival measure for those; for unobstructed flights
+    (peak ≈ landing) the rim-height crossing stays the better estimate.
+    """
+    if (
+        peak_x is not None
+        and landing_x is not None
+        and (peak_x - landing_x) > MAX_BACK_DRIFT_PX
+    ):
+        return peak_x
+    return ball_x_at_rim
+
+
+def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     """After a miss, decide whether the perturbation sweep steps to the
     next entry. False when the ball arrived within IN_BAND_RESIDUAL_PX of
     hoop_x: the aim was right and the miss was rim luck, so the next shot
-    re-fires the same target. No trajectory data → advance (can't tell
-    a mislaunch from a near-miss, and standing still forever on an
-    unmeasured target risks a stuck loop).
+    re-fires the same target. `arrival_x` should come from
+    _shot_arrival_x so structure clanks aren't misread as short misses.
+    No trajectory data → advance (can't tell a mislaunch from a
+    near-miss, and standing still forever on an unmeasured target risks
+    a stuck loop).
     """
-    if ball_x_at_rim is None or hoop_x is None:
+    if arrival_x is None or hoop_x is None:
         return True
-    return abs(ball_x_at_rim - hoop_x) > IN_BAND_RESIDUAL_PX
+    return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
 
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -1084,11 +1111,23 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 if made:
                     misses_at_current_hoop = 0
                     current_hoop_key = None
-                elif _sweep_should_advance(trajectory["ball_x_at_rim_height"], hoop_x):
-                    misses_at_current_hoop += 1
                 else:
-                    resid = trajectory["ball_x_at_rim_height"] - hoop_x
-                    print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x — re-firing same target (sweep not advanced)")
+                    arrival_x = _shot_arrival_x(
+                        trajectory["ball_x_at_rim_height"],
+                        trajectory["ball_peak_x"],
+                        trajectory["ball_landing_x"],
+                    )
+                    if _sweep_should_advance(arrival_x, hoop_x):
+                        misses_at_current_hoop += 1
+                    else:
+                        resid = arrival_x - hoop_x
+                        bounce_tag = (
+                            " [bounce-aware: peak_x]"
+                            if arrival_x == trajectory["ball_peak_x"]
+                            and arrival_x != trajectory["ball_x_at_rim_height"]
+                            else ""
+                        )
+                        print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (sweep not advanced)")
                 # Print the lives tick if it happened (signal for bot watching).
                 if lives_diff_value is not None and lives_diff_value > 3:
                     print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")

@@ -482,3 +482,29 @@ def test_retarget_degenerate_range():
     # Range narrower than 2x margin: nothing sensible to do, leave it.
     from minigames.hoops.main import _retarget_within_bob
     assert _retarget_within_bob(401, [400, 402, 404]) == 401
+
+
+def test_arrival_x_uses_peak_on_backward_bounce():
+    """Regression for session 2026-06-09 20:59 hoop (579,350): on-target
+    clanks (peak_x within 26px of the hoop) bounced backward and the
+    rim-height measurement read them as 100-325px short, driving the
+    sweep away from correct aim."""
+    from minigames.hoops.main import _shot_arrival_x
+    # Shot 8's numbers: rim-height read 372 (post-bounce), peak 572,
+    # landing 230 — ball reached the hoop and deflected back.
+    assert _shot_arrival_x(372, 572, 230) == 572
+
+
+def test_arrival_x_keeps_rim_height_for_clean_flight():
+    from minigames.hoops.main import _shot_arrival_x
+    # Unobstructed overshoot: peak == landing, no backward drift.
+    assert _shot_arrival_x(772, 772, 772) == 772
+    # Modest drift below the threshold: rim-height stays authoritative.
+    assert _shot_arrival_x(700, 730, 700) == 700
+
+
+def test_arrival_x_missing_data_falls_back():
+    from minigames.hoops.main import _shot_arrival_x
+    assert _shot_arrival_x(650, None, 300) == 650
+    assert _shot_arrival_x(650, 900, None) == 650
+    assert _shot_arrival_x(None, None, None) is None
