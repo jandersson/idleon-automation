@@ -179,10 +179,23 @@ def _platform_velocity(
     return slope
 
 
+# Sweep used to continue -48, 48, -64, 64, -80, 80 — trimmed 2026-06-09
+# (#37): across 269 logged shots every perturbed shot beyond ±32 landed
+# >120px from the hoop with zero makes. Combined with σ scaling (up to
+# 3×) the old tail produced ±240px swings — guaranteed misses.
 PERTURBATION_SEQUENCE = [
     0, -8, 8, -16, 16, -24, 24, -32, 32,
-    -48, 48, -64, 64, -80, 80,
 ]
+
+# Hard cap on |perturbation| after σ scaling. shots.db shows landing
+# position responds incoherently to offset changes beyond ~±32px (#37);
+# revisit once platform_vy data settles the velocity question.
+PERTURBATION_MAX = 32
+
+# A miss whose ball still arrived within this many px of hoop_x was a
+# launch/rim outcome, not an aim error — shots arriving in this band make
+# at 64%, so the sweep must NOT step away from a target that produced one.
+IN_BAND_RESIDUAL_PX = 60
 
 
 def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
@@ -190,7 +203,8 @@ def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
     a given hoop. miss_count=0 → no perturbation; subsequent misses cycle
     through the sweep, with magnitudes scaled by predictor uncertainty so a
     high-σ (sparse-region) prediction takes bigger steps to reach the make
-    zone before lives run out.
+    zone before lives run out. The scaled value is clamped to
+    ±PERTURBATION_MAX.
 
     σ buckets chosen 2026-05-23 from a (710, 415) failure mode where the
     predictor was ~12px off and ±8 perturbations were too narrow to walk
@@ -206,7 +220,21 @@ def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
         scale = 2.0
     else:
         scale = 3.0
-    return int(round(base * scale))
+    scaled = int(round(base * scale))
+    return max(-PERTURBATION_MAX, min(PERTURBATION_MAX, scaled))
+
+
+def _sweep_should_advance(ball_x_at_rim: int | None, hoop_x: int | None) -> bool:
+    """After a miss, decide whether the perturbation sweep steps to the
+    next entry. False when the ball arrived within IN_BAND_RESIDUAL_PX of
+    hoop_x: the aim was right and the miss was rim luck, so the next shot
+    re-fires the same target. No trajectory data → advance (can't tell
+    a mislaunch from a near-miss, and standing still forever on an
+    unmeasured target risks a stuck loop).
+    """
+    if ball_x_at_rim is None or hoop_x is None:
+        return True
+    return abs(ball_x_at_rim - hoop_x) > IN_BAND_RESIDUAL_PX
 
 
 # Accepted window around target_y (pixels) when deciding to fire. Was 2,
@@ -869,12 +897,17 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     platform_vy=platform_vy_value,
                 )
                 # Update perturbation tracking. Made → reset (next hoop will
-                # be in a new position anyway). Miss → bump for next attempt.
+                # be in a new position anyway). Miss → advance the sweep,
+                # unless the ball arrived in-band (aim was right; re-fire
+                # the same target rather than stepping away from it).
                 if made:
                     misses_at_current_hoop = 0
                     current_hoop_key = None
-                else:
+                elif _sweep_should_advance(trajectory["ball_x_at_rim_height"], hoop_x):
                     misses_at_current_hoop += 1
+                else:
+                    resid = trajectory["ball_x_at_rim_height"] - hoop_x
+                    print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x — re-firing same target (sweep not advanced)")
                 # Print the lives tick if it happened (signal for bot watching).
                 if lives_diff_value is not None and lives_diff_value > 3:
                     print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")

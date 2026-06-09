@@ -82,7 +82,38 @@ def test_perturbation_high_sigma_scales_magnitudes_up():
     assert _perturbation_for(1, sigma=25.0) == -16  # -8 * 2
     assert _perturbation_for(1, sigma=50.0) == -24  # -8 * 3
     assert _perturbation_for(2, sigma=50.0) == 24   # +8 * 3
-    assert _perturbation_for(3, sigma=50.0) == -48  # -16 * 3
+    assert _perturbation_for(3, sigma=50.0) == -32  # -16 * 3 = -48, capped
+
+
+def test_perturbation_capped_at_max():
+    from minigames.hoops.main import PERTURBATION_MAX
+    for i in range(len(PERTURBATION_SEQUENCE) + 5):
+        for sigma in (None, 15.0, 25.0, 50.0):
+            assert abs(_perturbation_for(i, sigma)) <= PERTURBATION_MAX
+
+
+def test_sweep_advances_on_way_off_miss():
+    from minigames.hoops.main import _sweep_should_advance
+    assert _sweep_should_advance(500, 700)   # 200px short
+    assert _sweep_should_advance(900, 700)   # 200px long
+
+
+def test_sweep_holds_on_in_band_miss():
+    # Ball arrived within IN_BAND_RESIDUAL_PX of the hoop — aim was right,
+    # the miss was rim luck. Re-fire the same target.
+    from minigames.hoops.main import _sweep_should_advance, IN_BAND_RESIDUAL_PX
+    assert not _sweep_should_advance(700, 700)
+    assert not _sweep_should_advance(700 - IN_BAND_RESIDUAL_PX, 700)
+    assert not _sweep_should_advance(700 + IN_BAND_RESIDUAL_PX, 700)
+    assert _sweep_should_advance(700 + IN_BAND_RESIDUAL_PX + 1, 700)
+
+
+def test_sweep_advances_without_trajectory_data():
+    # No measurement → can't distinguish mislaunch from near-miss; advance
+    # rather than risk a stuck loop on an unmeasured target.
+    from minigames.hoops.main import _sweep_should_advance
+    assert _sweep_should_advance(None, 700)
+    assert _sweep_should_advance(650, None)
 
 
 def test_perturbation_sign_preserved_across_scales():
