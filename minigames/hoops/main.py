@@ -22,7 +22,7 @@ from common.ball_trajectory import analyse_shot_dir
 from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
 from common.window import get_bounds, WindowNotFoundError
-from minigames.hoops.detector import find_rim, find_platform, find_ball, find_game_over, find_game_prompt, score_region, score_changed
+from minigames.hoops.detector import find_rim, find_platform, find_game_over, find_game_prompt, score_region, score_changed
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -51,11 +51,8 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
                        # Lowered from 0.02 anyway to make sure sleep isn't
                        # the bottleneck on cycles where matching is fast.
 
-# Offset is now learned from confirmed makes in shots.db at session start
-# (see fit_target_predictor in common.shot_log). The hand-tuned OFFSET_ANCHORS
-# table the bot used to use was non-monotonic and brittle: each new hoop_y
-# regime needed a manually-inserted anchor. Linear regression over makes
-# generalises automatically as the DB grows.
+# Offset is learned from past shots in shots.db at session start (see the
+# fit_* factories in common.predictor).
 #
 # Cold-start fallback: when there are <3 confirmed makes for the active
 # REQUIRED_DIRECTION, use this constant offset. Picked from the cluster of
@@ -248,49 +245,17 @@ REQUIRED_DIRECTION = "up"
 # pre_shot would show the updated score, but we don't compare across shots).
 POST_SHOT_COOLDOWN = 4.0
 
-# Was originally added to gate fire when the platform moves horizontally at
-# score >=10. Live observation 2026-05-23 showed it's the HOOP that moves at
-# 10+, not the platform; this gate is now off (X_TOLERANCE=9999). Sampling
-# is harmless and the diagnostic still reports home_x for visibility.
-HOME_X_SAMPLES = 10
-# Disabled — was set to 8 on 2026-05-23 based on the wiki claim that the
-# platform moves horizontally at score >=10. Live observation at score
-# 20+ that same day confirmed the wiki was wrong: it's the HOOP that
-# moves, not the platform. A platform-x gate solves nothing. Left in
-# place as machinery in case score-30+ behavior surprises us, but
-# X_TOL=9999 means the gate is effectively off.
-X_TOLERANCE = 9999
-
-# Mid-flight rescue: after the launch click, watch for the ball. When it crosses
-# over the hoop's X (still above the rim), click on it — the wiki trick that
-# makes the ball drop straight down. Saves shots that would otherwise overshoot.
-#
-# Disabled by default: even with detection working (60-70/90 frames seen),
-# the rescue session went 0/N. Pure-trajectory makes happen ~20-30% of the
-# time at known-good offsets, and the rescue's mid-flight clicks seem to
-# interfere more than they help. Flip back to True to A/B test.
-RESCUE_ENABLED = False
-RESCUE_WINDOW = 3.5  # seconds to track the ball after launch. Was 1.5 — but
-                     # observed ball arrival at the rim is ~2.9s after click,
-                     # so the rescue's "fire if ball is over hoop" check was
-                     # being gated out by the deadline expiring before the
-                     # ball got there.
-# Wider tolerance: rescue is a backup safety net, not the primary make
-# mechanism. Don't want rescue clicks interfering with otherwise-good shots.
-BALL_X_TOLERANCE = 18
-RESCUE_POLL = 0.01  # tight loop — ball moves fast
-
 # Monitor mode: per-shot subfolder under assets/monitor/ with pre/post-shot
-# screenshots, all frames captured during the rescue window (so we can see the
-# full ball flight for offline review and ball-template extraction), and a
-# meta.txt with shot details. Heavyweight (~200KB per shot) but invaluable
-# for tuning offline. Toggle off in production.
+# screenshots, all flight frames captured during the post-shot cooldown (so
+# we can see the full ball flight for offline review and ball-template
+# extraction), and a meta.txt with shot details. Heavyweight (~200KB per
+# shot) but invaluable for tuning offline. Toggle off in production.
 MONITOR_MODE = True
 MONITOR_DIR = _HERE / "assets" / "monitor"
 
-# Capture flight frames during the post-shot cooldown, independent of
-# RESCUE_ENABLED. Used to record actual ball trajectory for offline offset
-# tuning when rescue is off.
+# Capture flight frames during the post-shot cooldown. Used to record the
+# actual ball trajectory for offline offset tuning and the trajectory
+# predictors.
 MONITOR_FLIGHT = True
 FLIGHT_POLL = 0.05
 
@@ -421,81 +386,6 @@ def _log_shot_result(
     return changed, diff, inferred_increment
 
 
-def _try_rescue(left: int, top: int, width: int, height: int,
-                hoop_x: int, hoop_y: int, platform_x: int,
-                monitor_dir: Path | None = None,
-                landing_timeout: float = 1.5) -> bool:
-    """After a launch click, track the ball; click on it when it's over the hoop,
-    then continue tracking until the ball has visibly landed.
-
-    "Landed" = motion-masked ball detection misses for 3 consecutive frames
-    after at least one detection. Returns True if a rescue click was fired.
-
-    landing_timeout caps total time spent waiting for landing after the
-    rescue window expires (the ball can take longer than RESCUE_WINDOW for
-    high arcs; this gives us a chance to confirm landing without spinning
-    forever if the ball was never seen).
-    """
-    rescue_deadline = time.time() + RESCUE_WINDOW
-    landing_hard_deadline = time.time() + RESCUE_WINDOW + landing_timeout
-    sx0 = platform_x + 120
-    sx1 = max(platform_x, hoop_x) + 40
-    sy0 = 0
-    sy1 = hoop_y + 5
-
-    detected = 0
-    iters = 0
-    last_ball: tuple[int, int] | None = None
-    closest_dx: int | None = None
-    prev_frame = None
-    consecutive_unseen = 0
-    rescue_fired = False
-    landed_at: float | None = None
-    rescue_start = time.time()
-
-    while time.time() < landing_hard_deadline:
-        iters += 1
-        frame = grab_region(left, top, width, height)
-        ball = find_ball(frame, sx0, sy0, sx1, sy1, prev_frame=prev_frame)
-        if monitor_dir is not None:
-            bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-            cv2.imwrite(str(monitor_dir / f"flight_{iters:03d}.png"), bgr)
-        prev_frame = frame
-
-        if ball is not None:
-            detected += 1
-            last_ball = ball
-            consecutive_unseen = 0
-            bx, by = ball
-            dx = abs(bx - hoop_x)
-            if closest_dx is None or dx < closest_dx:
-                closest_dx = dx
-            # Only fire rescue while still inside the rescue window.
-            if not rescue_fired and time.time() < rescue_deadline:
-                if dx <= BALL_X_TOLERANCE and by < hoop_y:
-                    print(f"  [rescue] ball at ({bx},{by}), over hoop_x={hoop_x} — dropping")
-                    click(left + bx, top + by)
-                    rescue_fired = True
-        else:
-            if detected > 0:
-                consecutive_unseen += 1
-                if consecutive_unseen >= 3 and landed_at is None:
-                    landed_at = time.time() - rescue_start
-                    # Ball has settled — exit early.
-                    break
-        time.sleep(RESCUE_POLL)
-
-    if detected == 0:
-        print(f"  [rescue] no ball detected in {iters} frames — HSV bounds may be off")
-    elif not rescue_fired:
-        print(f"  [rescue] ball seen {detected}/{iters} frames; closest to hoop_x={hoop_x} was {closest_dx}px (last at {last_ball})")
-    if landed_at is not None:
-        print(f"  [land] ball landed after {landed_at:.2f}s")
-    elif detected > 0:
-        print(f"  [land] ball detection didn't terminate within {RESCUE_WINDOW + landing_timeout:.1f}s; assuming landed")
-    return rescue_fired
-
-
 def _make_monitor_dir(throw_idx: int) -> Path:
     return make_shot_dir(MONITOR_DIR, throw_idx, prefix="shot")
 
@@ -597,17 +487,12 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     # range_samples is (timestamp, px, py) — the timestamp lets us
     # estimate bob_period_ms via _estimate_bob_period_ms.
     hoop_missing_since: float | None = None  # for exit-when-stuck
-    x_samples: list[int] = []
-    home_x: int | None = None
     range_samples: deque[tuple[float, int, int]] = deque(maxlen=200)  # (ts, px, py) for range + period diagnostics
     last_range_log = time.time()
     # Fire-window diagnostics. Reset every range-log window so we see a rate
-    # rather than a monotonically-growing total. y_open = py near target_y;
-    # x_open = px near home_x (vacuous when home_x not yet locked).
+    # rather than a monotonically-growing total. y_open = py near target_y.
     cycles_window = 0
     y_open_window = 0
-    x_open_window = 0
-    both_open_window = 0
     prev_py: int | None = None
     shot_stats: dict = {"makes": 0, "attempts": 0, "session_score": 0}
     # Misses at the current hoop position. Each consecutive miss bumps the
@@ -716,34 +601,15 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         if time.time() - last_range_log > 3.0 and range_samples:
             xs = [p[1] for p in range_samples]
             ys = [p[2] for p in range_samples]
-            # Fire-window rates: y_open/x_open are independent; both_open is
-            # the actual fireable fraction. If both/cycles is near zero while
-            # y and x are individually open often, X_TOLERANCE is too tight
-            # relative to the platform sweep period.
             y_pct = (100 * y_open_window / cycles_window) if cycles_window else 0
-            x_pct = (100 * x_open_window / cycles_window) if cycles_window else 0
-            both_pct = (100 * both_open_window / cycles_window) if cycles_window else 0
             print(
                 f"  [diag] platform last 200 samples: x={min(xs)}..{max(xs)}, "
                 f"y={min(ys)}..{max(ys)}, target_y={target_y} | "
-                f"fire-window {cycles_window} cyc: y={y_pct:.0f}% x={x_pct:.0f}% both={both_pct:.0f}% "
-                f"(home_x={home_x}, X_TOL={X_TOLERANCE})"
+                f"fire-window {cycles_window} cyc: y={y_pct:.0f}%"
             )
             last_range_log = time.time()
             cycles_window = 0
             y_open_window = 0
-            x_open_window = 0
-            both_open_window = 0
-
-        if home_x is None:
-            x_samples.append(px)
-            if len(x_samples) >= HOME_X_SAMPLES:
-                spread = max(x_samples) - min(x_samples)
-                home_x = sorted(x_samples)[len(x_samples) // 2]
-                if spread > X_TOLERANCE * 3:
-                    print(f"Platform X varied by {spread}px during sampling — bot likely started at score >=10. Anchor home_x={home_x} may be inaccurate.")
-                else:
-                    print(f"Locked platform home_x={home_x} (spread {spread}px over {HOME_X_SAMPLES} samples)")
 
         # Clamp target_y to platform's observed reachable range. If the hoop
         # repositions outside the platform's bob, we still want to fire — even
@@ -772,21 +638,10 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         crossed = prev_py is not None and (
             (prev_py - effective_target_y) * (py - effective_target_y) < 0
         )
-        # Fire-window diagnostic counters (per-cycle, reset each 3s log).
-        # Track *fire-eligibility* of each axis independently so we can tell
-        # whether a low both% is starvation (rare overlap) vs. starvation in
-        # one axis alone.
-        y_eligible = in_window or crossed
-        x_eligible = home_x is None or abs(px - home_x) <= X_TOLERANCE
+        # Fire-window diagnostic counter (per-cycle, reset each 3s log).
         cycles_window += 1
-        if y_eligible:
-            y_open_window += 1
-        if x_eligible:
-            x_open_window += 1
-        if y_eligible and x_eligible:
-            both_open_window += 1
         if in_window or crossed:
-            x_ok = x_eligible
+            y_open_window += 1
             # Direction from the actual crossing if available, else from history.
             if crossed and prev_py is not None:
                 direction = "up" if py < prev_py else "down"
@@ -795,7 +650,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             # When clamped, the platform only crosses the target at a bob extreme,
             # where direction is whatever-it-just-was → never matches. Bypass.
             direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
-            if x_ok and direction_ok:
+            if direction_ok:
                 tag = " [crossed]" if crossed and not in_window else ""
                 if clamped:
                     tag += " [clamped]"
@@ -831,7 +686,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # screen position" risks.
                 click(left + width // 2, top + height // 2)
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
-                # plus all flight frames captured during _try_rescue.
+                # plus all flight frames captured during the cooldown.
                 shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
                 if shot_dir is not None:
                     save_frame(shot_dir / "pre_shot.png", frame)
@@ -841,11 +696,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 score_before = _capture_score_region(left, top, width, height)
                 lives_before = _capture_lives_region(left, top, width, height)
                 random_delay(10, 40)
-                # Try to rescue an overshoot by clicking the ball mid-flight.
-                if RESCUE_ENABLED:
-                    _try_rescue(left, top, width, height, hoop_x, hoop_y, px, monitor_dir=shot_dir)
-                    time.sleep(POST_SHOT_COOLDOWN)
-                elif MONITOR_FLIGHT and shot_dir is not None:
+                if MONITOR_FLIGHT and shot_dir is not None:
                     flight_deadline = time.time() + POST_SHOT_COOLDOWN
                     flight_idx = 0
                     while time.time() < flight_deadline:
