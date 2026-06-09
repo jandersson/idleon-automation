@@ -448,3 +448,34 @@ def test_respawn_signal_guards():
     assert not _respawn_implies_make(prev, far, False, RESPAWN_MAX_SCORE, 0.99)
     # Marginal rim match (extreme low spawn) must not rewrite history.
     assert not _respawn_implies_make(prev, far, False, 3, 0.7)
+
+
+def test_retarget_pulls_target_off_bob_extreme():
+    """Regression for session 2026-06-09 20:37: target_y=509 equaled the
+    exact bob bottom (range 289..509) on the session's first hoop, the
+    platform never crossed it with dir=up, and the bot hovered >60s
+    without firing."""
+    from minigames.hoops.main import _retarget_within_bob, PERTURBATION_BOB_MARGIN
+    ys = [289, 350, 400, 450, 509]
+    assert _retarget_within_bob(509, ys) == 509 - PERTURBATION_BOB_MARGIN
+    assert _retarget_within_bob(290, ys) == 289 + PERTURBATION_BOB_MARGIN
+
+
+def test_retarget_leaves_mid_range_target_alone():
+    from minigames.hoops.main import _retarget_within_bob
+    assert _retarget_within_bob(400, [289, 350, 400, 450, 509]) == 400
+
+
+def test_retarget_leaves_out_of_range_target_to_clamp_path():
+    # Beyond the bob range the existing clamp logic fires (direction
+    # bypass + widened tolerance) — retarget must not interfere.
+    from minigames.hoops.main import _retarget_within_bob
+    ys = [289, 400, 509]
+    assert _retarget_within_bob(600, ys) == 600
+    assert _retarget_within_bob(200, ys) == 200
+
+
+def test_retarget_degenerate_range():
+    # Range narrower than 2x margin: nothing sensible to do, leave it.
+    from minigames.hoops.main import _retarget_within_bob
+    assert _retarget_within_bob(401, [400, 402, 404]) == 401

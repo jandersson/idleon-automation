@@ -539,6 +539,39 @@ def _respawn_implies_make(
     return max(dx, dy) > RESPAWN_MIN_MOVE_PX
 
 
+# Backstop for any fire-gate deadlock: if a target has been set this long
+# without a shot, drop it and re-detect/recompute. The known deadlock is a
+# target at the exact bob extreme on the session's first hoop (see
+# _retarget_within_bob), but the watchdog also catches modes we haven't met.
+STALE_TARGET_TIMEOUT_S = 60.0
+
+
+def _retarget_within_bob(
+    target_y: int,
+    ys: list[int],
+    margin: int = PERTURBATION_BOB_MARGIN,
+) -> int:
+    """Pull a target that sits inside the observed bob range but within
+    `margin` of an extreme back to margin-distance from that extreme.
+
+    At the extremes the platform is at its turnaround: it never crosses
+    the target (no sign-flip trigger) and the direction history straddles
+    the reversal, reading flat/down — so a dir=up gate never opens.
+    Observed 2026-06-09 20:37: first hoop of the session, target_y=509 =
+    exact bob bottom, bot hovered >60s without firing. The detection-time
+    cap can't cover that case (no bob samples exist yet at first
+    detection).
+
+    Targets OUTSIDE the range are left alone — the clamp path handles
+    those with a direction bypass and widened tolerance.
+    """
+    ymin, ymax = min(ys), max(ys)
+    upper, lower = ymax - margin, ymin + margin
+    if upper < lower or not (ymin <= target_y <= ymax):
+        return target_y
+    return min(max(target_y, lower), upper)
+
+
 def _make_monitor_dir(throw_idx: int) -> Path:
     return make_shot_dir(MONITOR_DIR, throw_idx, prefix="shot")
 
@@ -632,6 +665,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
 
     platform_history: deque[int] = deque(maxlen=5)
     target_y: int | None = None
+    target_set_at: float = 0.0  # for the stale-target watchdog
     hoop_x: int | None = None
     hoop_y: int | None = None
     hoop_conf_last: float = 0.0  # carries to shot_log row
@@ -673,6 +707,13 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
         if is_over:
             print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
             return
+
+        if target_y is not None and time.time() - target_set_at > STALE_TARGET_TIMEOUT_S:
+            print(
+                f"  [stale] no shot for {STALE_TARGET_TIMEOUT_S:.0f}s at target_y={target_y} — "
+                f"re-detecting hoop and recomputing target"
+            )
+            target_y = None
 
         if target_y is None:
             hoop_pos, hoop_conf, hoop_scale = find_rim(frame)
@@ -765,6 +806,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
             sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
             print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
+            target_set_at = time.time()
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
@@ -787,6 +829,21 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             last_range_log = time.time()
             cycles_window = 0
             y_open_window = 0
+
+        # Re-apply the bob-margin cap now that bob samples exist. The cap at
+        # hoop-detection time can't fire on the session's first hoop (no
+        # samples yet) — a target at the exact bob extreme deadlocks the
+        # fire gate (see _retarget_within_bob).
+        if len(range_samples) >= 40:
+            ys_seen = [p[2] for p in range_samples]
+            new_target = _retarget_within_bob(target_y, ys_seen)
+            if new_target != target_y:
+                print(
+                    f"  [cap] target_y {target_y} within {PERTURBATION_BOB_MARGIN}px of bob extreme "
+                    f"({min(ys_seen)}..{max(ys_seen)}) -> {new_target}"
+                )
+                target_y = new_target
+                offset = target_y - hoop_y
 
         # Clamp target_y to platform's observed reachable range. If the hoop
         # repositions outside the platform's bob, we still want to fire — even
