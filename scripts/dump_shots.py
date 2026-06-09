@@ -30,15 +30,32 @@ def main() -> None:
     total_shots = conn.execute("SELECT COUNT(*) FROM shots").fetchone()[0]
     total_makes = conn.execute("SELECT COUNT(*) FROM shots WHERE made = 1").fetchone()[0]
 
+    cols_now = {r[1] for r in conn.execute("PRAGMA table_info(shots)")}
+    # Explore shots (free-shot bob-range sampling while the start prompt
+    # is up, #37) are deliberately wild — exclude-able counts let
+    # reviewers compute an honest make rate that isn't diluted by
+    # data-collection shots. NULL target_source (pre-2026-06-09 rows)
+    # counts as non-explore.
+    explore_expr = (
+        "SUM(CASE WHEN target_source = 'explore' THEN 1 ELSE 0 END)"
+        if "target_source" in cols_now else "0"
+    )
+    explore_makes_expr = (
+        "SUM(CASE WHEN target_source = 'explore' AND made = 1 THEN 1 ELSE 0 END)"
+        if "target_source" in cols_now else "0"
+    )
     sessions = []
     for row in conn.execute(
-        "SELECT session_started, COUNT(*) AS n, SUM(made) AS makes "
+        "SELECT session_started, COUNT(*) AS n, SUM(made) AS makes, "
+        f"{explore_expr} AS explore_shots, {explore_makes_expr} AS explore_makes "
         "FROM shots GROUP BY session_started ORDER BY session_started"
     ):
         sessions.append({
             "started": row["session_started"],
             "shots": row["n"],
             "makes": int(row["makes"] or 0),
+            "explore_shots": int(row["explore_shots"] or 0),
+            "explore_makes": int(row["explore_makes"] or 0),
         })
 
     # Defensively check which late-added columns exist — older DBs opened
