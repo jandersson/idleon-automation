@@ -375,3 +375,50 @@ def test_log_shot_re_anchor_still_works_without_prompt():
     )
     assert stats["session_score"] == 3
     assert made is False
+
+
+def test_clean_make_rejects_prompt_confirmed_pole_ricochet():
+    """Regression for session 2026-06-09 20:13 shot 1: a first-shot
+    pole-tip bounce-in (peak_x 252px past landing) is a real MAKE but
+    must not become predictor training data — the old prompt-confirmed
+    exemption set clean_make=1 unconditionally."""
+    from minigames.hoops.main import _classify_clean_make
+    clean, reason = _classify_clean_make(True, landing=635, peak_x=887, hoop_x=715)
+    assert clean == 0
+    assert "drift" in reason
+
+
+def test_clean_make_accepts_swish():
+    from minigames.hoops.main import _classify_clean_make
+    clean, reason = _classify_clean_make(True, landing=720, peak_x=730, hoop_x=715)
+    assert clean == 1
+    assert reason is None
+
+
+def test_clean_make_accepts_bank_shot_with_modest_drift():
+    """Bank shots land off-center but within tolerance, with drift under
+    the back-drift limit — they pass on their own merits, no prompt
+    exemption needed."""
+    from minigames.hoops.main import _classify_clean_make, MAX_BACK_DRIFT_PX
+    clean, reason = _classify_clean_make(
+        True, landing=650, peak_x=650 + MAX_BACK_DRIFT_PX, hoop_x=715,
+    )
+    assert clean == 1
+
+
+def test_clean_make_rejects_far_landing():
+    from minigames.hoops.main import _classify_clean_make
+    clean, reason = _classify_clean_make(True, landing=900, peak_x=None, hoop_x=715)
+    assert clean == 0
+    assert "rattle-in" in reason
+
+
+def test_clean_make_trusts_make_without_trajectory():
+    from minigames.hoops.main import _classify_clean_make
+    assert _classify_clean_make(True, landing=None, peak_x=None, hoop_x=715) == (1, None)
+
+
+def test_clean_make_miss_and_unknown():
+    from minigames.hoops.main import _classify_clean_make
+    assert _classify_clean_make(False, landing=720, peak_x=720, hoop_x=715) == (0, None)
+    assert _classify_clean_make(None, landing=720, peak_x=720, hoop_x=715) == (None, None)

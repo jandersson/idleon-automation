@@ -459,6 +459,51 @@ def _log_shot_result(
     return changed, diff, inferred_increment
 
 
+def _classify_clean_make(
+    made: bool | None,
+    landing: int | None,
+    peak_x: int | None,
+    hoop_x: int,
+) -> tuple[int | None, str | None]:
+    """Classify a shot's clean_make value for predictor training.
+
+    A make is "clean" only if the trajectory says the ball flew to the
+    hoop on aim: landing close to hoop_x, and no large backward drift
+    (peak_x far past landing_x = pole/backboard ricochet). A make that
+    fails these still counts for score — it just doesn't teach the
+    predictor, because the platform_y that produced it steered the ball
+    somewhere else and luck brought it in.
+
+    Prompt-confirmed makes get no exemption (changed 2026-06-09, #37).
+    The prompt clearing is ground truth that the shot SCORED, but says
+    nothing about whether the aim was right: a first-shot pole-tip
+    ricochet (peak_x 252px past landing, session 20:13 shot 1) would
+    have trained the predictor that the pole-hit zone is a make target.
+    Bank shots with modest drift pass the filters on their own merits.
+
+    No landing data → trust the make (nothing to judge against).
+    Returns (clean_value, reject_reason); reason is non-None only when
+    a make was rejected.
+    """
+    if made is None:
+        return None, None
+    if not made:
+        return 0, None
+    if landing is None:
+        return 1, None
+    if abs(landing - hoop_x) > CLEAN_MAKE_TOLERANCE:
+        return 0, (
+            f"ball_landing_x={landing} vs hoop_x={hoop_x} "
+            f"(Δ={abs(landing - hoop_x)}px > {CLEAN_MAKE_TOLERANCE}px) — likely rattle-in"
+        )
+    if peak_x is not None and (peak_x - landing) > MAX_BACK_DRIFT_PX:
+        return 0, (
+            f"ball_peak_x={peak_x} vs ball_landing_x={landing} "
+            f"(drift={peak_x - landing}px > {MAX_BACK_DRIFT_PX}px) — backboard/rim bounce"
+        )
+    return 1, None
+
+
 def _make_monitor_dir(throw_idx: int) -> Path:
     return make_shot_dir(MONITOR_DIR, throw_idx, prefix="shot")
 
@@ -824,33 +869,18 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     prompt_disappeared=prompt_disappeared,
                     prompt_visible_before=prompt_visible_before,
                 )
-                # Clean-make filter for predictor training. A make is
-                # "clean" only if the ball landed reasonably close to
-                # hoop_x — rattle-ins land far past after bouncing off
-                # the backboard. None landing → trust the make (no
-                # trajectory data to evaluate against).
-                # Exception: a prompt-confirmed make is binary truth from
-                # the game; trust it even if the landing is outside the
-                # tolerance (likely a bank shot — useful training data).
-                clean_make_value: int | None = None
-                if made is not None:
-                    if not made:
-                        clean_make_value = 0
-                    elif prompt_disappeared:
-                        clean_make_value = 1
-                    else:
-                        landing = trajectory.get("ball_landing_x")
-                        peak_x = trajectory.get("ball_peak_x")
-                        if landing is None:
-                            clean_make_value = 1
-                        elif abs(landing - hoop_x) > CLEAN_MAKE_TOLERANCE:
-                            clean_make_value = 0
-                            print(f"  [clean] make rejected for predictor: ball_landing_x={landing} vs hoop_x={hoop_x} (Δ={abs(landing - hoop_x)}px > {CLEAN_MAKE_TOLERANCE}px) — likely rattle-in")
-                        elif peak_x is not None and (peak_x - landing) > MAX_BACK_DRIFT_PX:
-                            clean_make_value = 0
-                            print(f"  [clean] make rejected for predictor: ball_peak_x={peak_x} vs ball_landing_x={landing} (drift={peak_x - landing}px > {MAX_BACK_DRIFT_PX}px) — backboard/rim bounce")
-                        else:
-                            clean_make_value = 1
+                # Clean-make filter for predictor training — see
+                # _classify_clean_make. The prompt-disappeared signal
+                # deliberately plays no role here: it confirms the MAKE
+                # (handled in _log_shot_result), not the aim.
+                clean_make_value, clean_reject_reason = _classify_clean_make(
+                    made,
+                    trajectory.get("ball_landing_x"),
+                    trajectory.get("ball_peak_x"),
+                    hoop_x,
+                )
+                if clean_reject_reason:
+                    print(f"  [clean] make rejected for predictor: {clean_reject_reason}")
                 # Compute lives_diff up-front so we can persist it on the
                 # shot row. Only meaningful when the lives region is visibly
                 # populated (during pre-game or "Make a shot to start"
