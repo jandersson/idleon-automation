@@ -18,7 +18,7 @@ from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
 from common.git_info import current_code_commit
-from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed, compute_dart_dy
+from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import compute_arm_centroid
 
@@ -333,6 +333,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # of the result every poll. Continuous signal independent of template-
     # match timing — the missing data the #25 discriminator needs.
     prev_bgr_for_motion: np.ndarray | None = None
+    prev_arm_centroid_y: int | None = None  # previous poll's centroid, for the dy discriminator
 
     while True:
         check_failsafe()
@@ -363,14 +364,20 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         match_y = int(pose[1]) if pose else 0
         t_ms = int((time.time() - session_t0) * 1000)
         arm_centroid_y, arm_pixel_count = compute_arm_centroid(cur_bgr, prev_bgr_for_motion)
-        # Swing-pass discriminator candidate (#26): dart dy vs the previous
-        # frame, computed only when the template actually matched — one
-        # small-crop matchTemplate on a frame already in hand, so the
-        # fire path gains no capture latency. Instrumentation only for
-        # now; validate against launch-angle ground truth before gating.
-        dart_dy = None
-        if conf >= RELEASE_THRESHOLD:
-            dart_dy = compute_dart_dy(prev_bgr_for_motion, match_x, match_y)
+        # Swing-pass discriminator (#26): arm-centroid dy vs the previous
+        # poll. Validated post-hoc 2026-06-10 against launch-angle ground
+        # truth over 23 fires: dy < 0 at fire → 9/10 hits, dy > 0 → 10/11
+        # misses. (The first candidate — re-matching the dart template in
+        # the previous frame — returned None on every live fire: the dart
+        # ROTATES between polls at the ~250ms cadence, so the release-angle
+        # template can't match the tilted prev-frame dart.) Instrumentation
+        # only; gate after at-fire logging confirms over another session.
+        arm_centroid_dy = (
+            arm_centroid_y - prev_arm_centroid_y
+            if arm_centroid_y is not None and prev_arm_centroid_y is not None
+            else None
+        )
+        prev_arm_centroid_y = arm_centroid_y
         prev_bgr_for_motion = cur_bgr
 
         if conf < RELEASE_THRESHOLD:
@@ -408,7 +415,6 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             log_poll(
                 throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
                 arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
-                dart_dy=dart_dy,
             )
             last_pose_time = time.time()  # don't fire, but keep game-over heuristic happy
             print(f"  [skip] apex-gate: arm_area={arm_pixel_count} > "
@@ -419,7 +425,6 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         log_poll(
             throw_db, session_started, t_ms, conf, match_x, match_y, threw=1,
             arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
-            dart_dy=dart_dy,
         )
         last_pose_time = time.time()
         px, py = pose
@@ -432,8 +437,8 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # was built on N=2 captured streaks at one player position; the
         # live bot at a different spawn showed the OPPOSITE pattern.
         # Insufficient data to commit to a directional rule.
-        dy_tag = f", dart_dy={dart_dy:+d}" if dart_dy is not None else ", dart_dy=?"
-        print(f"Release pose at ({px},{py}), conf={conf:.2f}{dy_tag} "
+        cdy_tag = f", centroid_dy={arm_centroid_dy:+d}" if arm_centroid_dy is not None else ", centroid_dy=?"
+        print(f"Release pose at ({px},{py}), conf={conf:.2f}{cdy_tag} "
               f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
@@ -550,7 +555,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             release_pose_x=int(px),
             release_pose_y=int(py),
             release_conf=float(conf),
-            dart_dy_at_fire=dart_dy,
+            arm_centroid_dy_at_fire=arm_centroid_dy,
             launch_angle_deg=trajectory["launch_angle_deg"],
             apex_y=trajectory["apex_y"],
             landing_x=trajectory["landing_x"],

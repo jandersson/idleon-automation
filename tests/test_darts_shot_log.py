@@ -126,3 +126,17 @@ def test_poll_and_throw_carry_dart_dy(tmp_path):
     assert conn.execute("SELECT dart_dy FROM polls").fetchone()[0] == -28
     assert conn.execute("SELECT dart_dy_at_fire FROM throws").fetchone()[0] == -28
     conn.close()
+
+
+def test_throw_carries_arm_centroid_dy(tmp_path):
+    """arm_centroid_dy_at_fire round-trips — the #26 discriminator that
+    validated (centroid dy vs previous poll; the dart-template re-match
+    candidate was dead on arrival)."""
+    from minigames.darts.shot_log import open_db, log_throw
+    conn = open_db(tmp_path / "darts.db")
+    log_throw(conn, session_started="s", throw_idx=1,
+              arm_centroid_dy_at_fire=-8, hit=1)
+    assert conn.execute(
+        "SELECT arm_centroid_dy_at_fire FROM throws"
+    ).fetchone()[0] == -8
+    conn.close()

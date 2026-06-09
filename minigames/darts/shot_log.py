@@ -98,13 +98,18 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # color without re-decoding score_increment each query, and surfaces
     # color shifts in trajectory data (e.g. landing_x vs stripe).
     ("stripe_color", "TEXT"),
-    # Dart vertical displacement (px, positive = downward) between the
-    # previous frame and the firing match — the fire-time swing-pass
-    # discriminator candidate (#26). Up-swing fires should show strongly
-    # negative dy; release fires near zero. Validate against the
-    # launch-angle ground truth (<=15° = 20/20 hits, >15° = 0/40)
-    # before gating on it.
+    # Dart vertical displacement between the previous frame and the firing
+    # match — first #26 discriminator candidate, DEAD ON ARRIVAL: the dart
+    # rotates between polls at the ~250ms cadence, so the release-angle
+    # template never re-matched the prev frame (NULL on every live fire,
+    # 2026-06-10). Column kept dormant per append-only convention.
     ("dart_dy_at_fire", "INTEGER"),
+    # Arm-centroid dy vs the previous poll at fire time — the #26
+    # discriminator that actually separates. Validated post-hoc against
+    # launch-angle ground truth (23 fires, 2026-06-10): dy < 0 → 9/10
+    # hits, dy > 0 → 10/11 misses. Logged at fire so the eventual gate
+    # uses exactly the quantity the validation measured.
+    ("arm_centroid_dy_at_fire", "INTEGER"),
 ]
 
 
