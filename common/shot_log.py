@@ -310,28 +310,89 @@ def fetch_shots(
     ]
 
 
+# Backward deflections that happened AT the hoop censor the flight's true
+# reach (the structure stopped the ball) — those rows can't train a reach
+# model. Deflections far from the hoop are floor bounces: the rightmost x
+# the ball reached is still an honest reach measurement.
+HOOP_DEFLECTION_ZONE_PX = 80
+
+
+def _trajectory_arrival(
+    hoop_x: float,
+    landing_x: float,
+    peak_x: float | None,
+    platform_x: float,
+    min_distance_px: int,
+) -> float | None:
+    """Reach of a tracked flight, or None when the row can't train a
+    trajectory model.
+
+    - No backward drift (peak ≈ landing): clean flight, reach = landing.
+    - Backward drift with peak near hoop_x: the ball deflected off the
+      hoop structure — its unobstructed reach is unknowable, drop it.
+    - Backward drift far from the hoop: floor bounce — the ball landed
+      short and rolled/bounced back; peak_x is the honest reach. (The
+      legacy distance-only filter dropped these, which threw away the
+      short-mislaunch population carrying the velocity signal, #37.)
+    - peak_x missing (rows before 2026-05-23): legacy heuristic — keep
+      only flights landing at least min_distance_px from the launcher.
+    """
+    if peak_x is None:
+        return landing_x if (landing_x - platform_x) >= min_distance_px else None
+    if (peak_x - landing_x) <= MAX_BACK_DRIFT_PX:
+        return landing_x
+    if abs(peak_x - hoop_x) <= HOOP_DEFLECTION_ZONE_PX:
+        return None
+    return peak_x
+
+
+_TRAJECTORY_BASE_SQL = (
+    'SELECT hoop_y, hoop_x, platform_y, {extra} ball_landing_x, ball_peak_x, platform_x '
+    'FROM shots WHERE required_direction = ? '
+    'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
+    'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
+    'AND platform_x IS NOT NULL {extra_filter}'
+)
+
+
 def fetch_clean_trajectories(
     conn: sqlite3.Connection,
     required_direction: str,
     min_distance_px: int = MIN_TRAJECTORY_DISTANCE_PX,
 ) -> list[tuple[float, float, float, float]]:
-    """Same shape as fetch_shots, but drops rows whose ball ended up too
-    close to the launcher. These are almost always rim/backboard bounces
-    that deflect the ball backwards and pollute trajectory regression.
-
-    Filters in SQL via `(ball_landing_x - platform_x) >= min_distance_px`
-    so the bounce rows never reach the predictor. Clamped rows are
-    included (see fetch_makes for rationale).
+    """Rows of (hoop_y, hoop_x, platform_y, arrival_x) for trajectory
+    regression, where arrival_x is the flight's reach per
+    _trajectory_arrival — bounce-aware, hoop-clank rows excluded.
+    Clamped rows are included (see fetch_makes for rationale).
     """
-    return [
-        (float(r[0]), float(r[1]), float(r[2]), float(r[3]))
-        for r in conn.execute(
-            'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
-            'WHERE required_direction = ? '
-            'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
-            'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
-            'AND platform_x IS NOT NULL '
-            'AND (ball_landing_x - platform_x) >= ?',
-            (required_direction, min_distance_px),
-        )
-    ]
+    out: list[tuple[float, float, float, float]] = []
+    for hy, hx, py, landing, peak, px in conn.execute(
+        _TRAJECTORY_BASE_SQL.format(extra='', extra_filter=''),
+        (required_direction,),
+    ):
+        arrival = _trajectory_arrival(hx, landing, peak, px, min_distance_px)
+        if arrival is not None:
+            out.append((float(hy), float(hx), float(py), float(arrival)))
+    return out
+
+
+def fetch_clean_trajectories_vy(
+    conn: sqlite3.Connection,
+    required_direction: str,
+    min_distance_px: int = MIN_TRAJECTORY_DISTANCE_PX,
+) -> list[tuple[float, float, float, float, float]]:
+    """Like fetch_clean_trajectories but returns
+    (hoop_y, hoop_x, platform_y, platform_vy, arrival_x) for rows where
+    the platform velocity at fire was recorded. Training data for the
+    velocity-aware trajectory predictor (#37)."""
+    out: list[tuple[float, float, float, float, float]] = []
+    for hy, hx, py, vy, landing, peak, px in conn.execute(
+        _TRAJECTORY_BASE_SQL.format(
+            extra='platform_vy,', extra_filter='AND platform_vy IS NOT NULL',
+        ),
+        (required_direction,),
+    ):
+        arrival = _trajectory_arrival(hx, landing, peak, px, min_distance_px)
+        if arrival is not None:
+            out.append((float(hy), float(hx), float(py), float(vy), float(arrival)))
+    return out

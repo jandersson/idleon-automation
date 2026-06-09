@@ -419,3 +419,59 @@ def test_log_shot_returns_rowid_and_set_make_corrects(tmp_path):
     assert rows[0] == (first, 1, 0, "respawn")
     assert rows[1] == (second, 0, 0, None)  # untouched
     conn.close()
+
+
+def test_fetch_clean_trajectories_peak_aware_keeps_true_short_mislaunch(tmp_path):
+    """With peak_x available the filter judges by backward drift, not
+    launcher distance: a TRUE short mislaunch (peak == landing, just
+    didn't fly far) is legitimate training data the old distance filter
+    threw away — it was exactly the velocity-signal population (#37)."""
+    from common.shot_log import fetch_clean_trajectories
+    conn = open_db(tmp_path / "shots.db")
+    # True short mislaunch: landed 170px from launcher, no backward drift.
+    log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
+             ball_landing_x=306, ball_peak_x=310, made=0,
+             required_direction="up")
+    # Structure clank: ball reached the hoop then bounced back 340px.
+    log_shot(conn, hoop_y=350, hoop_x=579, platform_y=295, platform_x=136,
+             ball_landing_x=230, ball_peak_x=572, made=0,
+             required_direction="up")
+    rows = fetch_clean_trajectories(conn, "up")
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0][3] == 306.0  # the mislaunch stays, the clank goes
+
+
+def test_fetch_clean_trajectories_vy_returns_velocity_rows(tmp_path):
+    from common.shot_log import fetch_clean_trajectories_vy
+    conn = open_db(tmp_path / "shots.db")
+    # vy present + clean flight → returned.
+    log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
+             platform_vy=61.9, ball_landing_x=306, ball_peak_x=310,
+             made=0, required_direction="up")
+    # vy missing → excluded even though the flight is clean.
+    log_shot(conn, hoop_y=534, hoop_x=674, platform_y=452, platform_x=136,
+             ball_landing_x=806, ball_peak_x=810, made=0,
+             required_direction="up")
+    # vy present but bounced → excluded.
+    log_shot(conn, hoop_y=350, hoop_x=579, platform_y=295, platform_x=136,
+             platform_vy=-121.2, ball_landing_x=230, ball_peak_x=572,
+             made=0, required_direction="up")
+    rows = fetch_clean_trajectories_vy(conn, "up")
+    conn.close()
+    assert rows == [(534.0, 674.0, 501.0, 61.9, 306.0)]
+
+
+def test_fetch_clean_trajectories_floor_bounce_uses_peak_as_arrival(tmp_path):
+    """A true short mislaunch that bounced on the floor and rolled back:
+    backward drift is large but far from the hoop, so the rightmost x is
+    the honest reach and the row stays (the legacy distance filter threw
+    these away — they carry the velocity signal, #37)."""
+    from common.shot_log import fetch_clean_trajectories
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
+             ball_landing_x=290, ball_peak_x=395, made=0,
+             required_direction="up")
+    rows = fetch_clean_trajectories(conn, "up")
+    conn.close()
+    assert rows == [(534.0, 674.0, 501.0, 395.0)]  # arrival = peak
