@@ -108,19 +108,26 @@ FLIGHT_POLL = 0.05
 # when the dartboard is actually gone.
 GAME_OVER_NO_POSE_SEC = 25.0
 
-# Apex-vs-forward-release discriminator (#25). At the top-of-swing apex
-# (miss-firing moment), the arm is reversing direction so the motion-AND-
-# white mask captures noticeably more pixels than at mid-swing forward
-# release (hit moment). Calibration on N=16 labeled fires (2026-05-24):
+# Swing-pass fire gate (#26): skip the fire when the arm-centroid dy vs
+# the previous poll is positive — the up-swing pass signature. Validated
+# against launch-angle ground truth across every instrumented fire
+# (sessions 2026-05-24 .. 2026-06-10): dy > 0 fires hit ~0/15 (launch
+# angles +20..26°, the guaranteed up-swing miss), dy <= -7 fires hit
+# ~21/24 with all exceptions explained by the #40 high-streak zone
+# shift. dy=None (first poll, or arm-motion dropout) fires rather than
+# starves — the signal is an instrument, not a precondition.
 #
-#   HIT  arm_pixel_count at fire: 174..197 (max 197)
-#   MISS arm_pixel_count at fire: 204..1665 (min 204)
-#
-# Clean separation at ~200. Threshold 210 leaves ~10px of safety margin
-# against the boundary between observed max-hit and min-miss. Skip the
-# fire when the arm-motion area exceeds this — almost certainly an apex
-# moment that would launch upward to the bottom of the screen.
-MAX_ARM_AREA_AT_FIRE = 210
+# Replaces the #25 arm-area apex gate (MAX_ARM_AREA_AT_FIRE=210): its
+# N=16 calibration ("HIT 174..197, MISS 204..1665") did not survive more
+# data — both classes span 174..220 in the fuller record — so it both
+# missed most up-swings and risked skipping good releases.
+DY_GATE_MAX = 0  # fire only when arm_centroid_dy <= this (or is None)
+
+
+def _is_upswing_fire(arm_centroid_dy: int | None) -> bool:
+    """True when the centroid-dy signal says this match is the up-swing
+    pass (skip it); False fires — including when dy is unavailable."""
+    return arm_centroid_dy is not None and arm_centroid_dy > DY_GATE_MAX
 
 # Stripe color → score-increment mapping (confirmed 2026-05-24 from user
 # session reporting 3 red/bullseye hits + the +1/+2/+3/+5 stripe values
@@ -413,22 +420,19 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             time.sleep(POLL_INTERVAL)
             continue
 
-        # Apex skip-gate (#25). Bot's about to fire but the per-poll
-        # arm-motion area is too high — likely the top-of-swing reversal
-        # where the dart launches upward (lands at bottom of screen).
-        # Logs the candidate as threw=0 so the polls table reflects the
-        # skip, then continues without clicking.
-        if (
-            arm_pixel_count is not None
-            and arm_pixel_count > MAX_ARM_AREA_AT_FIRE
-        ):
+        # Swing-pass skip-gate (#26). Bot's about to fire but centroid-dy
+        # says this match is the up-swing pass — a guaranteed +20° launch
+        # into the bottom of the screen. Logs the candidate as threw=0 so
+        # the polls table reflects the skip, then waits for the release
+        # pass (~250ms later).
+        if _is_upswing_fire(arm_centroid_dy):
             log_poll(
                 throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
                 arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
             )
             last_pose_time = time.time()  # don't fire, but keep game-over heuristic happy
-            print(f"  [skip] apex-gate: arm_area={arm_pixel_count} > "
-                  f"{MAX_ARM_AREA_AT_FIRE} — likely upward launch")
+            print(f"  [skip] dy-gate: centroid_dy={arm_centroid_dy:+d} > "
+                  f"{DY_GATE_MAX} — up-swing pass, waiting for release")
             time.sleep(POLL_INTERVAL)
             continue
 

@@ -97,3 +97,16 @@ def test_match_or_save_wind_sample_returns_stable_name(tmp_path, monkeypatch):
     assert name_b is not None and name_b != name_a
     # No crop (wind region not picked) → None.
     assert dm._match_or_save_wind_sample(None, seen) is None
+
+
+def test_dy_gate_skips_upswing_fires_only():
+    """The #26 fire gate: positive centroid-dy = up-swing pass (skip);
+    negative or zero fires; None fires (instrument dropout must not
+    starve the bot). Thresholds from the validated record: up-swing
+    misses at dy +6..+12, release hits at dy -7..-13."""
+    from minigames.darts.main import _is_upswing_fire, DY_GATE_MAX
+    assert _is_upswing_fire(7)            # tonight's miss signature
+    assert _is_upswing_fire(DY_GATE_MAX + 1)
+    assert not _is_upswing_fire(-8)       # release-pass hit signature
+    assert not _is_upswing_fire(DY_GATE_MAX)
+    assert not _is_upswing_fire(None)     # dropout → fire, don't starve
