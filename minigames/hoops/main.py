@@ -14,7 +14,7 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
+from common.shot_log import open_db, log_shot, set_make, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
 from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf
 from common.auto_commit import commit_file_if_changed
 from common.review_nag import maybe_print_nag
@@ -504,6 +504,41 @@ def _classify_clean_make(
     return 1, None
 
 
+# The hoop only respawns (teleports to a new position) on a make. When the
+# newly detected hoop is far from the one the last shot was fired at, but
+# that shot was logged a miss, the log is wrong — OCR dropped out (observed
+# twice in three sessions, 2026-06-09: a real make logged as miss because
+# score_after OCR returned None). The respawn is near-ground-truth; the
+# guards below keep the two known false-positive sources out:
+RESPAWN_MIN_MOVE_PX = 30   # score>=10 hoop drift is gradual; a respawn
+                           # teleports. Detector jitter is ±2px.
+RESPAWN_MIN_CONF = 0.9     # don't trust a marginal rim match (extreme low
+                           # spawns near the EXIT button match ~0.7) to
+                           # rewrite history.
+RESPAWN_MAX_SCORE = 10     # at 10+ the hoop drifts between shots by design;
+                           # disable the signal entirely there.
+
+
+def _respawn_implies_make(
+    prev_key: tuple[int, int] | None,
+    new_key: tuple[int, int],
+    last_made,
+    session_score: int,
+    new_conf: float,
+) -> bool:
+    """True when a newly detected hoop position proves the previous shot
+    (logged as miss / unknown) actually made. See guard rationale above."""
+    if prev_key is None or last_made:
+        return False
+    if session_score >= RESPAWN_MAX_SCORE:
+        return False
+    if new_conf < RESPAWN_MIN_CONF:
+        return False
+    dx = abs(new_key[0] - prev_key[0])
+    dy = abs(new_key[1] - prev_key[1])
+    return max(dx, dy) > RESPAWN_MIN_MOVE_PX
+
+
 def _make_monitor_dir(throw_idx: int) -> Path:
     return make_shot_dir(MONITOR_DIR, throw_idx, prefix="shot")
 
@@ -618,6 +653,9 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     # make, the game spawns a new hoop).
     current_hoop_key: tuple[int, int] | None = None
     misses_at_current_hoop: int = 0
+    # State of the most recent logged shot, kept so a hoop respawn can
+    # retroactively correct a make the OCR failed to confirm.
+    last_shot: dict | None = None
 
     while True:
         check_failsafe()
@@ -672,6 +710,27 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
             # within a couple of pixels.
             new_key = (hoop_x, hoop_y)
             if current_hoop_key is None or abs(new_key[0] - current_hoop_key[0]) > 2 or abs(new_key[1] - current_hoop_key[1]) > 2:
+                if last_shot is not None and _respawn_implies_make(
+                    current_hoop_key, new_key, last_shot["made"],
+                    shot_stats.get("session_score", 0), hoop_conf,
+                ):
+                    clean_value, _ = _classify_clean_make(
+                        True, last_shot["landing"], last_shot["peak"], last_shot["hoop_x"],
+                    )
+                    set_make(shot_db, last_shot["id"], 1, clean_value, "respawn")
+                    shot_stats["makes"] += 1
+                    # Keep the anchor in step with the real score so the
+                    # NEXT make's increment doesn't get double-attributed —
+                    # unless post-shot OCR already advanced it (make was
+                    # rejected on other grounds but the score was seen).
+                    if not last_shot["anchor_advanced"]:
+                        shot_stats["session_score"] += 1
+                    print(
+                        f"  [respawn] hoop {last_shot['hoop_key']} -> {new_key} after an unconfirmed shot — "
+                        f"retro-marking shot id={last_shot['id']} as MAKE (clean={clean_value}) | "
+                        f"confident makes {shot_stats['makes']}/{shot_stats['attempts']}"
+                    )
+                    last_shot = None
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
@@ -860,6 +919,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                         trajectory = analyse_shot_dir(shot_dir, hoop_x, hoop_y)
                     except Exception as e:
                         print(f"  [trajectory] analysis failed (non-fatal): {e}")
+                anchor_before = shot_stats.get("session_score", 0)
                 made, score_diff, score_increment = _log_shot_result(
                     shot_stats, score_before, score_after,
                     score_before_int=score_before_int,
@@ -901,7 +961,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # since the sample that triggered the shot, so the window
                 # ends exactly at fire time.
                 platform_vy_value = _platform_velocity(list(range_samples))
-                log_shot(
+                shot_row_id = log_shot(
                     shot_db,
                     session_started=session_started,
                     shot_idx=shot_idx,
@@ -943,6 +1003,17 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     bob_period_ms=bob_period_ms_value,
                     platform_vy=platform_vy_value,
                 )
+                # Remember the row so a hoop respawn before the next shot
+                # can retroactively correct an OCR-missed make.
+                last_shot = {
+                    "id": shot_row_id,
+                    "made": made,
+                    "landing": trajectory["ball_landing_x"],
+                    "peak": trajectory["ball_peak_x"],
+                    "hoop_x": hoop_x,
+                    "hoop_key": (hoop_x, hoop_y),
+                    "anchor_advanced": shot_stats.get("session_score", 0) > anchor_before,
+                }
                 # Update perturbation tracking. Made → reset (next hoop will
                 # be in a new position anyway). Miss → advance the sweep,
                 # unless the ball arrived in-band (aim was right; re-fire

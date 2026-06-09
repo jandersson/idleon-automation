@@ -422,3 +422,29 @@ def test_clean_make_miss_and_unknown():
     from minigames.hoops.main import _classify_clean_make
     assert _classify_clean_make(False, landing=720, peak_x=720, hoop_x=715) == (0, None)
     assert _classify_clean_make(None, landing=720, peak_x=720, hoop_x=715) == (None, None)
+
+
+def test_respawn_implies_make_on_big_jump():
+    from minigames.hoops.main import _respawn_implies_make
+    # Miss logged, hoop teleported 100px, mid-game, confident detection.
+    assert _respawn_implies_make((700, 450), (600, 380), False, 3, 0.99)
+    # made=None (no score snapshots) is also correctable.
+    assert _respawn_implies_make((700, 450), (600, 380), None, 3, 0.99)
+
+
+def test_respawn_signal_guards():
+    from minigames.hoops.main import (
+        _respawn_implies_make, RESPAWN_MIN_MOVE_PX, RESPAWN_MAX_SCORE,
+    )
+    prev, far = (700, 450), (600, 380)
+    # No previous hoop (fresh game / after a confirmed make).
+    assert not _respawn_implies_make(None, far, False, 3, 0.99)
+    # Last shot already confirmed made — nothing to correct.
+    assert not _respawn_implies_make(prev, far, True, 3, 0.99)
+    # Small movement: detector jitter or score>=10 drift, not a respawn.
+    near = (700 + RESPAWN_MIN_MOVE_PX, 450)
+    assert not _respawn_implies_make(prev, near, False, 3, 0.99)
+    # Score >= 10: the hoop drifts by design; signal disabled.
+    assert not _respawn_implies_make(prev, far, False, RESPAWN_MAX_SCORE, 0.99)
+    # Marginal rim match (extreme low spawn) must not rewrite history.
+    assert not _respawn_implies_make(prev, far, False, 3, 0.7)

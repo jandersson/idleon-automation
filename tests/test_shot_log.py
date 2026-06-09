@@ -402,3 +402,20 @@ def test_migrate_does_not_overwrite_explicit_clean_make(tmp_path):
     val = conn.execute("SELECT clean_make FROM shots").fetchone()[0]
     conn.close()
     assert val == 1
+
+
+def test_log_shot_returns_rowid_and_set_make_corrects(tmp_path):
+    """log_shot returns the inserted rowid; set_make retro-corrects the
+    make verdict (hoop-respawn signal, #37) and stamps made_source."""
+    from common.shot_log import open_db, log_shot, set_make
+    conn = open_db(tmp_path / "shots.db")
+    first = log_shot(conn, session_started="s", shot_idx=1, made=0, clean_make=0)
+    second = log_shot(conn, session_started="s", shot_idx=2, made=0, clean_make=0)
+    assert isinstance(first, int) and second == first + 1
+    set_make(conn, first, 1, 0, "respawn")
+    rows = conn.execute(
+        "SELECT id, made, clean_make, made_source FROM shots ORDER BY id"
+    ).fetchall()
+    assert rows[0] == (first, 1, 0, "respawn")
+    assert rows[1] == (second, 0, 0, None)  # untouched
+    conn.close()

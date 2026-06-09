@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-06-09T20:27:23",
+  "generated_at": "2026-06-09T20:36:03",
   "total_shots": 639,
-  "total_makes": 137,
-  "make_rate": 0.214,
+  "total_makes": 139,
+  "make_rate": 0.218,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -372,12 +372,12 @@
     {
       "started": "2026-06-09T20:13:42",
       "shots": 4,
-      "makes": 0
+      "makes": 1
     },
     {
       "started": "2026-06-09T20:26:04",
       "shots": 8,
-      "makes": 4
+      "makes": 5
     }
   ],
   "buckets": [
@@ -931,7 +931,7 @@
       "hoop_x_bucket": 690,
       "hoop_y_bucket": 440,
       "shots": 2,
-      "makes": 0
+      "makes": 1
     },
     {
       "hoop_x_bucket": 690,
@@ -1057,7 +1057,7 @@
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
       "shots": 42,
-      "makes": 26
+      "makes": 27
     },
     {
       "hoop_x_bucket": 710,
@@ -3131,6 +3131,29 @@
       "predictor_kind": null
     },
     {
+      "hoop_x": 697,
+      "hoop_y": 443,
+      "platform_y": 455,
+      "offset": 26,
+      "target_y": 469,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 65,
+      "ball_x_at_rim_height": 652,
+      "ball_landing_x": 685,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 3,
+      "score_after_int": null,
+      "score_increment": null,
+      "predicted_offset": 26,
+      "code_commit": "c81261b52945",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
       "hoop_x": 700,
       "hoop_y": 464,
       "platform_y": 473,
@@ -3956,6 +3979,29 @@
       "score_increment": 1,
       "predicted_offset": 22,
       "code_commit": "7471e49818db-dirty",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 460,
+      "offset": 22,
+      "target_y": 472,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 83,
+      "ball_x_at_rim_height": 700,
+      "ball_landing_x": 635,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 7,
+      "score_after_int": null,
+      "score_increment": null,
+      "predicted_offset": 22,
+      "code_commit": "7a1cf191f011",
       "predictor_kind": "trajectory_gp"
     },
     {

@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS shots (
     bob_ymin INTEGER,
     bob_ymax INTEGER,
     bob_period_ms INTEGER,
-    platform_vy REAL
+    platform_vy REAL,
+    made_source TEXT
 )
 """
 
@@ -126,6 +127,13 @@ _LATE_COLUMNS = [
     # suspected hidden variable is the platform velocity the ball inherits
     # at launch — this column is the instrument to confirm or refute that.
     ("platform_vy", "REAL"),
+    # How the make verdict on this row was reached, when it wasn't the
+    # standard OCR-increment path. Currently only "respawn": the hoop
+    # teleported after a shot the OCR couldn't confirm — the hoop only
+    # respawns on makes, so the shot is retroactively marked made
+    # (added 2026-06-09, #37: OCR dropouts were losing ~10% of real
+    # makes). NULL on rows where OCR confirmed the make directly.
+    ("made_source", "TEXT"),
 ]
 
 
@@ -210,14 +218,32 @@ def open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
-def log_shot(conn: sqlite3.Connection, **fields) -> None:
-    """Insert a shot row. Caller passes whichever columns they have; the rest
+def log_shot(conn: sqlite3.Connection, **fields) -> int:
+    """Insert a shot row and return its rowid (so outcome corrections can
+    target it later). Caller passes whichever columns they have; the rest
     default to NULL. `offset` is a SQLite-quoted column name."""
     cols = ", ".join(f'"{k}"' if k == "offset" else k for k in fields)
     placeholders = ", ".join("?" * len(fields))
-    conn.execute(
+    cur = conn.execute(
         f"INSERT INTO shots ({cols}) VALUES ({placeholders})",
         tuple(fields.values()),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def set_make(
+    conn: sqlite3.Connection,
+    shot_id: int,
+    made: int,
+    clean_make: int | None,
+    made_source: str | None = None,
+) -> None:
+    """Retroactively correct a shot's make verdict (e.g. when the hoop
+    respawn proves a shot made after OCR failed to confirm it)."""
+    conn.execute(
+        "UPDATE shots SET made = ?, clean_make = ?, made_source = ? WHERE id = ?",
+        (made, clean_make, made_source, shot_id),
     )
     conn.commit()
 
