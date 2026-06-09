@@ -1,4 +1,5 @@
 import os
+import random
 import time
 import sys
 from collections import deque
@@ -285,6 +286,29 @@ def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     if arrival_x is None or hoop_x is None:
         return True
     return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
+
+
+def _explore_target(
+    ys: list[int],
+    margin: int = PERTURBATION_BOB_MARGIN,
+    rng=random,
+) -> int | None:
+    """Uniform-random target inside the observed bob range (margin-inset),
+    or None when the range is degenerate.
+
+    Free-shot exploration: while the pre-game "Make a shot to start"
+    prompt is up, misses cost nothing — so after the first
+    (predictor-aimed) free shot misses, the bot samples targets across
+    the whole bob range instead of grinding the predictor's ±32px
+    neighborhood. Each sample fires at a different bob phase, sweeping
+    (platform_y, platform_vy) space and feeding the make-probability
+    model (#37) far faster than live play can.
+    """
+    lower = min(ys) + margin
+    upper = max(ys) - margin
+    if upper <= lower:
+        return None
+    return rng.randint(lower, upper)
 
 
 def _sweep_step(
@@ -746,6 +770,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
     current_hoop_key: tuple[int, int] | None = None
     misses_at_current_hoop: int = 0
     consecutive_holds: int = 0  # in-band re-fires since the sweep last moved
+    shots_at_current_hoop: int = 0  # gates free-shot exploration (first shot stays on predictor aim)
     # State of the most recent logged shot, kept so a hoop respawn can
     # retroactively correct a make the OCR failed to confirm.
     last_shot: dict | None = None
@@ -834,12 +859,32 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 current_hoop_key = new_key
                 misses_at_current_hoop = 0
                 consecutive_holds = 0
+                shots_at_current_hoop = 0
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
             predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
             predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
             perturbation = _perturbation_for(misses_at_current_hoop, predictor_sigma)
             offset = base_offset + perturbation
             target_y = hoop_y + offset
+            target_source = "sweep" if perturbation else "predictor"
+            # Free-shot exploration: pre-game misses cost no lives, so
+            # once the predictor-aimed first shot has missed, sample
+            # targets across the whole bob range instead of grinding the
+            # predictor's neighborhood — every free shot becomes a
+            # (platform_y, vy) → outcome training row (#37). The prompt
+            # check costs one template match, only on shots where the
+            # target is being (re)computed.
+            if (
+                shots_at_current_hoop >= 1
+                and len(range_samples) >= 40
+                and find_game_prompt(frame)[0]
+            ):
+                explore_y = _explore_target([p[2] for p in range_samples])
+                if explore_y is not None:
+                    target_y = explore_y
+                    offset = target_y - hoop_y
+                    perturbation = offset - predicted_offset_value
+                    target_source = "explore"
             # Cap target_y inside the platform's observed bob range with a
             # small margin so the platform passes through (rather than only
             # kissing at the apex). Without this, a perturbation that
@@ -862,7 +907,10 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     cap_tag = f" [capped target_y {target_y}->{lower}, bob ymin={ymin_seen}]"
                     target_y = lower
                     offset = target_y - hoop_y
-            tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
+            if target_source == "explore":
+                tag = f", explore (free shot, {shots_at_current_hoop} fired at this hoop)"
+            else:
+                tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
             override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
             sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
             print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
@@ -954,6 +1002,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 # before it shifts platform_y away from what the cross-detector
                 # just sampled, biasing every shot by tens of pixels.
                 shot_idx = shot_stats["attempts"] + 1
+                shots_at_current_hoop += 1
                 fired_at = datetime.now().isoformat(timespec="seconds")
                 fired_at_ms = time.time() * 1000.0
                 time_since_last_shot_ms = (
@@ -1119,6 +1168,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     bob_ymax=bob_ymax,
                     bob_period_ms=bob_period_ms_value,
                     platform_vy=platform_vy_value,
+                    prompt_up=int(bool(prompt_visible_before)),
+                    target_source=target_source,
                 )
                 # Remember the row so a hoop respawn before the next shot
                 # can retroactively correct an OCR-missed make.
@@ -1138,6 +1189,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 if made:
                     misses_at_current_hoop = 0
                     consecutive_holds = 0
+                    shots_at_current_hoop = 0
                     current_hoop_key = None
                 else:
                     arrival_x = _shot_arrival_x(

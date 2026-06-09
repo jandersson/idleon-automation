@@ -538,3 +538,30 @@ def test_sweep_step_advance_resets_hold_counter():
     # Way-off miss advances and resets regardless of prior holds.
     advance, holds = _sweep_step(900, 600, 1)
     assert advance and holds == 0
+
+
+def test_explore_target_stays_inside_bob_margins():
+    import random as _random
+    from minigames.hoops.main import _explore_target, PERTURBATION_BOB_MARGIN
+    ys = [290, 350, 420, 470, 510]
+    rng = _random.Random(0)
+    for _ in range(200):
+        t = _explore_target(ys, rng=rng)
+        assert 290 + PERTURBATION_BOB_MARGIN <= t <= 510 - PERTURBATION_BOB_MARGIN
+
+
+def test_explore_target_covers_the_range():
+    """Sampling must actually spread across the bob range, not cluster —
+    the whole point is sweeping (platform_y, vy) space."""
+    import random as _random
+    from minigames.hoops.main import _explore_target
+    ys = [290, 510]
+    rng = _random.Random(1)
+    samples = [_explore_target(ys, rng=rng) for _ in range(300)]
+    span = max(samples) - min(samples)
+    assert span > 150  # range is 210 after margins; uniform easily clears this
+
+
+def test_explore_target_degenerate_range_returns_none():
+    from minigames.hoops.main import _explore_target
+    assert _explore_target([400, 402, 405]) is None

@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS shots (
     bob_ymax INTEGER,
     bob_period_ms INTEGER,
     platform_vy REAL,
-    made_source TEXT
+    made_source TEXT,
+    prompt_up INTEGER,
+    target_source TEXT
 )
 """
 
@@ -134,6 +136,14 @@ _LATE_COLUMNS = [
     # (added 2026-06-09, #37: OCR dropouts were losing ~10% of real
     # makes). NULL on rows where OCR confirmed the make directly.
     ("made_source", "TEXT"),
+    # Whether the "Make a shot to start" prompt was up at fire time.
+    # Pre-game misses cost no lives, so these rows are free exploration
+    # samples — analysis can split free vs live shots (#37).
+    ("prompt_up", "INTEGER"),
+    # How the target was chosen: "predictor" (model aim, no perturbation),
+    # "sweep" (miss-driven perturbation), or "explore" (free-shot
+    # bob-range sampling while the start prompt is up).
+    ("target_source", "TEXT"),
 ]
 
 
