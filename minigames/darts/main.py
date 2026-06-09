@@ -187,24 +187,34 @@ def _crop_wind(frame_bgra) -> np.ndarray | None:
     return bgr[y0:y1, x0:x1]
 
 
-def _maybe_save_wind_sample(wind_crop: np.ndarray, seen: list) -> bool:
-    """Save wind_crop to wind_samples dir if it differs from every prior sample.
+def _match_or_save_wind_sample(wind_crop: np.ndarray, seen: list) -> str | None:
+    """Return the name of the saved wind sample this crop matches, saving
+    it as a new sample first when the state hasn't been seen before.
 
-    Mutates `seen` in place. Returns True if saved.
+    `seen` holds (name, image) pairs and is mutated in place. The name is
+    what log_throw records as wind_sample — without it the throws table
+    can't answer "what does wind state X do to landing_x", which is the
+    input the wind-conditioned release predictor needs (the column was
+    silently NULL on every throw before 2026-06-10).
+
+    Returns None when there's no wind crop (wind region not picked).
     """
     if wind_crop is None or wind_crop.size == 0:
-        return False
-    for ref in seen:
+        return None
+    for name, ref in seen:
         if ref.shape != wind_crop.shape:
             continue
         diff = float(cv2.absdiff(wind_crop, ref).astype(np.float32).mean())
         if diff < WIND_DEDUP_THRESHOLD:
-            return False
+            return name
     WIND_SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    # Index suffix: the bare %H%M%S stamp collided (and silently
+    # overwrote) when two new states arrived within one second.
     stamp = datetime.now().strftime("%H%M%S")
-    cv2.imwrite(str(WIND_SAMPLES_DIR / f"sample_{stamp}.png"), wind_crop)
-    seen.append(wind_crop)
-    return True
+    name = f"sample_{stamp}_{len(seen):03d}.png"
+    cv2.imwrite(str(WIND_SAMPLES_DIR / name), wind_crop)
+    seen.append((name, wind_crop))
+    return name
 
 
 def _load_existing_wind_samples() -> list:
@@ -214,7 +224,7 @@ def _load_existing_wind_samples() -> list:
     for p in sorted(WIND_SAMPLES_DIR.glob("*.png")):
         img = cv2.imread(str(p), cv2.IMREAD_COLOR)
         if img is not None:
-            samples.append(img)
+            samples.append((p.name, img))
     return samples
 
 
@@ -464,7 +474,9 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                 print(f"  [wind] changed since last throw (diff={wind_diff:.1f})")
         if wind_crop is not None:
             last_wind_crop = wind_crop
-        if _maybe_save_wind_sample(wind_crop, wind_seen):
+        n_wind_before = len(wind_seen)
+        wind_sample_name = _match_or_save_wind_sample(wind_crop, wind_seen)
+        if len(wind_seen) > n_wind_before:
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
         # Per-throw monitor folder is allocated up-front so flight frames
         # have a destination. throws_taken hasn't been incremented yet —
@@ -556,6 +568,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             release_pose_y=int(py),
             release_conf=float(conf),
             arm_centroid_dy_at_fire=arm_centroid_dy,
+            wind_sample=wind_sample_name,
             launch_angle_deg=trajectory["launch_angle_deg"],
             apex_y=trajectory["apex_y"],
             landing_x=trajectory["landing_x"],

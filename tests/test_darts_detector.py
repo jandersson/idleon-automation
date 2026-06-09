@@ -73,3 +73,27 @@ def test_compute_dart_dy_none_without_prev_or_match():
     rng = np.random.RandomState(8)
     empty = rng.randint(0, 60, (400, 400, 3), dtype=np.uint8)
     assert compute_dart_dy(empty, 200, 200, template=template) is None
+
+
+def test_match_or_save_wind_sample_returns_stable_name(tmp_path, monkeypatch):
+    """Throws must record WHICH wind state they flew under — the
+    wind_sample column was silently NULL on every throw because the old
+    helper only returned a saved/not-saved bool (#26 follow-up work needs
+    the association)."""
+    import minigames.darts.main as dm
+    monkeypatch.setattr(dm, "WIND_SAMPLES_DIR", tmp_path)
+    rng = np.random.RandomState(3)
+    state_a = rng.randint(0, 255, (20, 60, 3), dtype=np.uint8)
+    state_b = rng.randint(0, 255, (20, 60, 3), dtype=np.uint8)
+    seen = []
+    name_a = dm._match_or_save_wind_sample(state_a, seen)
+    assert name_a is not None and (tmp_path / name_a).exists()
+    # Same state again (tiny noise below dedup threshold) → same name.
+    jitter = state_a.astype(np.int16) + rng.randint(-2, 3, state_a.shape)
+    assert dm._match_or_save_wind_sample(
+        jitter.clip(0, 255).astype(np.uint8), seen) == name_a
+    # A different state gets its own name.
+    name_b = dm._match_or_save_wind_sample(state_b, seen)
+    assert name_b is not None and name_b != name_a
+    # No crop (wind region not picked) → None.
+    assert dm._match_or_save_wind_sample(None, seen) is None
