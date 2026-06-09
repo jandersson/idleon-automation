@@ -185,6 +185,26 @@ investigations:
   selectable via the launcher dropdown for further experimentation but
   shouldn't be promoted without a much larger sample showing separation.
 
+- **The June 2026 miss investigation (#37) — see
+  `docs/hoops_findings.md` for the full write-up.** Headlines, settled
+  2026-06-09/10: misses are not aim error (in-band arrivals make at
+  ~64%) — they're structure clanks misread as "way short" by
+  `ball_x_at_rim_height` (use the bounce-aware arrival via
+  `ball_peak_x`) plus velocity-driven over/undershoots (the ball
+  inherits the platform's vertical velocity; `platform_vy` is logged
+  per shot). Firing direction is a per-hoop policy
+  (`_required_direction_for`): dir=down at very low hoops (y≥530,
+  dir=up proven futile by a full-bob-range exploration sweep) and in
+  the near clank band (x≤640); one predictor is fitted per direction.
+  Make detection is multi-signal — post-shot OCR alone loses ~10% of
+  makes; the hoop-respawn signal (`made_source='respawn'`) and the
+  prompt-anchored score are load-bearing, and `clean_make` is never
+  bypassed (lucky bounce-ins score but don't train). Pre-game shots
+  (start prompt up) cost no lives and are used for bob-range
+  exploration (`target_source='explore'`). Don't re-derive these;
+  don't re-enable big perturbations (capped ±32, in-band holds capped
+  at 2). Follow-up model work: issue #38.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.

@@ -1,3 +1,11 @@
+"""Hoops bot: main loop and per-minigame config.
+
+The targeting/outcome design (bounce-aware arrival, per-hoop firing
+direction, velocity instrumentation, respawn-corrected make detection,
+free-shot exploration) is the product of the June 2026 miss
+investigation — rationale and evidence in docs/hoops_findings.md and
+issue #37.
+"""
 import os
 import random
 import time
