@@ -337,3 +337,41 @@ def test_platform_velocity_tolerates_detector_jitter():
     vy = _platform_velocity(samples)
     assert vy is not None
     assert abs(vy - 50.0) < 15.0
+
+
+def test_log_shot_prompt_visible_ignores_poisoned_pre_read():
+    """Regression for session 2026-06-09 20:13: on a fresh game (start
+    prompt up, true score 0) the pre-shot OCR misread 7, the anchor
+    re-anchored to 7, and every later real score of 1 looked like
+    increment -6 — no make could be detected all game. When the prompt
+    is visible the score is definitionally 0: the anchor must reset and
+    the pre-read must be ignored."""
+    stats = {"makes": 0, "attempts": 0, "session_score": 0}
+    # Shot 1: fresh game, poisoned pre-read, post OCR dropped out.
+    made, _, _ = _log_shot_result(
+        stats, _fake_score_crop(0), _fake_score_crop(1),
+        score_before_int=7, score_after_int=None,
+        prompt_visible_before=True,
+    )
+    assert made is None or made is False
+    assert stats["session_score"] == 0  # anchor not poisoned
+    # Shot 2: real score is now 1 — must register as a make.
+    made, _, inc = _log_shot_result(
+        stats, _fake_score_crop(1), _fake_score_crop(2),
+        score_before_int=1, score_after_int=2,
+        ball_x_at_rim=700, hoop_x=700,
+    )
+    assert made is True
+
+
+def test_log_shot_re_anchor_still_works_without_prompt():
+    """Mid-game (no prompt) the upward re-anchor from pre-OCR must keep
+    working — it covers the user scoring manually between bot shots."""
+    stats = {"makes": 0, "attempts": 0, "session_score": 0}
+    made, _, _ = _log_shot_result(
+        stats, _fake_score_crop(3), _fake_score_crop(3),
+        score_before_int=3, score_after_int=3,
+        prompt_visible_before=False,
+    )
+    assert stats["session_score"] == 3
+    assert made is False

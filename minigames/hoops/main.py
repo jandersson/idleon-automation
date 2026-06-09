@@ -375,6 +375,7 @@ def _log_shot_result(
     ball_x_at_rim: int | None = None,
     hoop_x: int | None = None,
     prompt_disappeared: bool = False,
+    prompt_visible_before: bool = False,
 ) -> tuple[bool | None, float | None, int | None]:
     """Print the score diff line and update stats. Returns
     (changed, diff, computed_increment) or (None, None, None) if either
@@ -398,11 +399,19 @@ def _log_shot_result(
     if before is None or after is None:
         return None, None, None
     _, diff = score_changed(before, after)
-    # Re-anchor session_score from this shot's pre-OCR if it's higher
-    # than what we knew. Catches off-bot scoring (user manually clicks
-    # the game between shots, mid-session) so we don't credit the bot
-    # for the user's points on the next shot.
-    if score_before_int is not None and score_before_int > stats.get("session_score", 0):
+    if prompt_visible_before:
+        # The "Make a shot to start" prompt is up — the game hasn't
+        # started, so the score is definitionally 0 and any pre-shot OCR
+        # read is noise. Trusting it poisons the anchor for the whole
+        # game: observed 2026-06-09 20:13, a pre-read of 7 on a fresh
+        # game made the real post-shot score of 1 look like increment
+        # -6 on every later shot, so no make could ever be detected.
+        stats["session_score"] = 0
+    elif score_before_int is not None and score_before_int > stats.get("session_score", 0):
+        # Re-anchor session_score from this shot's pre-OCR if it's higher
+        # than what we knew. Catches off-bot scoring (user manually clicks
+        # the game between shots, mid-session) so we don't credit the bot
+        # for the user's points on the next shot.
         stats["session_score"] = score_before_int
     session_score = stats.get("session_score", 0)
     inferred_increment: int | None = None
@@ -813,6 +822,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     ball_x_at_rim=trajectory["ball_x_at_rim_height"],
                     hoop_x=hoop_x,
                     prompt_disappeared=prompt_disappeared,
+                    prompt_visible_before=prompt_visible_before,
                 )
                 # Clean-make filter for predictor training. A make is
                 # "clean" only if the ball landed reasonably close to
