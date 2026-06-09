@@ -75,11 +75,13 @@ recent-changes snapshot that don't fit a single issue.
 - **One-time deep review** — `trig_016jn83AvPZwZQJZjZpHHKgk`. Fires
   once on **2026-05-16 10:00 Stockholm**. Deeper analysis with
   predictor residuals.
-- **Hoops #37 measurement-gate check** — `trig_01ByQcCvVLxqGcpKM2vTjQqi`.
+- **Hoops #37 gate + #38 readiness check** — `trig_01ByQcCvVLxqGcpKM2vTjQqi`.
   Fires once on **2026-06-13 10:00 Stockholm**. Reads
-  shots_snapshot.json, computes the post-policy make rate (explore
+  shots_snapshot.json; (1) computes the post-policy make rate (explore
   shots excluded) with a Wilson 95% CI vs the 25.5% baseline, posts
-  the verdict to #37 and closes it if attempts >= 100.
+  the verdict to #37 and closes it if attempts >= 100; (2) checks the
+  #38 data bar (>=50 dir=down shots in low+band regions with >=10
+  makes, from the snapshot's vy_coverage) and posts status to #38.
 
 Manage at: https://claude.ai/code/routines
 
