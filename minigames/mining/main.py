@@ -36,7 +36,7 @@ from common.capture import grab_region
 from common.input import check_failsafe, click as bot_click
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import current_code_commit
+from common.git_info import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, _find_plank_top_y, _find_plank_x_range
 from minigames.mining.jump_log import open_db, log_jump, set_outcome

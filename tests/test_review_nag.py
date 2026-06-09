@@ -1,9 +1,9 @@
-"""Tests for common.review_nag — runs against a temp git repo + sqlite db."""
+"""Tests for minigames.hoops.review_nag — runs against a temp git repo + sqlite db."""
 import sqlite3
 import subprocess
 from pathlib import Path
 
-from common.review_nag import sessions_since_last_code_commit
+from minigames.hoops.review_nag import sessions_since_last_code_commit
 
 
 def _git(cmd: list[str], cwd: Path) -> None:

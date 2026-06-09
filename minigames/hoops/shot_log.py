@@ -6,34 +6,15 @@ That makes it easy to query "what offset worked at hoop_y=X" or "show all
 makes where direction=up" instead of grepping log files.
 
 Usage:
-    from common.shot_log import open_db, log_shot
+    from minigames.hoops.shot_log import open_db, log_shot
     conn = open_db(Path("minigames/hoops/assets/shots.db"))
     log_shot(conn, session_started="...", shot_idx=1, hoop_x=710, ...)
     conn.close()
 
 Querying: `sqlite3 minigames/hoops/assets/shots.db` and run SQL.
 """
-import subprocess
 import sqlite3
 from pathlib import Path
-
-
-def current_code_commit(repo_root: Path) -> str | None:
-    """Return the short git commit hash of HEAD, with "-dirty" suffix if
-    the working tree has uncommitted changes. None if not in a git repo
-    or git isn't available."""
-    try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short=12", "HEAD"],
-            cwd=repo_root, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=repo_root, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-        return f"{sha}-dirty" if dirty else sha
-    except Exception:
-        return None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS shots (

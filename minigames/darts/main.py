@@ -17,7 +17,7 @@ from common.window import get_bounds, WindowNotFoundError
 from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
-from common.shot_log import current_code_commit  # shared with hoops
+from common.git_info import current_code_commit
 from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import compute_arm_centroid

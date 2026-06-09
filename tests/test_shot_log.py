@@ -2,7 +2,7 @@
 import sqlite3
 import threading
 
-from common.shot_log import (
+from minigames.hoops.shot_log import (
     open_db, log_shot, fetch_makes, fetch_shots, fetch_clean_trajectories,
     MIN_TRAJECTORY_DISTANCE_PX,
 )
@@ -407,7 +407,7 @@ def test_migrate_does_not_overwrite_explicit_clean_make(tmp_path):
 def test_log_shot_returns_rowid_and_set_make_corrects(tmp_path):
     """log_shot returns the inserted rowid; set_make retro-corrects the
     make verdict (hoop-respawn signal, #37) and stamps made_source."""
-    from common.shot_log import open_db, log_shot, set_make
+    from minigames.hoops.shot_log import open_db, log_shot, set_make
     conn = open_db(tmp_path / "shots.db")
     first = log_shot(conn, session_started="s", shot_idx=1, made=0, clean_make=0)
     second = log_shot(conn, session_started="s", shot_idx=2, made=0, clean_make=0)
@@ -426,7 +426,7 @@ def test_fetch_clean_trajectories_peak_aware_keeps_true_short_mislaunch(tmp_path
     launcher distance: a TRUE short mislaunch (peak == landing, just
     didn't fly far) is legitimate training data the old distance filter
     threw away — it was exactly the velocity-signal population (#37)."""
-    from common.shot_log import fetch_clean_trajectories
+    from minigames.hoops.shot_log import fetch_clean_trajectories
     conn = open_db(tmp_path / "shots.db")
     # True short mislaunch: landed 170px from launcher, no backward drift.
     log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
@@ -443,7 +443,7 @@ def test_fetch_clean_trajectories_peak_aware_keeps_true_short_mislaunch(tmp_path
 
 
 def test_fetch_clean_trajectories_vy_returns_velocity_rows(tmp_path):
-    from common.shot_log import fetch_clean_trajectories_vy
+    from minigames.hoops.shot_log import fetch_clean_trajectories_vy
     conn = open_db(tmp_path / "shots.db")
     # vy present + clean flight → returned.
     log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
@@ -467,7 +467,7 @@ def test_fetch_clean_trajectories_floor_bounce_uses_peak_as_arrival(tmp_path):
     backward drift is large but far from the hoop, so the rightmost x is
     the honest reach and the row stays (the legacy distance filter threw
     these away — they carry the velocity signal, #37)."""
-    from common.shot_log import fetch_clean_trajectories
+    from minigames.hoops.shot_log import fetch_clean_trajectories
     conn = open_db(tmp_path / "shots.db")
     log_shot(conn, hoop_y=534, hoop_x=674, platform_y=501, platform_x=136,
              ball_landing_x=290, ball_peak_x=395, made=0,

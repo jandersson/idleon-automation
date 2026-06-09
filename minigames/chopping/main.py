@@ -9,7 +9,7 @@ from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import current_code_commit
+from common.git_info import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
 from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome
 from minigames.chopping.detector import (

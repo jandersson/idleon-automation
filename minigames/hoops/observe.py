@@ -23,7 +23,8 @@ from common.regions import get_region
 from common.score_diff import score_region
 from common.score_ocr import read_score
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, current_code_commit
+from common.git_info import current_code_commit
+from minigames.hoops.shot_log import open_db, log_shot
 from common.window import get_bounds, WindowNotFoundError
 from minigames.hoops.detector import find_rim, find_platform, find_game_over
 from minigames.hoops.main import (

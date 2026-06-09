@@ -15,10 +15,11 @@ from common.input import click, random_delay, check_failsafe
 from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
-from common.shot_log import open_db, log_shot, set_make, fetch_makes, fetch_clean_trajectories, current_code_commit, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
+from common.git_info import current_code_commit
+from minigames.hoops.shot_log import open_db, log_shot, set_make, fetch_makes, fetch_clean_trajectories, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
 from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf
 from common.auto_commit import commit_file_if_changed
-from common.review_nag import maybe_print_nag
+from minigames.hoops.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
 from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
@@ -477,7 +478,7 @@ def _capture_lives_region(left: int, top: int, width: int, height: int):
 # hoop_x). Swishes land ~30–40 px from hoop_x, so 60 was tuned for the
 # swish case; bank shots routinely come down 60–80 px off-center but
 # still drop through. 80 matches CLEAN_MAKE_TOLERANCE in
-# common/shot_log.py — the in-bot check and the post-hoc clean-make
+# the hoops shot log — the in-bot check and the post-hoc clean-make
 # classifier now use the same threshold. Closes #9.
 TRAJECTORY_MAKE_TOLERANCE = 80  # px
 

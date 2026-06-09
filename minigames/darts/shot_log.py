@@ -1,6 +1,7 @@
 """SQLite throw log for the darts bot.
 
-Mirrors the shape of common.shot_log but with a darts-specific schema:
+Mirrors the shape of the hoops shot log (minigames/hoops/shot_log.py)
+but with a darts-specific schema:
 release pose, conf, launch angle / apex / landing from
 common.dart_trajectory, score increment, wind sample id, and the
 streak counter at log time.
@@ -80,7 +81,7 @@ CREATE TABLE IF NOT EXISTS polls (
 
 # New columns added after the original schema. open_db() runs ALTER TABLE
 # for each on existing DBs (sqlite ignores duplicate-column errors).
-# Keep this list append-only — same pattern as common.shot_log.
+# Keep this list append-only — same pattern as the hoops shot log.
 _LATE_COLUMNS: list[tuple[str, str]] = [
     # Temporal diagnostics added 2026-05-24 to distinguish forward-release
     # (hit) from top-of-swing apex (miss). Both moments produce a template

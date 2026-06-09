@@ -18,7 +18,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from common.ball_trajectory import track_ball_trajectory
-from common.shot_log import open_db, MAX_BACK_DRIFT_PX
+from minigames.hoops.shot_log import open_db, MAX_BACK_DRIFT_PX
 
 DB_PATH = ROOT / "minigames" / "hoops" / "assets" / "shots.db"
 
