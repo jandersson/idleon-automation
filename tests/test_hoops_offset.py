@@ -581,14 +581,13 @@ def test_direction_policy_down_at_low_hoops():
     assert _required_direction_for(350, 700) == REQUIRED_DIRECTION
 
 
-def test_direction_policy_down_in_clank_band():
-    """Near hoops (x<=640): dir=up arrives on target but clanks the rim
-    front from every launch state (2/36 in the vy-instrumented record;
-    session 2026-06-09 22:26 clanked across the full explore sweep).
-    Same flatter-arc bracketing experiment as the low hoops."""
-    from minigames.hoops.main import (
-        _required_direction_for, CLANK_BAND_X_MAX, REQUIRED_DIRECTION,
-    )
-    assert _required_direction_for(350, CLANK_BAND_X_MAX) == "down"
-    assert _required_direction_for(404, 617) == "down"
-    assert _required_direction_for(350, CLANK_BAND_X_MAX + 1) == REQUIRED_DIRECTION
+def test_direction_policy_band_stays_on_default():
+    """The clank-band dir=down override (2026-06-09) was reverted on
+    evidence: a 39-shot exploration sweep at (631,326) went 0/39 with
+    down, while dir=up has 36 all-time makes in the band including at
+    that exact hoop class. The band keeps the default direction; only
+    the exhaustively-validated low-hoop override remains."""
+    from minigames.hoops.main import _required_direction_for, REQUIRED_DIRECTION
+    assert _required_direction_for(326, 631) == REQUIRED_DIRECTION
+    assert _required_direction_for(404, 617) == REQUIRED_DIRECTION
+    assert _required_direction_for(350, 580) == REQUIRED_DIRECTION

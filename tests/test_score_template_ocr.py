@@ -119,11 +119,14 @@ def test_darts_reads_known_post_throw_crops():
     """End-to-end: read score from captured monitor crops where we know
     the answer. Goes through binarize + components + template-match."""
     reader = make_score_reader(DARTS_TEMPLATES)
-    # Verified by hand against darts.db and visual inspection
+    # Verified by hand against the screenshots (2026-06-10 audit — the
+    # score region was realigned after it was found clipping the leading
+    # digit, so the fixtures must come from frames captured at the same
+    # window geometry the current regions.json was calibrated on).
     cases = [
-        ("minigames/darts/assets/monitor/throw_002_142022/post_throw.png", 6),
-        ("minigames/darts/assets/monitor/throw_003_142027/post_throw.png", 9),
-        ("minigames/darts/assets/monitor/throw_005_142051/post_throw.png", 14),
+        ("minigames/darts/assets/monitor/throw_008_010414/post_throw.png", 22),
+        ("minigames/darts/assets/monitor/throw_009_010439/post_throw.png", 24),
+        ("minigames/darts/assets/monitor/throw_016_010630/post_throw.png", 42),
     ]
     # Use real region for darts
     from common.regions import get_region

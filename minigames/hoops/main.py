@@ -399,25 +399,21 @@ REQUIRED_DIRECTION = "up"
 # 480-529 band stays on "up" until data says otherwise.
 LOW_HOOP_DOWN_THRESHOLD = 530
 
-# Near hoops (the x<=640 "clank band", weekly-review #32) also fire
-# dir=down. With dir=up, arrivals there are ON TARGET but clip the rim
-# front from every launch state — session 2026-06-09 22:26 swept platform_y
-# 302-471 / vy -126..-6 at (592,348) and every arrival was a structure
-# clank (peak_x within ~10px of the hoop); vy-instrumented record in the
-# band is 2/36. Same bracketing logic that solved the low hoops: the
-# flatter dir=down arc approaches lower and may pass under the clank
-# point. Experiment started 2026-06-09; mid/far hoops (x>640, where
-# dir=up makes at ~80% in the instrumented slice) are not touched.
-CLANK_BAND_X_MAX = 640
+# The near "clank band" (x<=640) briefly fired dir=down too
+# (2026-06-09 b757b85, reverted 2026-06-10): a 39-shot exploration sweep
+# at (631,326) reached the hoop from the whole bob range without one
+# make (peaks 531-733, 0/39), and the all-time record says dir=up DOES
+# make in the band (~18%, 36 makes incl. at (630,325)/(634,322)) — the
+# 2/36 that justified the override was the vy-instrumented slice only.
+# Band clanks are probabilistic under dir=up, not categorical; that's
+# #38's job, with both direction curves now mapped for free.
 
 
 def _required_direction_for(hoop_y: int, hoop_x: int) -> str:
-    """Direction policy: dir=down at very low hoops and in the near
-    "clank band" (see LOW_HOOP_DOWN_THRESHOLD / CLANK_BAND_X_MAX
-    rationale), the default direction elsewhere."""
+    """Direction policy: dir=down at very low hoops (exhaustively
+    validated in both directions — see LOW_HOOP_DOWN_THRESHOLD), the
+    default direction everywhere else."""
     if hoop_y >= LOW_HOOP_DOWN_THRESHOLD:
-        return "down"
-    if hoop_x <= CLANK_BAND_X_MAX:
         return "down"
     return REQUIRED_DIRECTION
 
