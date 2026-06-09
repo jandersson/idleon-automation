@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-05-24T15:47:28",
-  "total_shots": 616,
-  "total_makes": 129,
-  "make_rate": 0.209,
+  "generated_at": "2026-06-09T20:07:22",
+  "total_shots": 627,
+  "total_makes": 133,
+  "make_rate": 0.212,
   "sessions": [
     {
       "started": "2026-05-01T16:44:53",
@@ -358,6 +358,16 @@
       "started": "2026-05-24T15:46:37",
       "shots": 5,
       "makes": 1
+    },
+    {
+      "started": "2026-05-24T17:24:33",
+      "shots": 6,
+      "makes": 2
+    },
+    {
+      "started": "2026-06-09T20:06:36",
+      "shots": 5,
+      "makes": 2
     }
   ],
   "buckets": [
@@ -610,14 +620,20 @@
     {
       "hoop_x_bucket": 630,
       "hoop_y_bucket": 370,
-      "shots": 1,
-      "makes": 0
+      "shots": 2,
+      "makes": 1
     },
     {
       "hoop_x_bucket": 630,
       "hoop_y_bucket": 400,
       "shots": 1,
       "makes": 1
+    },
+    {
+      "hoop_x_bucket": 640,
+      "hoop_y_bucket": 140,
+      "shots": 1,
+      "makes": 0
     },
     {
       "hoop_x_bucket": 640,
@@ -718,8 +734,8 @@
     {
       "hoop_x_bucket": 650,
       "hoop_y_bucket": 390,
-      "shots": 3,
-      "makes": 1
+      "shots": 4,
+      "makes": 2
     },
     {
       "hoop_x_bucket": 650,
@@ -778,7 +794,7 @@
     {
       "hoop_x_bucket": 660,
       "hoop_y_bucket": 530,
-      "shots": 1,
+      "shots": 4,
       "makes": 1
     },
     {
@@ -946,7 +962,7 @@
     {
       "hoop_x_bucket": 690,
       "hoop_y_bucket": 540,
-      "shots": 9,
+      "shots": 12,
       "makes": 2
     },
     {
@@ -1024,8 +1040,8 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 38,
-      "makes": 23
+      "shots": 40,
+      "makes": 25
     },
     {
       "hoop_x_bucket": 710,
@@ -1903,6 +1919,29 @@
       "predictor_kind": null
     },
     {
+      "hoop_x": 639,
+      "hoop_y": 376,
+      "platform_y": 343,
+      "offset": -34,
+      "target_y": 342,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": 222.37864685058594,
+      "ball_apex_y": 32,
+      "ball_x_at_rim_height": 617,
+      "ball_landing_x": 686,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 1,
+      "score_after_int": 2,
+      "score_increment": 1,
+      "predicted_offset": -34,
+      "code_commit": "86ba289efa95",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
       "hoop_x": 642,
       "hoop_y": 325,
       "platform_y": 305,
@@ -2200,6 +2239,29 @@
       "predicted_offset": -5,
       "code_commit": "d6c2730177d0-dirty",
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 654,
+      "hoop_y": 391,
+      "platform_y": 360,
+      "offset": -15,
+      "target_y": 376,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": 222.96116638183594,
+      "ball_apex_y": 33,
+      "ball_x_at_rim_height": 639,
+      "ball_landing_x": 711,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 1,
+      "score_after_int": 2,
+      "score_increment": 1,
+      "predicted_offset": -15,
+      "code_commit": "b3c8b1559244-dirty",
+      "predictor_kind": "trajectory_gp"
     },
     {
       "hoop_x": 655,
@@ -3423,6 +3485,29 @@
     {
       "hoop_x": 715,
       "hoop_y": 450,
+      "platform_y": 425,
+      "offset": -8,
+      "target_y": 442,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 49,
+      "ball_x_at_rim_height": 688,
+      "ball_landing_x": 674,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": -8,
+      "code_commit": "b3c8b1559244-dirty",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
       "platform_y": 429,
       "offset": -13,
       "target_y": 437,
@@ -3856,6 +3941,29 @@
       "predicted_offset": null,
       "code_commit": null,
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
+      "platform_y": 488,
+      "offset": 32,
+      "target_y": 482,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 121,
+      "ball_x_at_rim_height": null,
+      "ball_landing_x": 659,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": 32,
+      "code_commit": "86ba289efa95",
+      "predictor_kind": "trajectory_gp"
     },
     {
       "hoop_x": 716,
