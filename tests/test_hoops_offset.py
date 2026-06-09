@@ -565,3 +565,17 @@ def test_explore_target_covers_the_range():
 def test_explore_target_degenerate_range_returns_none():
     from minigames.hoops.main import _explore_target
     assert _explore_target([400, 402, 405]) is None
+
+
+def test_direction_policy_down_at_low_hoops():
+    """dir=up is mapped futile at y>=530 (56-shot exploration sweep at
+    (691,550), session 2026-06-09 21:41: every launch state overshot by
+    68px+). Low hoops fire on the downward crossing for a flatter,
+    shorter arc; everything else keeps the default direction."""
+    from minigames.hoops.main import (
+        _required_direction_for, LOW_HOOP_DOWN_THRESHOLD, REQUIRED_DIRECTION,
+    )
+    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD) == "down"
+    assert _required_direction_for(550) == "down"
+    assert _required_direction_for(LOW_HOOP_DOWN_THRESHOLD - 1) == REQUIRED_DIRECTION
+    assert _required_direction_for(350) == REQUIRED_DIRECTION

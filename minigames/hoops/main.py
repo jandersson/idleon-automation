@@ -377,6 +377,24 @@ PREDICTOR_KIND = os.environ.get("HOOPS_PREDICTOR_KIND", "gp")
 # to overshoot); at lower hoops it should land closer to right.
 REQUIRED_DIRECTION = "up"
 
+# Per-hoop direction override: at very low hoops, dir=up is PROVEN futile —
+# a 56-shot exploration sweep at (691,550) (session 2026-06-09 21:41)
+# covered the full bob range (platform_y 294-502, vy -175..+66) and every
+# shot landed at least ~68px past the hoop; the only launch state that even
+# reaches the hoop's x is the bob-bottom flat arc, which clanks off the
+# structure. dir=down imparts downward bias → flatter, shorter arc — the
+# 2026-05 dir=down sweep plateaued "5px short of the rim front" at
+# hoop_y=448, and SHORTER is exactly what y>=530 hoops need. Threshold set
+# from the sessions where up was mapped futile (hoop_y 534-550); the
+# 480-529 band stays on "up" until data says otherwise.
+LOW_HOOP_DOWN_THRESHOLD = 530
+
+
+def _required_direction_for(hoop_y: int) -> str:
+    """Direction policy: dir=down at very low hoops (see
+    LOW_HOOP_DOWN_THRESHOLD rationale), the default direction elsewhere."""
+    return "down" if hoop_y >= LOW_HOOP_DOWN_THRESHOLD else REQUIRED_DIRECTION
+
 # Click position is fixed at the hoop (hoop_x, hoop_y). Earlier experiments
 # (May 3 click_sweep + click_extreme) confirmed click position has no
 # measurable effect on ball trajectory — the only thing that matters is
@@ -682,44 +700,56 @@ def run():
             print(f"Code commit: {code_commit}")
         shot_db = open_db(SHOT_DB_PATH)
         try:
-            if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf"):
-                # All trajectory predictors learn from every shot (make
-                # or miss) and use the same input schema (4-tuple with
-                # ball_landing_x) and envelope clamp from nearby makes.
-                # Pull the data once and dispatch on KIND.
-                rows = fetch_clean_trajectories(shot_db, REQUIRED_DIRECTION)
-                makes = fetch_makes(shot_db, REQUIRED_DIRECTION)
-                if PREDICTOR_KIND == "trajectory_knn":
-                    predictor = fit_trajectory_knn(rows, makes=makes, k=5)
-                elif PREDICTOR_KIND == "trajectory_gp":
-                    predictor = fit_trajectory_gp(rows, makes=makes)
-                else:
-                    predictor = fit_trajectory_rf(rows, makes=makes)
-            else:
-                rows = fetch_makes(shot_db, REQUIRED_DIRECTION)
-                if PREDICTOR_KIND == "knn":
-                    # k=3 (was 5): smaller K is more local. With k=5 the
-                    # predictor over-smoothed in regions with sparse
-                    # training data — a single nearby make at
-                    # hoop=(593,390) with offset=78 got diluted to
-                    # offset=23 by 4 distant neighbours. k=3 lets the
-                    # local data dominate more.
-                    predictor = fit_knn(rows, k=3)
-                elif PREDICTOR_KIND == "bivariate":
-                    predictor = fit_bivariate(rows)
-                elif PREDICTOR_KIND == "gp":
-                    predictor = fit_gp(rows)
-                else:
-                    raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
-            if predictor is None:
-                print(f"No predictor fit ({PREDICTOR_KIND!r}, too few samples in dir={REQUIRED_DIRECTION!r}); using cold-start offset={COLD_START_OFFSET}")
-            else:
-                sample_kind = "shots" if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf") else "makes"
-                print(f"{PREDICTOR_KIND.upper()} target predictor (dir={REQUIRED_DIRECTION!r}, n={predictor.n} {sample_kind})")
-            _run_inner(session_started, shot_db, predictor, code_commit)
+            # One predictor per firing direction: training rows are
+            # direction-filtered (launch physics differ between up- and
+            # down-crossing fires), and the direction policy is per-hoop
+            # (see _required_direction_for). The "down" fit usually
+            # cold-starts until low-hoop sessions accumulate dir=down rows.
+            predictors = {
+                d: _fit_predictor(shot_db, d) for d in ("up", "down")
+            }
+            _run_inner(session_started, shot_db, predictors, code_commit)
         finally:
             shot_db.close()
             _refresh_and_commit_snapshot()
+
+
+def _fit_predictor(shot_db, direction: str):
+    """Fit the PREDICTOR_KIND model on rows for one firing direction.
+    Returns None (cold start) when too few samples exist."""
+    if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf"):
+        # All trajectory predictors learn from every shot (make or miss)
+        # and use the same input schema (4-tuple with arrival_x) and
+        # envelope clamp from nearby makes.
+        rows = fetch_clean_trajectories(shot_db, direction)
+        makes = fetch_makes(shot_db, direction)
+        if PREDICTOR_KIND == "trajectory_knn":
+            predictor = fit_trajectory_knn(rows, makes=makes, k=5)
+        elif PREDICTOR_KIND == "trajectory_gp":
+            predictor = fit_trajectory_gp(rows, makes=makes)
+        else:
+            predictor = fit_trajectory_rf(rows, makes=makes)
+    else:
+        rows = fetch_makes(shot_db, direction)
+        if PREDICTOR_KIND == "knn":
+            # k=3 (was 5): smaller K is more local. With k=5 the
+            # predictor over-smoothed in regions with sparse training
+            # data — a single nearby make at hoop=(593,390) with
+            # offset=78 got diluted to offset=23 by 4 distant
+            # neighbours. k=3 lets the local data dominate more.
+            predictor = fit_knn(rows, k=3)
+        elif PREDICTOR_KIND == "bivariate":
+            predictor = fit_bivariate(rows)
+        elif PREDICTOR_KIND == "gp":
+            predictor = fit_gp(rows)
+        else:
+            raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
+    if predictor is None:
+        print(f"No predictor fit ({PREDICTOR_KIND!r}, too few samples in dir={direction!r}); using cold-start offset={COLD_START_OFFSET}")
+    else:
+        sample_kind = "shots" if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf") else "makes"
+        print(f"{PREDICTOR_KIND.upper()} target predictor (dir={direction!r}, n={predictor.n} {sample_kind})")
+    return predictor
 
 
 def _refresh_and_commit_snapshot() -> None:
@@ -741,13 +771,15 @@ def _refresh_and_commit_snapshot() -> None:
     maybe_print_nag(REPO_ROOT, SHOT_DB_PATH, SNAPSHOT_REL)
 
 
-def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None):
+def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str | None):
     print(f"Hoops bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
     platform_history: deque[int] = deque(maxlen=5)
     target_y: int | None = None
     target_set_at: float = 0.0  # for the stale-target watchdog
+    required_dir: str = REQUIRED_DIRECTION  # per-hoop, set with each target
+    predictor = None  # the direction-appropriate predictor for the current hoop
     hoop_x: int | None = None
     hoop_y: int | None = None
     hoop_conf_last: float = 0.0  # carries to shot_log row
@@ -860,6 +892,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 misses_at_current_hoop = 0
                 consecutive_holds = 0
                 shots_at_current_hoop = 0
+            required_dir = _required_direction_for(hoop_y)
+            predictor = predictors.get(required_dir)
             base_offset = _compute_offset(hoop_y, hoop_x, predictor)
             predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
             predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
@@ -913,7 +947,8 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 tag = f", perturb={perturbation:+d} (miss #{misses_at_current_hoop})" if perturbation else ""
             override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
             sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
-            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}, target launch y={target_y}")
+            dir_tag = f", dir={required_dir}" if required_dir != REQUIRED_DIRECTION else ""
+            print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{dir_tag}, target launch y={target_y}")
             target_set_at = time.time()
 
         platform_pos, platform_conf = find_platform(frame)
@@ -991,7 +1026,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                 direction = _direction(platform_history)
             # When clamped, the platform only crosses the target at a bob extreme,
             # where direction is whatever-it-just-was → never matches. Bypass.
-            direction_ok = clamped or REQUIRED_DIRECTION == "any" or direction == REQUIRED_DIRECTION
+            direction_ok = clamped or required_dir == "any" or direction == required_dir
             if direction_ok:
                 tag = " [crossed]" if crossed and not in_window else ""
                 if clamped:
@@ -1142,7 +1177,7 @@ def _run_inner(session_started: str, shot_db, predictor, code_commit: str | None
                     eff_target_y=int(effective_target_y),
                     clamped=int(bool(clamped)),
                     direction=direction,
-                    required_direction=REQUIRED_DIRECTION,
+                    required_direction=required_dir,
                     score_diff=float(score_diff) if score_diff is not None else None,
                     made=int(bool(made)) if made is not None else None,
                     shot_dir=str(shot_dir) if shot_dir is not None else None,
