@@ -174,7 +174,7 @@ footer a:hover { text-decoration: underline; }
 </div>
 
 <footer>
-  <span>real frame + real <code>shots.db</code> rows — nothing synthetic</span>
+  <span>captured game frame + logged <code>shots.db</code> rows — nothing synthetic</span>
   <a href="predictors.html">predictors.md — the refresher notes</a>
   <a href="hoops_findings.html">hoops_findings.md — the investigation</a>
   <a href="https://github.com/jandersson/idleon-automation">repo</a>
@@ -376,7 +376,7 @@ const controlsEl = document.getElementById('controls');
 const explainEl = document.getElementById('explain');
 const EXPLAIN = {
   knn: '<h3>What am I looking at</h3>' +
-    'Every white ring is a <b>real clean make</b> from <code>shots.db</code>, plotted at its hoop position. ' +
+    'Every white ring is a <b>logged clean make</b> from <code>shots.db</code>, plotted at its hoop position. ' +
     'The wash shows the offset KNN would advise for a hoop at each spot: ' +
     '<span class="t">teal = fire with the platform above the hoop</span>, ' +
     '<span class="o">orange = below</span>. <b>Hover</b> to see the K neighbours it ' +
@@ -398,11 +398,11 @@ const EXPLAIN = {
     'post-miss exploration with this signal.',
   prob: '<h3>What am I looking at</h3>' +
     'The make-probability classifier over <b>phase space</b> — platform position (→) ' +
-    'vs platform velocity (↓), at one hoop. Rings/crosses are real makes/misses near ' +
+    'vs platform velocity (↓), at one hoop. Rings/crosses are logged makes/misses near ' +
     'that hoop. <b>Click the mini-frame</b> to move the hoop. <b>RUN BOB</b> traces ' +
     'the platform\'s actual oscillation through this plane — the bot fires where the ' +
     'loop crosses the brightest ground. Lukewarm mid-orange far from any marks is the <b>prior</b> — ' +
-    'P=0.5, the classifier saying 'no idea'. A clank is simply <code>made=0</code> here, ' +
+    'P=0.5, the classifier saying \'no idea\'. A clank is simply <code>made=0</code> here, ' +
     'which is why this view exists at all (<a href="predictors.html">the why</a>).',
 };
 
@@ -573,12 +573,12 @@ function renderProb() {
     }
   }
   ctx.fillStyle = 'rgba(255,176,102,.9)'; ctx.font = '11px Martian Mono';
-  ctx.fillText('hoop (' + hoopSel.x + ', ' + hoopSel.y + ')   ○ make   ✕ miss   (real shots within 60px)', 14, 20);
+  ctx.fillText('hoop (' + hoopSel.x + ', ' + hoopSel.y + ')   ○ make   ✕ miss   (logged shots within 60px)', 14, 20);
   if (bobAnim) drawBobFrame();
 }
 
 /* ---- the bob loop animation ---- */
-function bobState(t) {               /* matched to the real bob: ~10s period, y 290..510 */
+function bobState(t) {               /* matched to the observed bob: ~10s period, y 290..510 */
   const c = 400, A = 110, w = 2*Math.PI/10;
   const py = c + A*Math.sin(w*t);
   const vy = A*w*Math.cos(w*(t - 0.7));  /* trailing-window vy lags ~0.7s, like the bot's */
