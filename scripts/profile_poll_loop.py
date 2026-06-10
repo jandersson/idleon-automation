@@ -7,8 +7,14 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from minigames.darts.detector import find_game_over, find_release_pose  # noqa: E402
+from minigames.darts.detector import find_game_over, find_release_pose, _POSE_MATCHER  # noqa: E402
 from minigames.darts.arm_motion import compute_arm_centroid  # noqa: E402
+
+# Steady state: the pose matcher locks its scale within the first swing
+# cycle of a live session (genuine matches hit conf 0.9+), so bench the
+# locked path — the benchmark frame is mid-flight (no pose) and would
+# otherwise never lock, charging every call the full sweep.
+_POSE_MATCHER.locked_scale = 1.0
 
 root = Path(__file__).parent.parent
 f1 = cv2.imread(str(root / "minigames/darts/assets/monitor/throw_029_202521/flight_001.png"))

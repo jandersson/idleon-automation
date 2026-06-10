@@ -6,7 +6,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from common.templates import match_multiscale_center
+from common.templates import ScaleLockMatcher, match_multiscale_center
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -86,6 +86,19 @@ def compute_dart_dy(
     return match_y - prev_cy
 
 
+# Scale-locked matcher for the per-poll release-pose match (poll-loop
+# step 3, 2026-06-10): genuine poses win at scales 0.9-1.1 (428/511
+# at-fire frames) and the winning scale only moves on window resize, so
+# most polls skip the rest of the sweep — 78ms -> 47ms measured, with
+# 2000/2029 polls returning bit-identical (conf, center) to the full
+# sweep on the recorded corpus (scripts/validate_pose_scale_lock.py).
+# always_scales=(0.6,) keeps the sub-threshold junk floor (which wins
+# at 0.6 in ~97% of pose-absent frames, incl. the (146,38) phantom at
+# 0.5633) reading the same as before, so the adaptive-threshold and
+# best_recent_conf semantics in main.py are unchanged on locked polls.
+_POSE_MATCHER = ScaleLockMatcher(always_scales=(0.6,))
+
+
 def find_release_pose(
     frame: np.ndarray, threshold: float = 0.6
 ) -> tuple[tuple[int, int] | None, float]:
@@ -94,7 +107,8 @@ def find_release_pose(
     The hand sweeps periodically through a `)` arc. The template is captured
     at the desired release angle, so matchTemplate confidence peaks once per
     arc cycle when the hand is at that angle. Multi-scale matching means the
-    same template works whether the user resizes the game window.
+    same template works whether the user resizes the game window — the
+    scale lock re-syncs via a full sweep every resync_every polls.
 
     Threshold lowered from 0.7 to 0.6 since multi-scale tries off-tuned scales
     and naturally peaks lower; 0.6 still discriminates the release angle from
@@ -107,7 +121,7 @@ def find_release_pose(
     # dart-shaft template at a constant ~0.60 and were winning the
     # best-match slot over genuine sub-threshold poses (observed during
     # the 2026-06-10 12:01 stall). Player spawns range x ~350-450.
-    center, val, _scale = match_multiscale_center(
+    center, val, _scale = _POSE_MATCHER.match_center(
         bgr, template, region=(0, 0, int(w * 0.65), h)
     )
     if val < threshold:

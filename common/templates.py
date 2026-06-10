@@ -77,3 +77,63 @@ def match_multiscale_center(
     th = int(round(template.shape[0] * scale))
     tw = int(round(template.shape[1] * scale))
     return (top_left[0] + tw // 2, top_left[1] + th // 2), val, scale
+
+
+class ScaleLockMatcher:
+    """Stateful multi-scale matcher for per-poll hot paths.
+
+    The winning template scale tracks the window size — constant within
+    a session except across window resizes — so most polls don't need
+    the full scale sweep. After a confident match locks the scale,
+    polls match only the locked scale, its immediate neighbors, and
+    `always_scales`; every `resync_every`-th poll runs the full sweep,
+    so a window resize (or a junk-induced wrong lock) is corrected
+    within at most that many polls.
+
+    Confidences are exact full-resolution match values over the scales
+    tried — never rescaled or approximated. `always_scales` is for
+    callers whose downstream logic is calibrated against the no-match
+    noise floor (e.g. an adaptive threshold tracking sub-threshold
+    confidence between matches): pass the scale(s) that empirically
+    produce that floor so its level is preserved on locked polls.
+    Darts evidence (2026-06-10, scripts/probe_pose_scales.py): genuine
+    poses win at 0.9-1.1 while the 0.55-0.65 junk floor wins at 0.6 in
+    ~97% of frames — so darts locks with always_scales=(0.6,).
+    """
+
+    def __init__(
+        self,
+        scales: tuple[float, ...] = DEFAULT_SCALES,
+        lock_threshold: float = 0.7,
+        always_scales: tuple[float, ...] = (),
+        resync_every: int = 20,
+    ):
+        if not set(always_scales) <= set(scales):
+            raise ValueError("always_scales must be a subset of scales")
+        self.scales = tuple(scales)
+        self.lock_threshold = lock_threshold
+        self.always_scales = tuple(always_scales)
+        self.resync_every = resync_every
+        self.locked_scale: float | None = None
+        self._polls_since_sweep = 0
+
+    def match_center(
+        self,
+        image: np.ndarray,
+        template: np.ndarray,
+        region: tuple[int, int, int, int] | None = None,
+    ) -> tuple[tuple[int, int] | None, float, float]:
+        """Same contract as match_multiscale_center."""
+        if self.locked_scale is None or self._polls_since_sweep >= self.resync_every:
+            scales = self.scales
+            self._polls_since_sweep = 0
+        else:
+            i = self.scales.index(self.locked_scale)
+            scales = tuple(sorted({
+                *self.scales[max(0, i - 1):i + 2], *self.always_scales,
+            }))
+            self._polls_since_sweep += 1
+        center, val, scale = match_multiscale_center(image, template, region, scales)
+        if center is not None and val >= self.lock_threshold:
+            self.locked_scale = scale
+        return center, val, scale

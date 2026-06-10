@@ -1,8 +1,9 @@
 """Tests for common/templates.py — multi-scale template matching."""
 import cv2
 import numpy as np
+import pytest
 
-from common.templates import match_multiscale, match_multiscale_center
+from common.templates import ScaleLockMatcher, match_multiscale, match_multiscale_center
 
 
 def _make_marker(size: tuple[int, int]) -> np.ndarray:
@@ -79,3 +80,72 @@ def test_match_multiscale_center_returns_box_center():
     # Center of a 40x40 box at (100,80) is (120, 100).
     assert abs(center[0] - 120) <= 1
     assert abs(center[1] - 100) <= 1
+
+
+def test_scale_lock_locks_after_confident_match():
+    marker = _make_marker((40, 40))
+    image = _make_image_with_marker((400, 300), marker, at=(100, 80))
+    matcher = ScaleLockMatcher(scales=(0.5, 0.75, 1.0, 1.25, 1.5))
+
+    center, val, scale = matcher.match_center(image, marker)
+    assert val > 0.9
+    assert matcher.locked_scale == 1.0
+
+
+def test_scale_lock_locked_polls_match_full_sweep():
+    """On locked polls the returned (center, conf) must be identical to the
+    full sweep whenever the winning scale is inside the locked neighborhood."""
+    marker = _make_marker((40, 40))
+    image = _make_image_with_marker((400, 300), marker, at=(100, 80))
+    scales = (0.5, 0.75, 1.0, 1.25, 1.5)
+    matcher = ScaleLockMatcher(scales=scales)
+
+    matcher.match_center(image, marker)  # establishes the lock
+    locked = matcher.match_center(image, marker)
+    full = match_multiscale_center(image, marker, scales=scales)
+    assert locked == full
+
+
+def test_scale_lock_resync_recovers_from_resize():
+    """After the marker changes size (window resize), locked polls miss it,
+    but the periodic full sweep re-locks within resync_every polls."""
+    marker = _make_marker((40, 40))
+    big = _make_image_with_marker((400, 300), marker, at=(100, 80))
+    small_marker = cv2.resize(marker, (20, 20), interpolation=cv2.INTER_AREA)
+    small = _make_image_with_marker((400, 300), small_marker, at=(150, 100))
+    matcher = ScaleLockMatcher(scales=(0.5, 0.75, 1.0, 1.25, 1.5), resync_every=3)
+
+    matcher.match_center(big, marker)
+    assert matcher.locked_scale == 1.0
+    for _ in range(matcher.resync_every + 1):
+        center, val, scale = matcher.match_center(small, marker)
+    assert matcher.locked_scale == 0.5
+    assert val > 0.9
+
+
+def test_scale_lock_always_scales_searched_when_locked():
+    """A marker matching only at an always_scale is still found on locked
+    polls even though it's outside the locked neighborhood."""
+    marker = _make_marker((40, 40))
+    big = _make_image_with_marker((400, 300), marker, at=(100, 80))
+    small_marker = cv2.resize(marker, (20, 20), interpolation=cv2.INTER_AREA)
+    small = _make_image_with_marker((400, 300), small_marker, at=(150, 100))
+    scales = (0.5, 0.75, 1.0, 1.25, 1.5)
+
+    matcher = ScaleLockMatcher(scales=scales, always_scales=(0.5,), resync_every=100)
+    matcher.match_center(big, marker)
+    assert matcher.locked_scale == 1.0
+    center, val, scale = matcher.match_center(small, marker)
+    assert scale == 0.5
+    assert val > 0.9
+
+    # Without the always_scale, the same locked poll misses the small marker.
+    matcher2 = ScaleLockMatcher(scales=scales, resync_every=100)
+    matcher2.match_center(big, marker)
+    _, val2, _ = matcher2.match_center(small, marker)
+    assert val2 < 0.9
+
+
+def test_scale_lock_rejects_always_scales_outside_scales():
+    with pytest.raises(ValueError):
+        ScaleLockMatcher(scales=(0.5, 1.0), always_scales=(0.6,))

@@ -39,11 +39,19 @@ recent-changes snapshot that don't fit a single issue.
     half-res coarse prefilter (gate 0.7 vs measured coarse floor
     0.48-0.54, true banner 1.000). 115ms → ~35ms; tick ~202ms →
     ~128ms measured, expected live cadence ~150ms.
-  - (3) `find_release_pose` is now the dominant cost (~78ms; 7
-    full-scale matchTemplates over the left 65%). Coarse-to-fine or a
-    scale-cache would halve the tick again, but it's the
-    accuracy-sacred path — separate change, validate against the
-    recorded pose conf floor.
+  - ~~(3) cheapen `find_release_pose`~~ — done: `ScaleLockMatcher`
+    (common/templates.py) polls only the locked scale ±1 step plus the
+    junk-floor scale 0.6, full sweep every 20th poll. 78ms → 41ms;
+    steady-state tick 88ms measured, expected live cadence ~110ms.
+    Validated on 2029 recorded polls: 2000 bit-identical to the full
+    sweep, worst conf delta -0.068, all disagreements junk-floor-side
+    (scripts/validate_pose_scale_lock.py). NOTE: coarse-to-fine
+    (half-res localization + full-res crops, the find_game_over trick)
+    was tried first and REJECTED — the 9x40 release template is too
+    small at half res (66/449 exact agreement, median conf -0.03,
+    only 2.9x). matchTemplate cost here is ~11ms per scale regardless
+    of template size (per-location overhead dominates), so fewer
+    scales is the right lever, not smaller templates.
   - (4) only if game stutter is actually observed, a launcher "target
     tick ms" knob becomes meaningful as a CPU-budget control (cheaper
     ticks + a target cadence REDUCE load, not raise it).
