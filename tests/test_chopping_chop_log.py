@@ -104,6 +104,24 @@ def test_log_poll_inserts_row():
     assert row == (12345, 110, "green", 14, 4200, 1)
 
 
+def test_log_poll_round_trips_zone_layout():
+    conn = open_db(_tmpdb())
+    log_poll(
+        conn,
+        session_started="2026-06-10T23:00:00",
+        t_ms=500,
+        pointer_x=80,
+        zone="green",
+        nearest_red_distance=20,
+        bar_pixel_count=4000,
+        fired=0,
+        zone_layout="r20 g40 o20 r20",
+    )
+    conn.commit()
+    (layout,) = conn.execute("SELECT zone_layout FROM polls").fetchone()
+    assert layout == "r20 g40 o20 r20"
+
+
 def test_log_poll_accepts_null_pointer_and_red_distance():
     conn = open_db(_tmpdb())
     log_poll(

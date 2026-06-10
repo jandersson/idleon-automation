@@ -16,6 +16,7 @@ from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
     nearest_red_distance,
+    zone_layout,
 )
 
 _HERE = Path(__file__).parent
@@ -150,7 +151,8 @@ def _run_inner():
                 if now - last_poll_log >= POLL_LOG_INTERVAL:
                     log_poll(conn, session_started,
                              int((now - session_start_t) * 1000),
-                             pointer_x, zone, red_dist, bar_px, 0)
+                             pointer_x, zone, red_dist, bar_px, 0,
+                             zone_layout=zone_layout(bar_frame))
                     last_poll_log = now
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -202,7 +204,8 @@ def _run_inner():
             )
             log_poll(conn, session_started,
                      int((click_time - session_start_t) * 1000),
-                     pointer_x, zone, red_dist, bar_px, 1)
+                     pointer_x, zone, red_dist, bar_px, 1,
+                     zone_layout=zone_layout(bar_frame))
             last_poll_log = click_time
             pending = (row_id, click_time)
 
@@ -215,7 +218,8 @@ def _run_inner():
         if now - last_poll_log >= POLL_LOG_INTERVAL:
             log_poll(conn, session_started,
                      int((now - session_start_t) * 1000),
-                     pointer_x, zone, red_dist, bar_px, 0)
+                     pointer_x, zone, red_dist, bar_px, 0,
+                     zone_layout=zone_layout(bar_frame))
             last_poll_log = now
 
         time.sleep(POLL_INTERVAL)

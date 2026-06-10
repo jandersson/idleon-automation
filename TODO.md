@@ -85,9 +85,17 @@ recent-changes snapshot that don't fit a single issue.
   stripes' bust state visually per throw. Also noted: the E[stripe]
   model currently trains busts as zero-score outcomes at yellow-band
   vy — directionally fine, but conflates board-miss with bust.
-- **Chopping** — last verified state was "button click is suspect".
-  Hasn't been touched since the early-May Hoops focus push. Needs a
-  fresh look + a careful single-attempt re-test.
+- **Chopping** — instrumented and waiting on a live run (assessed
+  2026-06-10). The stale "button click is suspect" note was disproven
+  by the 2026-05-24 sessions (9 chops landed, safety skip fired); the
+  2026-06-09 refresh added the polls table + outcome attribution and
+  2026-06-10 added per-poll `zone_layout` RLE — but no session has run
+  with any of it. Next: one bot session populates leaf speed, zone
+  dynamics, and round-end attribution; "watch me play" (chopping-observe)
+  only after that, for gold-zone strategy and human near-red timing.
+  Open empirical questions: leaf px/s (calibrates the 8px red margin),
+  do zones shift/shrink per chop, what ends a round (the single
+  game_over at red_dist=41 is unattributable), gold zone value.
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.

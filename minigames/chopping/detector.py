@@ -102,6 +102,43 @@ def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> 
     return leaf_x, "none"
 
 
+def zone_layout(bar_frame: np.ndarray, min_pixels_per_col: int = 2) -> str:
+    """Run-length encoding of the bar's per-column zone colors, left to
+    right — e.g. ``"n4 g58 r12 g40 o9 g70 n29"`` (g=green, o=gold,
+    r=red, n=none/uncolored; the number is the run width in px).
+
+    Logged per poll so layout dynamics across a round — zones shifting
+    or shrinking between chops, gold appearing, the bar dying at round
+    end — can be studied offline without frame recordings. Per-column
+    priority matches analyze_bar: gold > green > red.
+    """
+    bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+
+    def _cols(mask: np.ndarray) -> np.ndarray:
+        return (mask > 0).sum(axis=0) >= min_pixels_per_col
+
+    red = _cols(cv2.bitwise_or(_mask(hsv, *RED_HSV_LOW), _mask(hsv, *RED_HSV_HIGH)))
+    green = _cols(_mask(hsv, *GREEN_HSV))
+    gold = _cols(_mask(hsv, *GOLD_HSV))
+
+    codes = np.full(red.shape, "n", dtype="<U1")
+    codes[red] = "r"        # lowest priority first — later writes win
+    codes[green] = "g"
+    codes[gold] = "o"
+
+    runs: list[str] = []
+    run_char, run_len = codes[0], 0
+    for c in codes:
+        if c == run_char:
+            run_len += 1
+        else:
+            runs.append(f"{run_char}{run_len}")
+            run_char, run_len = c, 1
+    runs.append(f"{run_char}{run_len}")
+    return " ".join(runs)
+
+
 def find_game_over(
     frame: np.ndarray, threshold: float = 0.7
 ) -> tuple[bool, float]:

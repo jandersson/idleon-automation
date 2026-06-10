@@ -70,7 +70,8 @@ CREATE TABLE IF NOT EXISTS polls (
     zone TEXT,
     nearest_red_distance INTEGER,
     bar_pixel_count INTEGER,
-    fired INTEGER
+    fired INTEGER,
+    zone_layout TEXT
 )
 """
 
@@ -81,7 +82,10 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
 
 
 _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
-    # (no late columns yet — placeholder for future additions)
+    # RLE of the bar's per-column zone colors ("n4 g58 r12 ..."), see
+    # detector.zone_layout. Added 2026-06-10 before the polls table ever
+    # saw a live session, so the ALTER is a no-op everywhere in practice.
+    ("zone_layout", "TEXT"),
 ]
 
 
@@ -101,19 +105,21 @@ def log_poll(
     nearest_red_distance: int | None,
     bar_pixel_count: int,
     fired: int,
+    zone_layout: str | None = None,
 ) -> None:
     """Append one row to the polls table. No per-row commit — caller
     commits periodically (e.g. once per fire) to bound write overhead."""
     conn.execute(
         "INSERT INTO polls (session_started, t_ms, pointer_x, zone, "
-        "nearest_red_distance, bar_pixel_count, fired) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "nearest_red_distance, bar_pixel_count, fired, zone_layout) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_started, int(t_ms),
             int(pointer_x) if pointer_x is not None else None,
             zone,
             int(nearest_red_distance) if nearest_red_distance is not None else None,
             int(bar_pixel_count), int(fired),
+            zone_layout,
         ),
     )
 

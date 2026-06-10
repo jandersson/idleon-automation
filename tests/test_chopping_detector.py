@@ -1,7 +1,12 @@
 """Tests for chopping detector — leftmost-column and analyze_bar zone lookup."""
 import numpy as np
 
-from minigames.chopping.detector import _leftmost_column, analyze_bar, bar_pixel_count
+from minigames.chopping.detector import (
+    _leftmost_column,
+    analyze_bar,
+    bar_pixel_count,
+    zone_layout,
+)
 
 
 def test_leftmost_column_finds_first_qualifying_column():
@@ -56,6 +61,18 @@ def test_analyze_bar_returns_green_for_leaf_over_green_zone():
     leaf_x, zone = analyze_bar(bar, leaf_frame=leaf)
     assert leaf_x == 40
     assert zone == "green"
+
+
+def test_zone_layout_run_length_encodes_the_bar():
+    # _bar_with_zones: red 0-20, green 20-60, gold 60-80, red 80-100.
+    bar = _bar_with_zones()
+    assert zone_layout(bar) == "r20 g40 o20 r20"
+
+
+def test_zone_layout_marks_uncolored_columns_none():
+    # Leave a gap: green 20-60 only, rest of the bar black.
+    bar = _bar_with_zones(green=(20, 60), gold=(0, 0), red_low=(0, 0), red_high=(0, 0))
+    assert zone_layout(bar) == "n20 g40 n40"
 
 
 def test_analyze_bar_returns_gold_for_leaf_over_gold_zone():
