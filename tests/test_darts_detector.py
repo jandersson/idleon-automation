@@ -131,3 +131,45 @@ def test_find_celebration_on_real_frames():
     assert is_celeb and conf > 0.9
     is_celeb_neg, conf_neg = find_celebration(neg_bgra)
     assert not is_celeb_neg and conf_neg < 0.6
+
+
+def test_release_pose_search_excludes_the_board():
+    """Darts stuck in the board (x ~900+) match the dart-shaft template
+    at ~0.60 and were winning the best-match slot over genuine player
+    poses (2026-06-10 12:01 stall). The search is left-65% only."""
+    from minigames.darts.detector import find_release_pose, _load
+    tmpl = _load("release.png")
+    th, tw = tmpl.shape[:2]
+    frame = np.zeros((572, 960, 4), dtype=np.uint8)
+    frame[:, :, :3] = 30
+    # Plant an exact template copy on the BOARD side only.
+    frame[390:390 + th, 900:900 + tw, :3] = tmpl
+    pose, conf = find_release_pose(frame, threshold=0.5)
+    assert pose is None  # board-side copy must be invisible to the search
+    # Same copy on the player side matches.
+    frame2 = np.zeros((572, 960, 4), dtype=np.uint8)
+    frame2[:, :, :3] = 30
+    frame2[330:330 + th, 410:410 + tw, :3] = tmpl
+    pose2, conf2 = find_release_pose(frame2, threshold=0.5)
+    assert pose2 is not None and conf2 > 0.9
+
+
+def test_effective_release_threshold_adapts_during_stall():
+    """Per-spawn adaptive threshold: after a pose drought with a credible
+    sub-threshold ceiling (the 12:01 stall sat at 0.62-0.66 vs base
+    0.70), the effective threshold drops to just under that ceiling —
+    bounded below by the noise floor and above by the base."""
+    from minigames.darts.main import (
+        _effective_release_threshold, MIN_RELEASE_THRESHOLD,
+    )
+    base = 0.70
+    # Normal play: base holds.
+    assert _effective_release_threshold(2.0, 0.66, base) == base
+    # Stall with a 0.66 ceiling: adapt to 0.63.
+    assert abs(_effective_release_threshold(10.0, 0.66, base) - 0.63) < 1e-9
+    # Ceiling above base: never adapt upward.
+    assert _effective_release_threshold(10.0, 0.95, base) == base
+    # Garbage ceiling: stay at base (never chase the noise floor).
+    assert _effective_release_threshold(10.0, 0.40, base) == base
+    # Floor clamp.
+    assert _effective_release_threshold(10.0, 0.59, base) >= MIN_RELEASE_THRESHOLD

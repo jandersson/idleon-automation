@@ -131,6 +131,34 @@ MAX_OVERLAY_PROBE_CLICKS = 3
 OVERLAY_PROBE_GO_CONF_MAX = 0.5  # only probe when clearly not game over
 DIAGNOSTICS_DIR = Path(__file__).parent / "assets" / "diagnostics"
 
+# Per-spawn adaptive threshold (#26, the original complaint): the player
+# teleports between spawns, and at some spawns the release template
+# peaks BELOW the fixed threshold — the 2026-06-10 12:01 stall watched
+# the swing cycle at conf 0.62-0.66 for 25s without firing. When no
+# pose has matched for a while but a credible sub-threshold match has
+# been seen, drop the effective threshold to just under that observed
+# ceiling. Safe now that the dy-gate (not the threshold) is what
+# prevents wrong-moment fires.
+ADAPT_THRESHOLD_AFTER_S = 8.0
+MIN_RELEASE_THRESHOLD = 0.55  # never adapt below this — noise floor headroom
+ADAPT_MARGIN = 0.03           # fire at (observed ceiling - this)
+
+
+def _effective_release_threshold(
+    elapsed_no_pose_s: float,
+    best_recent_conf: float,
+    base: float,
+) -> float:
+    """The release threshold for the current poll. Normally `base`; after
+    a long pose drought with a credible best-recent match, adapt down to
+    just under that spawn's observed match ceiling."""
+    if (
+        elapsed_no_pose_s > ADAPT_THRESHOLD_AFTER_S
+        and best_recent_conf >= MIN_RELEASE_THRESHOLD + ADAPT_MARGIN
+    ):
+        return max(MIN_RELEASE_THRESHOLD, min(base, best_recent_conf - ADAPT_MARGIN))
+    return base
+
 # Swing-pass fire gate (#26): skip the fire when the arm-centroid dy vs
 # the previous poll is positive — the up-swing pass signature. Validated
 # against launch-angle ground truth across every instrumented fire
@@ -422,7 +450,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         prev_arm_centroid_y = arm_centroid_y
         prev_bgr_for_motion = cur_bgr
 
-        if conf < RELEASE_THRESHOLD:
+        effective_threshold = _effective_release_threshold(
+            time.time() - last_pose_time, best_recent_conf, RELEASE_THRESHOLD,
+        )
+        if conf < effective_threshold:
             log_poll(
                 throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
                 arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
@@ -516,7 +547,9 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # Insufficient data to commit to a directional rule.
         cdy_tag = f", centroid_dy={arm_centroid_dy:+d}" if arm_centroid_dy is not None else ", centroid_dy=?"
         print(f"Release pose at ({px},{py}), conf={conf:.2f}{cdy_tag} "
-              f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}) — throwing")
+              f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}"
+              + (f", adapted thr={effective_threshold:.2f}" if effective_threshold < RELEASE_THRESHOLD else "")
+              + ") — throwing")
         # Fire immediately. Bookkeeping (score capture, wind crop +
         # diff + sample save) runs after the click — every ms between
         # pose detection and click landing drifts the arm a few degrees

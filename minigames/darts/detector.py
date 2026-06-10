@@ -78,8 +78,15 @@ def find_release_pose(
     other arm positions.
     """
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    h, w = bgr.shape[:2]
     template = _load("release.png")
-    center, val, _scale = match_multiscale_center(bgr, template)
+    # Left ~65% only: the darts stuck in the board (x ~900+) match the
+    # dart-shaft template at a constant ~0.60 and were winning the
+    # best-match slot over genuine sub-threshold poses (observed during
+    # the 2026-06-10 12:01 stall). Player spawns range x ~350-450.
+    center, val, _scale = match_multiscale_center(
+        bgr, template, region=(0, 0, int(w * 0.65), h)
+    )
     if val < threshold:
         return None, val
     return center, val
