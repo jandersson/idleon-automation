@@ -298,6 +298,46 @@ def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
 
 
+# Score>=10 hoop drift (measured 2026-06-10 from flight frames: the hoop
+# sweeps horizontally at ~15-35 px/s, oscillating at constant y with
+# occasional vertical steps). Aim read at target acquisition is stale by
+# seconds at fire time — good aim at a ghost. When the platform closes
+# on the target, refresh the hoop fix and carry the chosen offset to the
+# fresh position. The refresh happens during the wait, never between the
+# fire decision and the click (CLAUDE.md click-timing rule), and only at
+# 10+ where drift exists (find_rim costs ~30-80ms per call).
+DRIFT_SCORE_MIN = 10
+DRIFT_REDETECT_APPROACH_PX = 60
+
+
+def _should_refresh_hoop(session_score: int, py: int, target_y: int) -> bool:
+    """True when the drifting-hoop re-aim should run this poll: score in
+    drift territory and the platform closing on the target."""
+    return (
+        session_score >= DRIFT_SCORE_MIN
+        and abs(py - target_y) <= DRIFT_REDETECT_APPROACH_PX
+    )
+
+
+def _score_implies_prev_make(
+    prev_made,
+    prompt_visible: bool,
+    score_before_int: int | None,
+    anchor: int,
+) -> bool:
+    """True when this shot's pre-read proves the PREVIOUS shot made: the
+    anchor advanced by a single make's worth (+1 or +2) with no other
+    explanation. The respawn signal can't cover score>=10 (the hoop
+    drifts every detection, so respawn is indistinguishable from drift)
+    — observed 2026-06-10 12:36 shot 12: score went 10->11, OCR dropped
+    post-shot, row logged miss. Prompt-up pre-reads are noise and never
+    count.
+    """
+    if prev_made or prompt_visible or score_before_int is None:
+        return False
+    return 1 <= score_before_int - anchor <= 2
+
+
 def _crossing_candidates(
     samples: list[tuple[float, int, int]],
     bucket_px: int = 8,
@@ -944,6 +984,7 @@ def _record_shot_outcome(
     range_samples,
     session_started: str,
     code_commit: str | None,
+    prev_last_shot: dict | None = None,
 ) -> dict:
     """Post-click bookkeeping: capture the flight, wait out the cooldown,
     read the score, classify the outcome, persist the row, and update the
@@ -980,6 +1021,25 @@ def _record_shot_outcome(
     # session_score anchor, which is much more robust to pre-shot OCR
     # failures.
     score_before_int = read_score(shot.score_before) if shot.score_before is not None else None
+    # Score-anchored retro-make: this shot's pre-read proves the PREVIOUS
+    # shot scored when the anchor advanced by a make's worth — the 10+
+    # counterpart of the respawn signal (which is disabled there, since
+    # drift makes every detection look like a respawn).
+    if prev_last_shot is not None and _score_implies_prev_make(
+        prev_last_shot["made"], shot.prompt_visible_before,
+        score_before_int, shot_stats.get("session_score", 0),
+    ):
+        clean_value, _ = _classify_clean_make(
+            True, prev_last_shot["landing"], prev_last_shot["peak"],
+            prev_last_shot["hoop_x"],
+        )
+        set_make(shot_db, prev_last_shot["id"], 1, clean_value, "score")
+        shot_stats["makes"] += 1
+        print(
+            f"  [score-retro] pre-read {score_before_int} proves the previous shot made — "
+            f"retro-marking shot id={prev_last_shot['id']} (clean={clean_value}) | "
+            f"confident makes {shot_stats['makes']}/{shot_stats['attempts']}"
+        )
     score_after_int = read_score(score_after) if score_after is not None else None
     # Ball trajectory metrics from the captured flight frames — done
     # BEFORE _log_shot_result so we can cross-check OCR against physics:
@@ -1353,6 +1413,22 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             cycles_window = 0
             y_open_window = 0
 
+        # Drifting-hoop re-aim (score >= 10): refresh the hoop fix while
+        # the platform closes on the target, carrying the chosen offset
+        # to the fresh position (see DRIFT_SCORE_MIN rationale).
+        if _should_refresh_hoop(
+            shot_stats.get("session_score", 0), py, target.target_y,
+        ):
+            fresh_pos, fresh_conf, fresh_scale = find_rim(frame)
+            if fresh_pos is not None and fresh_conf >= 0.9:
+                fx, fy = fresh_pos
+                if abs(fx - hoop_x) > 2 or abs(fy - hoop_y) > 2:
+                    print(f"  [drift] hoop ({hoop_x},{hoop_y}) -> ({fx},{fy}) — re-aiming with offset {target.offset:+d}")
+                    hoop_x, hoop_y = fx, fy
+                    hoop_conf_last = fresh_conf
+                    hoop_scale_last = fresh_scale
+                    target.target_y = fy + target.offset
+
         # Re-apply the bob-margin cap now that bob samples exist. The cap at
         # hoop-detection time can't fire on the session's first hoop (no
         # samples yet) — a target at the exact bob extreme deadlocks the
@@ -1478,6 +1554,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                     range_samples=range_samples,
                     session_started=session_started,
                     code_commit=code_commit,
+                    prev_last_shot=last_shot,
                 )
                 platform_history.clear()
                 prev_py = None

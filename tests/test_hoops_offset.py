@@ -624,3 +624,31 @@ def test_crossing_candidates_empty_for_static_platform():
     from minigames.hoops.main import _crossing_candidates
     samples = [(i * 0.25, 136, 400) for i in range(60)]
     assert _crossing_candidates(samples) == []
+
+
+def test_should_refresh_hoop_only_in_drift_territory_on_approach():
+    """Drift re-aim runs only at score >= 10 with the platform closing on
+    the target — find_rim costs 30-80ms per call, so it's gated."""
+    from minigames.hoops.main import (
+        _should_refresh_hoop, DRIFT_SCORE_MIN, DRIFT_REDETECT_APPROACH_PX,
+    )
+    assert _should_refresh_hoop(DRIFT_SCORE_MIN, 420, 440)
+    assert _should_refresh_hoop(15, 440, 440 + DRIFT_REDETECT_APPROACH_PX)
+    assert not _should_refresh_hoop(9, 420, 440)             # below drift score
+    assert not _should_refresh_hoop(12, 300, 440)            # platform far away
+
+
+def test_score_implies_prev_make():
+    """The 10+ counterpart of the respawn signal (which is disabled there):
+    a +1/+2 anchor advance in this shot's pre-read proves the previous
+    shot made (observed 2026-06-10 12:36 shot 12: 10->11 with post-OCR
+    dropped). Prompt-up pre-reads never count; confirmed makes and
+    larger jumps don't trigger."""
+    from minigames.hoops.main import _score_implies_prev_make
+    assert _score_implies_prev_make(False, False, 11, 10)    # the shot-12 case
+    assert _score_implies_prev_make(None, False, 12, 10)     # +2 (two-pointer)
+    assert not _score_implies_prev_make(True, False, 11, 10)   # prev confirmed
+    assert not _score_implies_prev_make(False, True, 11, 10)   # prompt up = noise
+    assert not _score_implies_prev_make(False, False, None, 10)
+    assert not _score_implies_prev_make(False, False, 10, 10)  # no advance
+    assert not _score_implies_prev_make(False, False, 17, 10)  # OCR-jump garbage
