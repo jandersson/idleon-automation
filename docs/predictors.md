@@ -12,10 +12,17 @@ seen the material before but doesn't remember the specifics.
 > (For local viewing, open `docs/predictor_playground.html` directly
 > in a browser — no server or build.)
 
-The shared problem: given the current `(hoop_y, hoop_x)`, predict the
-optimal `platform_y` to fire at. Training data is a list of past makes
-— `(hoop_y, hoop_x, platform_y)` rows from `shots.db` filtered to
-clean, non-clamped successes via `fetch_makes`.
+The original shared problem: given the current `(hoop_y, hoop_x)`,
+predict the optimal `platform_y` to fire at. Training data is a list
+of past makes — `(hoop_y, hoop_x, platform_y)` rows from `shots.db`
+filtered to clean successes via `fetch_makes`.
+
+That framing has since generalised (June 2026): both bots' real
+decision is *"of the firing states available right now, which one do I
+take?"* — hoops picks a `(platform_y, vy, direction)` crossing from the
+live bob buffer, darts picks which swing pass to fire on via its
+centroid-dy. The later sections cover the models that answer that
+question; the early sections are still the right on-ramp.
 
 The surface we're modelling is the function
 \\(f(\text{hoop\_y}, \text{hoop\_x}) \to \text{optimal\_platform\_y}\\).
@@ -82,11 +89,16 @@ under-fits sparse ones.
 
 ---
 
-## Gaussian Process Regression — planned upgrade
+## Gaussian Process Regression — shipped (the default since May 2026)
 
-GP is the next predictor on TODO. This section is the refresher I wish
-I'd had in school — written for a reader who remembers being confused
-by it.
+This section is the refresher I wish I'd had in school — written for a
+reader who remembers being confused by it. Status notes: `gp` has been
+the default `PREDICTOR_KIND` since it landed; its posterior σ scales
+the miss-sweep step sizes; and a trajectory-regression variant
+(`trajectory_gp`, fit on every shot's flight arrival rather than makes
+only) tested statistically *tied* with it over n=103 — the early
+3-session window where it looked better was small-N luck (issue #23,
+a lesson that now gates every promotion decision in this repo).
 
 ### The conceptual jump that makes GP click
 
@@ -206,3 +218,100 @@ weighting and a posterior variance".
   before fitting and add it back at predict time. Or use a constant
   mean function. Forgetting this leads to predictions biased toward
   \\(0\\) in extrapolation regions.
+
+---
+
+## GP Classification — `make_prob` (hoops, June 2026)
+
+The same "distribution over functions" idea, pointed at a yes/no
+question: \(P(\text{make} \mid \text{hoop\_y}, \text{hoop\_x},
+\text{platform\_y}, \text{platform\_vy})\).
+
+### Why classification, when we had a perfectly good regressor
+
+Because of **censoring** — the failure mode that killed the reach-
+regression approach at the clank band. The trajectory predictors model
+"how far does the flight reach", but when the ball clips the rim front
+and bounces back, its *unobstructed* reach is unknowable: the structure
+censored the measurement. Those rows must be excluded from a reach
+model — which means the model literally cannot see the hazard, and will
+happily steer into the clank zone its training data was filtered of.
+
+Classification has no such problem. A clank is simply `made = 0`. Every
+shot is a labeled sample; nothing is censored; the wild exploration
+shots are *more* useful, not less. When your outcome is "did the thing
+work", model that directly.
+
+### How GP classification differs from GP regression (refresher depth)
+
+You can't put a Gaussian likelihood on a 0/1 label. The standard
+construction:
+
+1. Keep the GP exactly as before, but over a **latent function**
+   \(f(x)\) you never observe.
+2. Squash it through a link: \(P(y{=}1 \mid x) = \sigma(f(x))\), with
+   \(\sigma\) the logistic (or probit) function.
+3. The posterior over \(f\) is no longer Gaussian (the Bernoulli
+   likelihood breaks conjugacy), so you approximate it — sklearn's
+   `GaussianProcessClassifier` uses the **Laplace approximation**: find
+   the posterior mode, fit a Gaussian there, carry on as if.
+
+Mental model: same prior over smooth functions, but now the function is
+"log-odds of success over the state space", and training bends it up
+around observed makes and down around misses.
+
+### The part that's actually new: candidates, not queries
+
+The regression predictors answer "what platform_y should I want?". The
+classifier answers a better-shaped question: "here are the firing
+states the *live platform motion* will actually offer me in the next
+few seconds — score each." Candidates are built empirically from the
+bob buffer (each recently-swept y carries the velocity observed there;
+the bob is periodic, so that's the expected velocity of the next
+crossing), and the bot fires at the argmax. Direction comes along for
+free — a candidate knows whether it's an up- or down-crossing — which
+let the model out-vote the hand-written direction policy in its first
+session, correctly.
+
+First results (n=29 over two sessions): 72%, with the 95% CI clear of
+the previous policy stack's 34.8%. Promotion to default pending the
+~50-shot mark, because issue #23's ghost sits in on every one of these
+meetings.
+
+---
+
+## Next: E[stripe] for darts — GP regression again, different cleverness
+
+Darts turned out to have exactly one steerable axis: *where in the
+release pass the click lands* (measured by `centroid_dy`) sets the
+launch angle, which sets arc height, which sets the board stripe —
+flat passes hit the mid-board red/bullseye stripes at ~5× the baseline
+rate. Wind bends the same arc, in 2D (the indicator shows speed and a
+direction arrow that ranges over the full compass).
+
+The planned model (issue #41): \(E[\text{stripe value} \mid
+\text{wind\_x}, \text{wind\_y}, \text{dy}, \text{pose\_y}]\).
+Two design choices worth recording:
+
+- **Expectation over probability.** \(P(\text{bullseye})\) sounds
+  natural but bullseyes are ~30 positives all-time — a classifier
+  starves. Stripe value (0–5) labels every throw, and chasing the
+  expectation chases bullseyes anyway, since the 5 dominates it.
+  (Compare with hoops above, where classification won — the deciding
+  question is *which label is dense*, not which sounds fancier.)
+- **Wind as vector components, not (speed, direction).** Angles
+  wrap around (359° ≈ 1°), and an RBF kernel has no idea — it sees
+  maximal distance where the physics sees near-identity. Decompose
+  instead: \(\text{wind\_x} = s\cos\theta\), \(\text{wind\_y} =
+  s\sin\theta\) (screen convention: y-positive = down, matching every
+  other coordinate in the repo). Speed isn't lost — it's the norm of
+  the vector — and each component acts on a flight axis we measure:
+  wind_y presses the arc (the stripe axis), wind_x stretches range.
+  When the GP fits, its gradient along wind_y should read like a
+  physics textbook; if it doesn't, the parse is wrong and we'll know
+  before trusting it with throws.
+
+Until the model has its ~150 throws across two wind tiers, a static
+dy band ([-8, -5], with an ε-exploration throw every 8th) does the
+aiming and generates the training data — the same
+policy-first-model-second sequence that worked for hoops.
