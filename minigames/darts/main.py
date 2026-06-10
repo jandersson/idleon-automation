@@ -19,6 +19,7 @@ from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
 from common.git_info import current_code_commit
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
+from minigames.darts.wind import parse_wind
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import compute_arm_centroid
 
@@ -648,6 +649,9 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             last_wind_crop = wind_crop
         n_wind_before = len(wind_seen)
         wind_sample_name = _match_or_save_wind_sample(wind_crop, wind_seen)
+        wind_speed, wind_angle, wind_x, wind_y = parse_wind(wind_crop)
+        if wind_speed:
+            print(f"  [wind] {wind_speed} mph @ {wind_angle:+.0f}° -> components ({wind_x:+.1f}, {wind_y:+.1f})")
         if len(wind_seen) > n_wind_before:
             print(f"  [wind] new wind state saved (total samples: {len(wind_seen)})")
         # Per-throw monitor folder is allocated up-front so flight frames
@@ -742,6 +746,10 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             arm_centroid_dy_at_fire=arm_centroid_dy,
             aim_mode=aim_mode,
             wind_sample=wind_sample_name,
+            wind_speed=wind_speed,
+            wind_angle_deg=wind_angle,
+            wind_x=wind_x,
+            wind_y=wind_y,
             launch_angle_deg=trajectory["launch_angle_deg"],
             apex_y=trajectory["apex_y"],
             landing_x=trajectory["landing_x"],

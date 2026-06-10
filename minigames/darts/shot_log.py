@@ -115,6 +115,16 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # 'explore' (ε-exploration throw). Lets the gate's EV be evaluated
     # per intent and keeps model training aware of the sampling policy.
     ("aim_mode", "TEXT"),
+    # Numeric wind (#41 step 2), parsed from the panel at fire time:
+    # speed in mph; angle in degrees (screen convention, 0 = blowing
+    # right, +90 = down); wind_x/wind_y = speed * (cos, sin) — the
+    # model features. Calm = (0, NULL, 0, 0); parse failure = all NULL.
+    # Encoded as components rather than (speed, direction) because RBF
+    # kernels can't see around the angle wraparound.
+    ("wind_speed", "REAL"),
+    ("wind_angle_deg", "REAL"),
+    ("wind_x", "REAL"),
+    ("wind_y", "REAL"),
 ]
 
 

@@ -195,3 +195,42 @@ def test_aim_fire_decision_matrix():
     assert _aim_fire_decision(-13, 0, True) == (True, "explore")
     # Instrument dropout fires (never starve).
     assert _aim_fire_decision(None, 0, False) == (True, "fallback")
+
+
+def test_parse_wind_on_archived_states():
+    """#41 step 2: speed digits + flow direction from the wind panel.
+    Validated against the archived state library (gitignored — skip if
+    absent). Empirics fixed the sign: the wind FLOWS along the chevron
+    base direction (the sprite likely shows the source); with that
+    encoding wind_y vs arc and wind_x vs hit-rate both respond with the
+    physically right sign."""
+    from pathlib import Path
+    import cv2
+    from minigames.darts.wind import parse_wind
+    root = Path(__file__).parent.parent / "minigames/darts/assets/wind_samples"
+    if not root.exists():
+        return
+    calm = root / "sample_backfill_000.png"
+    if calm.exists():
+        s, a, wx, wy = parse_wind(cv2.imread(str(calm)))
+        assert (s, a, wx, wy) == (0, None, 0.0, 0.0)
+    nine = root / "sample_backfill_010.png"
+    if nine.exists():
+        s, a, wx, wy = parse_wind(cv2.imread(str(nine)))
+        assert s == 9
+        assert abs((wx**2 + wy**2) ** 0.5 - 9) < 0.01  # speed = vector norm
+    three = root / "sample_backfill_007.png"
+    if three.exists():
+        s, a, wx, wy = parse_wind(cv2.imread(str(three)))
+        assert s == 3
+        # tip points right => flow is LEFTWARD (headwind): wind_x < 0
+        assert wx < -2
+
+
+def test_parse_wind_handles_garbage():
+    import numpy as np
+    from minigames.darts.wind import parse_wind
+    assert parse_wind(None) == (None, None, None, None)
+    blank = np.zeros((50, 136, 3), dtype=np.uint8)
+    s, a, wx, wy = parse_wind(blank)
+    assert s == 0 and wx == 0.0  # no arrow pixels reads as calm
