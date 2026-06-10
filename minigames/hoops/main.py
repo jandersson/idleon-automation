@@ -1324,6 +1324,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     # range_samples is (timestamp, px, py) — the timestamp lets us
     # estimate bob_period_ms via _estimate_bob_period_ms.
     hoop_missing_since: float | None = None  # for exit-when-stuck
+    platform_missing_since: float | None = None  # no-platform bail (00:40 runaway)
     range_samples: deque[tuple[float, int, int]] = deque(maxlen=200)  # (ts, px, py) for range + period diagnostics
     last_range_log = time.time()
     # Fire-window diagnostics. Reset every range-log window so we see a rate
@@ -1353,10 +1354,18 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
 
         # Stop cleanly when the trial ends. Checked every Nth tick only:
         # the full-frame match is the single largest per-tick cost
-        # (112ms, profiled 2026-06-10), the game-over screen is a
-        # persistent terminal state so detection latency of a few hundred
-        # ms is harmless, and the 5s rim-missing bail below is the
-        # backstop that has actually ended most sessions anyway.
+        # (112ms, profiled 2026-06-10). CORRECTION (2026-06-11, the
+        # 00:40 runaway): the game-over BANNER is a ~3-4s timed window,
+        # not a persistent terminal state — and the bot spends most of
+        # it blind inside _record_shot_outcome (~6s of flight capture +
+        # OCR per shot). The banner matches the template at conf ~0.92
+        # (true-positive frames now on disk: monitor/shot_007_004117/);
+        # the old "no true positive above 0.574" record was measured on
+        # NON-banner frames. After the banner, the rim/platform remain
+        # rendered (rim matched 0.98 on the banner screen), so the
+        # rim-missing bail can't catch it either. Hence: every shot
+        # outcome resets `tick` below so the FIRST post-shot iteration
+        # always runs this check, inside the banner window.
         tick += 1
         if tick % GAME_OVER_CHECK_EVERY == 1:
             is_over, go_conf = find_game_over(frame)
@@ -1418,8 +1427,24 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
 
         platform_pos, platform_conf = find_platform(frame)
         if platform_pos is None:
+            # No-platform bail (2026-06-11): this path used to sleep and
+            # continue forever, silently — with a target set the rim
+            # check above is skipped too, so a screen with neither
+            # platform nor a way to detect game over kept the bot alive
+            # ~65s until the stale-target watchdog (the 00:40 runaway).
+            # Mirror the rim-missing rule: platform continuously gone
+            # for >5s clears the target, handing control back to the
+            # rim-seek path, whose own 5s bail ends the session.
+            if platform_missing_since is None:
+                platform_missing_since = time.time()
+            elif time.time() - platform_missing_since > 5:
+                print(f"Platform not found for >5s (best conf={platform_conf:.2f}) — "
+                      f"clearing target and re-seeking the rim.")
+                target = None
+                platform_missing_since = None
             time.sleep(POLL_INTERVAL)
             continue
+        platform_missing_since = None
 
         px, py = platform_pos
         platform_history.append(py)
@@ -1591,6 +1616,14 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 platform_history.clear()
                 prev_py = None
                 target = None  # re-detect hoop after it repositions
+                # Force the game-over check on the very next iteration:
+                # a life-losing shot is the only thing that triggers the
+                # ~3-4s game-over banner, and _record_shot_outcome just
+                # consumed most of that window. Without this, detection
+                # is a 1-in-5 tick lottery on the banner's last second
+                # (lost in the 2026-06-11 00:40 session — ran dead until
+                # manually killed).
+                tick = 0
                 continue
 
         prev_py = py
