@@ -85,17 +85,20 @@ recent-changes snapshot that don't fit a single issue.
   stripes' bust state visually per throw. Also noted: the E[stripe]
   model currently trains busts as zero-score outcomes at yellow-band
   vy — directionally fine, but conflates board-miss with bust.
-- **Chopping** — instrumented and waiting on a live run (assessed
-  2026-06-10). The stale "button click is suspect" note was disproven
-  by the 2026-05-24 sessions (9 chops landed, safety skip fired); the
-  2026-06-09 refresh added the polls table + outcome attribution and
-  2026-06-10 added per-poll `zone_layout` RLE — but no session has run
-  with any of it. Next: one bot session populates leaf speed, zone
-  dynamics, and round-end attribution; "watch me play" (chopping-observe)
-  only after that, for gold-zone strategy and human near-red timing.
-  Open empirical questions: leaf px/s (calibrates the 8px red margin),
-  do zones shift/shrink per chop, what ends a round (the single
-  game_over at red_dist=41 is unattributable), gold zone value.
+- **Chopping** — first instrumented session ran 2026-06-11 00:13
+  (3 chops, 2 survived, ended ~4s in) and answered most of the open
+  questions: leaf speed 257-386 px/s; red zones GROW per chop
+  (r50→r53, r45→r48; green 120→114); the death was chop #3 firing
+  with red 19px AHEAD of a rightward leaf (~50-75ms at that speed —
+  click latency ate it) while chop #2's 8px of red BEHIND was safe.
+  Fix shipped same night: directional time-to-red gate
+  (`MIN_TIME_TO_RED_MS=150`, leaf vx in px/s from a 0.3s track;
+  pixel margin kept as a direction-blind floor) + leaf_vx_px_s /
+  red_ahead_px / time_to_red_ms logged per chop and poll. Needs a
+  validation session. Still open: what ends a round naturally (timer
+  vs chop count — every session so far ended by death or unknown),
+  gold-zone value (gold appeared only in a transition layout so far),
+  and whether 150ms is the right budget (tighten from outcome data).
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.

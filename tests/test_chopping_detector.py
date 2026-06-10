@@ -5,6 +5,8 @@ from minigames.chopping.detector import (
     _leftmost_column,
     analyze_bar,
     bar_pixel_count,
+    leaf_vx_px_s,
+    red_distance_ahead,
     zone_layout,
 )
 
@@ -73,6 +75,41 @@ def test_zone_layout_marks_uncolored_columns_none():
     # Leave a gap: green 20-60 only, rest of the bar black.
     bar = _bar_with_zones(green=(20, 60), gold=(0, 0), red_low=(0, 0), red_high=(0, 0))
     assert zone_layout(bar) == "n20 g40 n40"
+
+
+def test_red_distance_ahead_respects_direction():
+    # red 0-20 and 80-100, leaf at x=64.
+    bar = _bar_with_zones()
+    # Moving right: nearest red ahead starts at 80 -> 16px.
+    assert red_distance_ahead(bar, 64, direction=+1) == 16
+    # Moving left: nearest red ahead is the left block's right edge (19) -> 45px.
+    assert red_distance_ahead(bar, 64, direction=-1) == 45
+
+
+def test_red_distance_ahead_none_when_no_red_in_direction():
+    # Red only on the left (0-20); leaf at 50 moving right has none ahead.
+    bar = _bar_with_zones(red_low=(0, 20), red_high=(0, 0))
+    assert red_distance_ahead(bar, 50, direction=+1) is None
+    assert red_distance_ahead(bar, 50, direction=-1) == 31
+
+
+def test_leaf_vx_uses_oldest_sample_inside_window():
+    # 100 px over 0.1s -> +1000 px/s, regardless of intermediate samples.
+    track = [(0.0, 0), (0.05, 50), (0.1, 100)]
+    assert leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) == 1000.0
+
+
+def test_leaf_vx_none_until_min_span():
+    assert leaf_vx_px_s([]) is None
+    assert leaf_vx_px_s([(0.0, 10)]) is None
+    # Two samples 5ms apart — below the 20ms minimum span.
+    assert leaf_vx_px_s([(0.0, 10), (0.005, 12)]) is None
+
+
+def test_leaf_vx_ignores_samples_older_than_max_span():
+    # The 1.0s-old sample (pre-cooldown, possibly pre-bounce) must not count.
+    track = [(0.0, 200), (1.0, 10), (1.05, 25)]
+    assert abs(leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) - 300.0) < 1e-9
 
 
 def test_analyze_bar_returns_gold_for_leaf_over_gold_zone():

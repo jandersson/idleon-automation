@@ -47,6 +47,13 @@ def _leftmost_column(mask: np.ndarray, min_pixels_per_col: int = 2) -> int | Non
     return int(qualifying[0])
 
 
+def _red_columns(bar_frame: np.ndarray) -> np.ndarray:
+    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
+    red = cv2.bitwise_or(_mask(bar_hsv, *RED_HSV_LOW), _mask(bar_hsv, *RED_HSV_HIGH))
+    return np.where((red > 0).any(axis=0))[0]
+
+
 def nearest_red_distance(bar_frame: np.ndarray, x: int) -> int | None:
     """Return horizontal distance in pixels from `x` to the nearest red column.
 
@@ -54,13 +61,50 @@ def nearest_red_distance(bar_frame: np.ndarray, x: int) -> int | None:
     margin: clicking with the leaf too close to a red zone risks the leaf
     drifting into red during click latency.
     """
-    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
-    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
-    red = cv2.bitwise_or(_mask(bar_hsv, *RED_HSV_LOW), _mask(bar_hsv, *RED_HSV_HIGH))
-    red_cols = np.where((red > 0).any(axis=0))[0]
+    red_cols = _red_columns(bar_frame)
     if len(red_cols) == 0:
         return None
     return int(np.min(np.abs(red_cols - x)))
+
+
+def red_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int | None:
+    """Distance in px from `x` to the nearest red column in the leaf's
+    direction of travel (direction > 0 = rightward). None when no red
+    lies ahead.
+
+    The undirected nearest_red_distance is the wrong gate shape: in the
+    2026-06-11 00:13 session, a chop 8px from a red BEHIND a rightward
+    leaf survived while a chop 19px from a red AHEAD died — at the
+    measured 257-386 px/s leaf speed, 19px ahead is only ~50-75ms of
+    click latency. Risk is distance-ahead over speed, i.e. time.
+    """
+    red_cols = _red_columns(bar_frame)
+    ahead = red_cols[red_cols >= x] if direction > 0 else red_cols[red_cols <= x]
+    if len(ahead) == 0:
+        return None
+    return int(np.min(np.abs(ahead - x)))
+
+
+def leaf_vx_px_s(
+    track: list[tuple[float, int]],
+    min_span_s: float = 0.02,
+    max_span_s: float = 0.2,
+) -> float | None:
+    """Leaf horizontal velocity in px/SECOND (sign = direction) from
+    recent (wall_time, x) samples; None until the track spans
+    min_span_s. Samples older than max_span_s are ignored so a
+    post-click cooldown gap can't bridge a bounce reversal. px/s, not
+    px/poll — cadence-invariant, same units rule as the darts arm
+    signal (see CLAUDE.md).
+    """
+    if not track:
+        return None
+    t1, x1 = track[-1]
+    in_window = [(t, x) for t, x in track[:-1] if min_span_s <= t1 - t <= max_span_s]
+    if not in_window:
+        return None
+    t0, x0 = in_window[0]  # oldest sample still inside the window
+    return (x1 - x0) / (t1 - t0)
 
 
 def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> tuple[int | None, str]:

@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS chops (
     button_click_y INTEGER,
     window_w INTEGER,
     window_h INTEGER,
+    leaf_vx_px_s REAL,
+    red_ahead_px INTEGER,
+    time_to_red_ms INTEGER,
     outcome TEXT,
     outcome_measured_ms INTEGER,
     code_commit TEXT,
@@ -71,13 +74,21 @@ CREATE TABLE IF NOT EXISTS polls (
     nearest_red_distance INTEGER,
     bar_pixel_count INTEGER,
     fired INTEGER,
-    zone_layout TEXT
+    zone_layout TEXT,
+    leaf_vx_px_s REAL
 )
 """
 
 
 _LATE_COLUMNS: list[tuple[str, str]] = [
-    # (no late columns yet — placeholder for future additions)
+    # Time-to-red gate inputs at fire time (2026-06-11): leaf velocity
+    # in px/s (sign = direction), distance to the nearest red column in
+    # the travel direction, and the resulting time budget. Added after
+    # the 00:13 session showed a chop dying 19px AHEAD of the leaf
+    # (~50-75ms at the measured speed) while 8px BEHIND was safe.
+    ("leaf_vx_px_s", "REAL"),
+    ("red_ahead_px", "INTEGER"),
+    ("time_to_red_ms", "INTEGER"),
 ]
 
 
@@ -86,6 +97,9 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # detector.zone_layout. Added 2026-06-10 before the polls table ever
     # saw a live session, so the ALTER is a no-op everywhere in practice.
     ("zone_layout", "TEXT"),
+    # Leaf velocity px/s, same estimate the time-to-red gate uses
+    # (2026-06-11 — the polls table predates this one, so the ALTER is real).
+    ("leaf_vx_px_s", "REAL"),
 ]
 
 
@@ -106,13 +120,14 @@ def log_poll(
     bar_pixel_count: int,
     fired: int,
     zone_layout: str | None = None,
+    leaf_vx_px_s: float | None = None,
 ) -> None:
     """Append one row to the polls table. No per-row commit — caller
     commits periodically (e.g. once per fire) to bound write overhead."""
     conn.execute(
         "INSERT INTO polls (session_started, t_ms, pointer_x, zone, "
-        "nearest_red_distance, bar_pixel_count, fired, zone_layout) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "nearest_red_distance, bar_pixel_count, fired, zone_layout, leaf_vx_px_s) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_started, int(t_ms),
             int(pointer_x) if pointer_x is not None else None,
@@ -120,6 +135,7 @@ def log_poll(
             int(nearest_red_distance) if nearest_red_distance is not None else None,
             int(bar_pixel_count), int(fired),
             zone_layout,
+            float(leaf_vx_px_s) if leaf_vx_px_s is not None else None,
         ),
     )
 

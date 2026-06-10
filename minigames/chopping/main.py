@@ -15,7 +15,9 @@ from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
+    leaf_vx_px_s,
     nearest_red_distance,
+    red_distance_ahead,
     zone_layout,
 )
 
@@ -57,7 +59,19 @@ BAR_DEAD_GRACE_S = 1.5
 # Skip the click if the leaf's left edge is within this many pixels of a red
 # column. Click latency (~50ms pre-click delay + OS jitter) lets the leaf drift
 # a few px between detection and click — landing in red ends the minigame.
+# Kept as a direction-blind floor (covers detection jitter and bounce
+# reversals); the load-bearing gate is the time-to-red one below.
 RED_SAFETY_MARGIN_PX = 8
+
+# Directional safety gate: skip the click when the nearest red column
+# IN THE LEAF'S DIRECTION OF TRAVEL is closer than this many ms at the
+# measured leaf speed. Calibrated from the 2026-06-11 00:13 session:
+# chop #3 died with red 19px ahead at ~257-386 px/s (~50-75ms), while
+# chop #2 survived 8px of red BEHIND a rightward leaf — the pixel
+# margin can't represent that asymmetry. 150ms = ~2x the observed kill
+# latency; tighten once outcome data accumulates. With no velocity
+# estimate (leaf just appeared), only the pixel margin applies.
+MIN_TIME_TO_RED_MS = 150
 
 # Per-poll DB write rate cap. ~100Hz polling × many fields would flood the
 # DB; 10Hz is plenty to see what happens between chops.
@@ -89,6 +103,10 @@ def _run_inner():
     stagnation_count = 0
     last_poll_log = 0.0
     bar_dead_since: float | None = None  # wall-clock t when bar first looked dead
+    # (wall_time, leaf_x) at full poll rate, for the leaf-velocity
+    # estimate feeding the time-to-red gate. Cleared whenever the leaf
+    # isn't detected so a respawned leaf can't inherit stale direction.
+    leaf_track: list[tuple[float, int]] = []
 
     while True:
         check_failsafe()
@@ -143,16 +161,35 @@ def _run_inner():
             bar_dead_since = None
 
         red_dist = None
-        if pointer_x is not None:
+        if pointer_x is None:
+            leaf_track.clear()
+        else:
             red_dist = nearest_red_distance(bar_frame, pointer_x)
+            leaf_track.append((now, pointer_x))
+            while leaf_track and now - leaf_track[0][0] > 0.3:
+                leaf_track.pop(0)
+        leaf_vx = leaf_vx_px_s(leaf_track)
 
         if pointer_x is not None and zone in ("green", "gold"):
-            if red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX:
+            # Time-to-red gate (directional, the load-bearing one) plus
+            # the legacy pixel-margin floor. See MIN_TIME_TO_RED_MS.
+            red_ahead = None
+            time_to_red_ms = None
+            if leaf_vx is not None and abs(leaf_vx) > 1e-6:
+                red_ahead = red_distance_ahead(bar_frame, pointer_x, leaf_vx)
+                if red_ahead is not None:
+                    time_to_red_ms = int(red_ahead / abs(leaf_vx) * 1000)
+            unsafe = (
+                (red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX)
+                or (time_to_red_ms is not None and time_to_red_ms < MIN_TIME_TO_RED_MS)
+            )
+            if unsafe:
                 if now - last_poll_log >= POLL_LOG_INTERVAL:
                     log_poll(conn, session_started,
                              int((now - session_start_t) * 1000),
                              pointer_x, zone, red_dist, bar_px, 0,
-                             zone_layout=zone_layout(bar_frame))
+                             zone_layout=zone_layout(bar_frame),
+                             leaf_vx_px_s=leaf_vx)
                     last_poll_log = now
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -174,7 +211,10 @@ def _run_inner():
             click(win_left + button_cx, win_top + button_cy)
             click_time = time.time()
             last_click = (pointer_x, zone)
-            print(f"Pointer at x={pointer_x} in {zone} (red_d={red_dist}) — chop #{chop_idx + 1}")
+            vx_tag = f", vx={leaf_vx:+.0f} px/s, red ahead {red_ahead}px ~{time_to_red_ms}ms" \
+                if time_to_red_ms is not None else \
+                (f", vx={leaf_vx:+.0f} px/s, no red ahead" if leaf_vx is not None else "")
+            print(f"Pointer at x={pointer_x} in {zone} (red_d={red_dist}{vx_tag}) — chop #{chop_idx + 1}")
 
             if pending is not None:
                 prev_row_id, prev_click_time = pending
@@ -199,13 +239,17 @@ def _run_inner():
                 button_click_y=button_cy,
                 window_w=win_w,
                 window_h=win_h,
+                leaf_vx_px_s=leaf_vx,
+                red_ahead_px=red_ahead,
+                time_to_red_ms=time_to_red_ms,
                 code_commit=code_commit,
                 source="bot",
             )
             log_poll(conn, session_started,
                      int((click_time - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 1,
-                     zone_layout=zone_layout(bar_frame))
+                     zone_layout=zone_layout(bar_frame),
+                     leaf_vx_px_s=leaf_vx)
             last_poll_log = click_time
             pending = (row_id, click_time)
 
@@ -219,7 +263,8 @@ def _run_inner():
             log_poll(conn, session_started,
                      int((now - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 0,
-                     zone_layout=zone_layout(bar_frame))
+                     zone_layout=zone_layout(bar_frame),
+                     leaf_vx_px_s=leaf_vx)
             last_poll_log = now
 
         time.sleep(POLL_INTERVAL)
