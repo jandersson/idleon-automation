@@ -11,7 +11,7 @@ from common.regions import get_region
 from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
-from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome
+from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
@@ -47,6 +47,12 @@ POLL_INTERVAL = 0.01
 # (a 0px re-roll is possible — shifts run 1-3px).
 MIN_INTERCHOP_S = 0.45
 COOLDOWN_AFTER_CLICK = 0.70
+
+# A registered chop's layout re-roll arrives within 86-201ms; a re-roll
+# "seen" later than this isn't credited to the chop (it could be the
+# round-end dissolve or an unrelated change). Only bounds the
+# registered-flag bookkeeping, not the fire hold's release.
+REROLL_ACK_MAX_S = 0.40
 
 # Cap on the same-sweep gold upgrade: defer a safe green fire only when
 # the gold ahead is reachable within this long. Keeps a crawling leaf
@@ -140,8 +146,13 @@ def _run_inner():
     chop_idx = 0
     # The last logged chop sits with outcome=NULL until the next iteration
     # tells us whether the bot survived (another successful chop) or the
-    # round ended (bar disappeared). pending = (row_id, click_time).
-    pending: tuple[int, float] | None = None
+    # round ended (bar disappeared). pending = (row_id, click_time, zone).
+    pending: tuple[int, float, str] | None = None
+    # 1 click = 1 point at human cadence (maintainer ground truth) — so
+    # count the clicks the game actually accepted and estimate the score
+    # for the session-end report (+1 green, +2 gold).
+    registered_chops = 0
+    estimated_points = 0
     print(f"Chopping DB: {CHOPPING_DB} (session={session_started})")
 
     last_click: tuple[int, str] | None = None
@@ -157,6 +168,7 @@ def _run_inner():
     # has passed (or the COOLDOWN_AFTER_CLICK fallback expires).
     fire_hold_layout: str | None = None
     fire_hold_click_t = 0.0
+    fire_hold_rerolled = False  # layout re-roll (the in-game chop ack) seen?
     riding_gold = False  # print-once flag for the gold-upgrade hold
     # (wall_time, |vx|) over the recent window — the easing speed floor.
     speed_track: list[tuple[float, float]] = []
@@ -198,16 +210,39 @@ def _run_inner():
 
         # Round-end check via bar disappearance — replaces game_over template.
         now = time.time()
+
+        # In-game chop ack: the layout re-rolling shortly after a click
+        # means the game accepted it as a chop. Checked at top level
+        # (every poll, any leaf zone) so the ack is caught the poll it
+        # happens. Late changes aren't credited — the round-end
+        # dissolve also changes the layout.
+        if (
+            fire_hold_layout is not None
+            and not fire_hold_rerolled
+            and layout != fire_hold_layout
+        ):
+            fire_hold_rerolled = True
+            if (
+                pending is not None
+                and now - fire_hold_click_t <= REROLL_ACK_MAX_S
+                and bar_px >= BAR_DEAD_PIXEL_THRESHOLD
+            ):
+                set_registered(conn, pending[0], 1)
+                registered_chops += 1
+                estimated_points += 2 if pending[2] == "gold" else 1
         if bar_px < BAR_DEAD_PIXEL_THRESHOLD:
             if bar_dead_since is None:
                 bar_dead_since = now
             elif now - bar_dead_since >= BAR_DEAD_GRACE_S:
                 if pending is not None:
-                    row_id, click_time = pending
+                    row_id, click_time, _ = pending
                     set_outcome(conn, row_id, "round_ended",
                                 int((now - click_time) * 1000))
                     pending = None
                 print(f"Bar gone for {now - bar_dead_since:.1f}s (bar_px={bar_px}) — round ended, stopping.")
+                print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
+                      f"by the game, ~{estimated_points} points expected — compare with "
+                      f"the in-game score (1 registered green = 1, gold = 2).")
                 conn.commit()
                 conn.close()
                 return
@@ -236,10 +271,12 @@ def _run_inner():
             # evaluated against red). Fallback deadline covers a 0px
             # re-roll. The loop keeps sampling at full rate throughout.
             if fire_hold_layout is not None:
-                rerolled = layout != fire_hold_layout
                 interchop_ok = now - fire_hold_click_t >= MIN_INTERCHOP_S
                 fallback = now - fire_hold_click_t >= COOLDOWN_AFTER_CLICK
-                if (rerolled and interchop_ok) or fallback:
+                if (fire_hold_rerolled and interchop_ok) or fallback:
+                    if fallback and not fire_hold_rerolled and pending is not None:
+                        # No ack ever arrived — the game ignored the click.
+                        set_registered(conn, pending[0], 0)
                     fire_hold_layout = None
                 else:
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
@@ -313,6 +350,8 @@ def _run_inner():
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:
                     print(f"Pointer stuck at x={pointer_x} in {zone} for {stagnation_count} clicks — minigame likely over, stopping.")
+                    print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
+                          f"by the game, ~{estimated_points} points expected.")
                     conn.commit()
                     conn.close()
                     return
@@ -333,7 +372,7 @@ def _run_inner():
             print(f"Pointer at x={pointer_x} in {zone} (red_d={red_dist}{vx_tag}) — chop #{chop_idx + 1}")
 
             if pending is not None:
-                prev_row_id, prev_click_time = pending
+                prev_row_id, prev_click_time, _ = pending
                 set_outcome(conn, prev_row_id, "survived",
                             int((click_time - prev_click_time) * 1000))
 
@@ -367,13 +406,14 @@ def _run_inner():
                      zone_layout=layout,
                      leaf_vx_px_s=leaf_vx)
             last_poll_log = click_time
-            pending = (row_id, click_time)
+            pending = (row_id, click_time, zone)
 
             # Random delay goes AFTER the click (no fire-time latency).
             # No blind cooldown sleep: arm the fire hold instead, so the
             # loop keeps sampling while the chop registers.
             fire_hold_layout = layout
             fire_hold_click_t = click_time
+            fire_hold_rerolled = False
             riding_gold = False
             random_delay(20, 60)
             time.sleep(POLL_INTERVAL)

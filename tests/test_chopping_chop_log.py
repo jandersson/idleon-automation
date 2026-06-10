@@ -9,6 +9,7 @@ from minigames.chopping.chop_log import (
     open_db,
     outcome_rate_by_red_distance,
     set_outcome,
+    set_registered,
 )
 
 
@@ -74,6 +75,17 @@ def test_outcome_rate_buckets_by_red_distance():
     rates = outcome_rate_by_red_distance(conn, bin_px=4)
     assert (8, 3, 1, 2) in rates
     assert (12, 2, 2, 0) in rates
+
+
+def test_set_registered_updates_existing_row():
+    conn = open_db(_tmpdb())
+    row_id = log_chop(conn, chop_idx=1, zone="green")
+    # NULL until the verdict arrives.
+    (reg,) = conn.execute("SELECT registered FROM chops WHERE id=?", (row_id,)).fetchone()
+    assert reg is None
+    set_registered(conn, row_id, 1)
+    (reg,) = conn.execute("SELECT registered FROM chops WHERE id=?", (row_id,)).fetchone()
+    assert reg == 1
 
 
 def test_open_db_creates_polls_table():

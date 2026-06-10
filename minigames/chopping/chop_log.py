@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS chops (
     leaf_vx_px_s REAL,
     red_ahead_px INTEGER,
     time_to_red_ms INTEGER,
+    registered INTEGER,
     outcome TEXT,
     outcome_measured_ms INTEGER,
     code_commit TEXT,
@@ -89,6 +90,15 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("leaf_vx_px_s", "REAL"),
     ("red_ahead_px", "INTEGER"),
     ("time_to_red_ms", "INTEGER"),
+    # Did the game accept this click as a chop? 1 = the zone-layout
+    # re-roll (the in-game ack) was observed shortly after the click;
+    # 0 = the fire hold hit its fallback deadline with no re-roll
+    # (click ignored by the in-game chop cooldown, or a 0px re-roll).
+    # NULL on rows from before 2026-06-11 or when the round ended
+    # before the verdict. Maintainer ground truth: at human cadence
+    # 1 click = 1 point, so unregistered clicks mean the bot outpaced
+    # the game's cooldown.
+    ("registered", "INTEGER"),
 ]
 
 
@@ -151,6 +161,12 @@ def set_outcome(conn: sqlite3.Connection, row_id: int, outcome: str,
     """Fill in outcome + outcome_measured_ms on an existing chop row."""
     update_row(conn, "chops", row_id,
                {"outcome": outcome, "outcome_measured_ms": measured_ms})
+
+
+def set_registered(conn: sqlite3.Connection, row_id: int, registered: int) -> None:
+    """Mark whether the game accepted this click as a chop (see the
+    `registered` column comment)."""
+    update_row(conn, "chops", row_id, {"registered": int(registered)})
 
 
 def outcome_rate_by_red_distance(
