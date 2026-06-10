@@ -2,408 +2,702 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Predictors — interactive visualisation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Predictor Playground — the bot's eye</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=Martian+Mono:wght@300;400;700&display=swap" rel="stylesheet">
 <style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    margin: 0;
-    padding: 24px;
-    background: #1a1a1a;
-    color: #ddd;
-  }
-  h1 { font-weight: 500; margin-top: 0; }
-  .layout { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
-  .controls {
-    width: 280px;
-    background: #242424;
-    padding: 16px;
-    border-radius: 8px;
-  }
-  .controls label {
-    display: block;
-    margin-top: 12px;
-    font-size: 13px;
-    color: #aaa;
-  }
-  .controls select,
-  .controls input[type=range],
-  .controls button {
-    width: 100%;
-    margin-top: 4px;
-    padding: 6px;
-    background: #333;
-    color: #ddd;
-    border: 1px solid #444;
-    border-radius: 4px;
-    font: inherit;
-  }
-  .controls button { cursor: pointer; }
-  .controls button:hover { background: #3a3a3a; }
-  .checkbox-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
-    font-size: 13px;
-  }
-  .value-display {
-    color: #6cf;
-    font-variant-numeric: tabular-nums;
-  }
-  .canvas-wrap {
-    position: relative;
-    background: #000;
-    border-radius: 4px;
-  }
-  canvas {
-    display: block;
-    border-radius: 4px;
-    cursor: crosshair;
-    max-width: 100%;
-    height: auto;
-  }
-  .legend {
-    margin-top: 12px;
-    height: 16px;
-    width: 100%;
-    background: linear-gradient(to right,
-      rgb(20, 30, 80),  rgb(40, 80, 180), rgb(80, 180, 220),
-      rgb(220, 220, 100), rgb(220, 120, 60), rgb(180, 40, 40));
-    border-radius: 2px;
-  }
-  .legend-labels {
-    display: flex;
-    justify-content: space-between;
-    font-size: 11px;
-    color: #888;
-    margin-top: 2px;
-  }
-  .hover-readout {
-    margin-top: 10px;
-    font-family: monospace;
-    font-size: 12px;
-    color: #aaa;
-    line-height: 1.4;
-  }
-  .explain {
-    margin-top: 18px;
-    font-size: 12px;
-    color: #888;
-    line-height: 1.5;
-  }
-  a { color: #6cf; }
+:root {
+  --ink: #0e0b08;
+  --panel: #1c1510;
+  --line: #322417;
+  --paper: #f2e8d9;
+  --dim: #9c8a72;
+  --orange: #ff8a2a;
+  --orange-hot: #ffb066;
+  --teal: #4fd8c4;
+  --red: #ff5a4d;
+  --mono: "Martian Mono", monospace;
+  --disp: "Bricolage Grotesque", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--ink); color: var(--paper); }
+body {
+  font-family: var(--mono); font-size: 13px; line-height: 1.55;
+  min-height: 100vh; overflow-x: hidden;
+}
+/* instrument glass: scanlines + animated grain */
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 40;
+  background-image: repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+  mix-blend-mode: overlay;
+}
+body::after {
+  content: ""; position: fixed; inset: -50%; pointer-events: none; z-index: 41; opacity: .05;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: grain 1.2s steps(4) infinite;
+}
+@keyframes grain { 0%{transform:translate(0,0)} 25%{transform:translate(-2%,1%)} 50%{transform:translate(1%,-2%)} 75%{transform:translate(-1%,2%)} 100%{transform:translate(0,0)} }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 22px 60px; }
+
+/* ---------- masthead ---------- */
+header { position: relative; padding-bottom: 18px; margin-bottom: 14px; }
+.kicker { color: var(--orange); letter-spacing: .35em; font-size: 10px; text-transform: uppercase; animation: rise .5s ease both; }
+h1 {
+  font-family: var(--disp); font-weight: 800; font-size: clamp(38px, 6vw, 72px);
+  line-height: .95; margin: 8px 0 10px; letter-spacing: -.02em;
+  animation: rise .5s .07s ease both;
+}
+h1 .thin { font-weight: 300; color: var(--dim); }
+.meta { display: flex; gap: 22px; flex-wrap: wrap; color: var(--dim); font-size: 11px; animation: rise .5s .14s ease both; }
+.meta b { color: var(--paper); font-weight: 400; }
+.meta .dot { color: var(--orange); }
+header .rule { position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, var(--orange), var(--line) 35%, var(--line)); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* ---------- view switcher ---------- */
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 16px; animation: rise .5s .2s ease both; }
+.tab {
+  flex: 1 1 150px; text-align: left; cursor: pointer; user-select: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 3px;
+  padding: 10px 12px 9px; color: var(--dim); font: inherit;
+  transition: border-color .15s, color .15s;
+}
+.tab small { display: block; font-size: 9.5px; letter-spacing: .04em; margin-top: 3px; opacity: .75; }
+.tab .name { font-family: var(--disp); font-weight: 700; font-size: 16px; }
+.tab:hover { border-color: var(--dim); color: var(--paper); }
+.tab.active { color: var(--paper); border-color: var(--orange);
+  box-shadow: 0 0 0 1px var(--orange), 0 0 22px -6px var(--orange); }
+.tab.active .name { color: var(--orange-hot); }
+
+/* ---------- main grid ---------- */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+
+.stage { position: relative; background: #000; border: 1px solid var(--line); border-radius: 4px; animation: rise .5s .26s ease both; }
+.stage canvas { display: block; width: 100%; height: auto; cursor: crosshair; border-radius: 3px; }
+.stage i { position: absolute; width: 14px; height: 14px; border-color: var(--orange); border-style: solid; opacity: .8; z-index: 5; pointer-events: none; }
+.stage i.tl { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.stage i.tr { top: -1px; right: -1px; border-width: 2px 2px 0 0; }
+.stage i.bl { bottom: -1px; left: -1px; border-width: 0 0 2px 2px; }
+.stage i.br { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+.stage .busy {
+  position: absolute; inset: 0; display: none; place-items: center; z-index: 6;
+  background: rgba(14,11,8,.55); color: var(--orange); letter-spacing: .25em; font-size: 11px;
+  border-radius: 3px;
+}
+.stage .busy.on { display: grid; animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+
+.legend { display: flex; align-items: center; gap: 10px; padding: 8px 4px 2px; color: var(--dim); font-size: 10px; }
+.legend .bar { flex: 1; height: 8px; border-radius: 2px; border: 1px solid var(--line); }
+
+/* ---------- readout column ---------- */
+.col { display: flex; flex-direction: column; gap: 12px; animation: rise .5s .32s ease both; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 13px 14px; }
+.card h3 { margin: 0 0 8px; font-family: var(--disp); font-weight: 700; font-size: 13px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--orange); }
+.tele { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; font-size: 11.5px; }
+.tele dt { color: var(--dim); }
+.tele dd { margin: 0; text-align: right; color: var(--paper); font-variant-numeric: tabular-nums; }
+.tele dd.hot { color: var(--orange-hot); text-shadow: 0 0 10px rgba(255,138,42,.5); }
+.tele dd.cool { color: var(--teal); }
+
+.ctl label { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 10px; }
+.ctl label:first-of-type { margin-top: 0; }
+.ctl output { color: var(--orange-hot); }
+input[type=range] { width: 100%; margin: 6px 0 2px; appearance: none; height: 3px; border-radius: 2px;
+  background: var(--line); outline: none; }
+input[type=range]::-webkit-slider-thumb { appearance: none; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--orange); box-shadow: 0 0 10px rgba(255,138,42,.6); cursor: ew-resize; }
+input[type=range]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; border: 0;
+  background: var(--orange); box-shadow: 0 0 10px rgba(255,138,42,.6); cursor: ew-resize; }
+button.go {
+  width: 100%; margin-top: 10px; padding: 9px 10px; cursor: pointer;
+  font: 700 12px var(--disp); letter-spacing: .2em; text-transform: uppercase;
+  color: var(--ink); background: var(--orange); border: 0; border-radius: 3px;
+  transition: transform .08s, box-shadow .15s;
+}
+button.go:hover { box-shadow: 0 0 24px -4px var(--orange); transform: translateY(-1px); }
+button.go[disabled] { opacity: .45; cursor: default; transform: none; box-shadow: none; }
+
+.explain { font-size: 11.5px; color: var(--dim); }
+.explain b { color: var(--paper); font-weight: 400; }
+.explain .o { color: var(--orange-hot); }
+.explain .t { color: var(--teal); }
+.explain a { color: var(--teal); }
+.explain code { color: var(--orange-hot); font-size: 10.5px; }
+
+footer { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--line);
+  color: var(--dim); font-size: 10.5px; display: flex; gap: 18px; flex-wrap: wrap; }
+footer a { color: var(--orange); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-<h1>Predictors over the actual hoops game frame</h1>
-<p style="color: #888; max-width: 760px;">
-  Companion to <a href="predictors.html">predictors.md</a>. The
-  background is a real frame from the game with the platform (left)
-  and rim (right) detection boxes drawn on. Each white dot is a
-  recorded clean make from <code>shots.db</code> placed at the hoop
-  position when that shot was fired. The colour heatmap shows what
-  the selected predictor would advise the platform's optimal
-  vertical position to be — read off the colour at any hoop
-  candidate location.
-</p>
+<div class="wrap">
+<header>
+  <div class="kicker">idleon-automation // hoops telemetry</div>
+  <h1>THE BOT'S EYE<span class="thin"> / predictor playground</span></h1>
+  <div class="meta">
+    <span><span class="dot">●</span> data: <b id="metaMakes">…</b> clean makes</span>
+    <span><span class="dot">●</span> <b id="metaShots">…</b> velocity-labeled shots</span>
+    <span><span class="dot">●</span> exported <b id="metaDate">…</b></span>
+    <span><span class="dot">●</span> models fit <b>live in your browser</b> — same math as the bot</span>
+  </div>
+  <div class="rule"></div>
+</header>
 
-<div class="layout">
-  <div class="controls">
-    <label>Predictor</label>
-    <select id="predictor">
-      <option value="knn">KNN (inverse-distance weighted)</option>
-      <option value="ols">Bivariate OLS</option>
-    </select>
+<div class="tabs" id="tabs"></div>
 
-    <label>K (KNN only): <span class="value-display" id="kVal">3</span></label>
-    <input type="range" id="kSlider" min="1" max="20" value="3">
-
-    <label>Heatmap opacity: <span class="value-display" id="alphaVal">0.55</span></label>
-    <input type="range" id="alphaSlider" min="0" max="100" value="55">
-
-    <div class="checkbox-row">
-      <input type="checkbox" id="showFrame" checked>
-      <label for="showFrame" style="margin: 0;">show game frame</label>
+<div class="grid">
+  <div>
+    <div class="stage">
+      <i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>
+      <canvas id="cv" width="960" height="572"></canvas>
+      <div class="busy" id="busy">FITTING…</div>
     </div>
-    <div class="checkbox-row">
-      <input type="checkbox" id="showPoints" checked>
-      <label for="showPoints" style="margin: 0;">show training makes</label>
-    </div>
-    <div class="checkbox-row">
-      <input type="checkbox" id="clipToData">
-      <label for="clipToData" style="margin: 0;">clip heatmap to data area</label>
-    </div>
-
-    <div class="legend"></div>
-    <div class="legend-labels">
-      <span id="legendLow">low</span>
-      <span>predicted platform_y</span>
-      <span id="legendHigh">high</span>
-    </div>
-
-    <div class="hover-readout" id="hover">
-      hover the canvas to read prediction at a point
-    </div>
-
-    <div class="explain">
-      The heatmap value at pixel <em>(x, y)</em> answers: "if the
-      hoop appears here, where should the platform's centre be at
-      fire time?" Look at how KNN forms local plateaus around real
-      makes, while OLS fits one global plane that mostly tracks
-      platform_y ≈ hoop_y plus a small offset.
-    </div>
+    <div class="legend"><span id="legLo">low</span><div class="bar" id="legBar"></div><span id="legHi">high</span></div>
   </div>
 
-  <div class="canvas-wrap">
-    <canvas id="cv" width="960" height="572"></canvas>
+  <div class="col">
+    <div class="card">
+      <h3>Readout</h3>
+      <dl class="tele" id="tele"></dl>
+    </div>
+    <div class="card ctl" id="controls"></div>
+    <div class="card explain" id="explain"></div>
   </div>
 </div>
 
+<footer>
+  <span>real frame + real <code>shots.db</code> rows — nothing synthetic</span>
+  <a href="predictors.html">predictors.md — the refresher notes</a>
+  <a href="hoops_findings.html">hoops_findings.md — the investigation</a>
+  <a href="https://github.com/jandersson/idleon-automation">repo</a>
+</footer>
+</div>
+
 <script>
-  const FRAME_W = 960;
-  const FRAME_H = 572;
-
-  let trainingData = [];
-  let dataBounds = null;
-
-  async function loadData() {
-    const r = await fetch('shots_makes.json', { cache: 'no-cache' });
-    const blob = await r.json();
-    trainingData = blob.makes;
-    if (trainingData.length > 0) {
-      let xs = trainingData.map(p => p.hoop_x);
-      let ys = trainingData.map(p => p.hoop_y);
-      dataBounds = {
-        xMin: Math.min(...xs), xMax: Math.max(...xs),
-        yMin: Math.min(...ys), yMax: Math.max(...ys),
-      };
+"use strict";
+/* ============ tiny linear algebra (n is small; clarity over cleverness) ============ */
+function cholesky(A, n) {            /* in-place lower Cholesky, row-major */
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j <= i; j++) {
+      let s = A[i*n+j];
+      for (let k = 0; k < j; k++) s -= A[i*n+k] * A[j*n+k];
+      if (i === j) A[i*n+j] = Math.sqrt(Math.max(s, 1e-10));
+      else A[i*n+j] = s / A[j*n+j];
     }
+    for (let j = i+1; j < n; j++) A[i*n+j] = 0;
   }
+  return A;
+}
+function cholSolve(L, b, n) {        /* solve L L^T x = b */
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = b[i];
+    for (let k = 0; k < i; k++) s -= L[i*n+k] * y[k];
+    y[i] = s / L[i*n+i];
+  }
+  const x = new Float64Array(n);
+  for (let i = n-1; i >= 0; i--) {
+    let s = y[i];
+    for (let k = i+1; k < n; k++) s -= L[k*n+i] * x[k];
+    x[i] = s / L[i*n+i];
+  }
+  return x;
+}
+function triForward(L, b, n) {       /* solve L y = b */
+  const y = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    let s = b[i];
+    for (let k = 0; k < i; k++) s -= L[i*n+k] * y[k];
+    y[i] = s / L[i*n+i];
+  }
+  return y;
+}
+const sigmoid = z => 1 / (1 + Math.exp(-z));
 
-  // KNN with inverse-distance weighting in (hoop_y, hoop_x) space.
-  // Predicts platform_y at the queried hoop position.
-  function predictKnn(hy, hx, k) {
-    if (trainingData.length === 0) return 0;
-    const dists = trainingData.map(p => ({
-      p, d: Math.hypot(p.hoop_y - hy, p.hoop_x - hx),
-    }));
-    dists.sort((a, b) => a.d - b.d);
-    const kk = Math.min(k, dists.length);
-    let wSum = 0, vSum = 0;
-    for (let i = 0; i < kk; i++) {
-      const { p, d } = dists[i];
-      const w = 1 / (d + 1e-6);
-      wSum += w;
-      vSum += w * p.platform_y;
+/* ============ models ============ */
+function knnPredict(pts, qx, qy, K) {
+  const ds = pts.map(p => ({ d: Math.hypot(p.hoop_x - qx, p.hoop_y - qy), p }))
+                .sort((a, b) => a.d - b.d).slice(0, K);
+  let wsum = 0, val = 0;
+  for (const { d, p } of ds) { const w = 1 / (d + 1e-6); wsum += w; val += w * (p.platform_y - p.hoop_y); }
+  return { offset: val / wsum, neighbors: ds };
+}
+function olsFit(pts) {               /* platform_y = a*hy + b*hx + c */
+  let Syy=0,Sxx=0,Sxy=0,Sy=0,Sx=0,Sty=0,Stx=0,St=0,n=pts.length;
+  for (const p of pts) {
+    const hy=p.hoop_y, hx=p.hoop_x, t=p.platform_y;
+    Syy+=hy*hy; Sxx+=hx*hx; Sxy+=hy*hx; Sy+=hy; Sx+=hx; Sty+=t*hy; Stx+=t*hx; St+=t;
+  }
+  const M=[[Syy,Sxy,Sy],[Sxy,Sxx,Sx],[Sy,Sx,n]], v=[Sty,Stx,St];
+  const det3=m=>m[0][0]*(m[1][1]*m[2][2]-m[1][2]*m[2][1])-m[0][1]*(m[1][0]*m[2][2]-m[1][2]*m[2][0])+m[0][2]*(m[1][0]*m[2][1]-m[1][1]*m[2][0]);
+  const D=det3(M); if (Math.abs(D)<1e-9) return null;
+  const sub=c=>det3(M.map((r,i)=>r.map((x,j)=>j===c?v[i]:x)));
+  return { a: sub(0)/D, b: sub(1)/D, c: sub(2)/D };
+}
+function gpFit(pts, ell, sn) {       /* 2D RBF GP on offsets */
+  const n = pts.length, X = pts.map(p => [p.hoop_y, p.hoop_x]);
+  const ymean = pts.reduce((s,p)=>s+(p.platform_y-p.hoop_y),0)/n;
+  const y = pts.map(p => (p.platform_y - p.hoop_y) - ymean);
+  const sf2 = 900;
+  const K = new Float64Array(n*n);
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    const d2 = (X[i][0]-X[j][0])**2 + (X[i][1]-X[j][1])**2;
+    const v = sf2 * Math.exp(-d2 / (2*ell*ell));
+    K[i*n+j] = v; K[j*n+i] = v;
+  }
+  for (let i = 0; i < n; i++) K[i*n+i] += sn*sn;
+  const L = cholesky(K, n);
+  const alpha = cholSolve(L, y, n);
+  return { n, X, L, alpha, ymean, ell, sf2 };
+}
+function gpPredict(m, qy, qx, wantVar) {
+  const ks = new Float64Array(m.n);
+  for (let i = 0; i < m.n; i++) {
+    const d2 = (m.X[i][0]-qy)**2 + (m.X[i][1]-qx)**2;
+    ks[i] = m.sf2 * Math.exp(-d2 / (2*m.ell*m.ell));
+  }
+  let mu = m.ymean;
+  for (let i = 0; i < m.n; i++) mu += ks[i] * m.alpha[i];
+  if (!wantVar) return { mu };
+  const v = triForward(m.L, ks, m.n);
+  let q = 0; for (let i = 0; i < m.n; i++) q += v[i]*v[i];
+  return { mu, sd: Math.sqrt(Math.max(m.sf2 - q, 0)) };
+}
+/* GP classifier, Laplace approximation — the make_prob construction */
+function gpcFit(rows, ls) {
+  const n = rows.length;
+  const X = rows.map(r => [r.hoop_y/ls[0], r.hoop_x/ls[1], r.platform_y/ls[2], r.vy/ls[3]]);
+  const y = rows.map(r => r.made);
+  const K = new Float64Array(n*n);
+  for (let i = 0; i < n; i++) for (let j = 0; j <= i; j++) {
+    let d2 = 0; for (let k = 0; k < 4; k++) d2 += (X[i][k]-X[j][k])**2;
+    const v = 4 * Math.exp(-d2/2);
+    K[i*n+j] = v; K[j*n+i] = v;
+  }
+  let f = new Float64Array(n);
+  for (let it = 0; it < 14; it++) {
+    const W = new Float64Array(n), grad = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      const pi = sigmoid(f[i]); W[i] = Math.max(pi*(1-pi), 1e-6); grad[i] = y[i]-pi;
     }
-    return vSum / wSum;
+    const sW = W.map(Math.sqrt);
+    const B = new Float64Array(n*n);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++)
+      B[i*n+j] = (i===j?1:0) + sW[i]*K[i*n+j]*sW[j];
+    const Lb = cholesky(B, n);
+    const b = new Float64Array(n);
+    for (let i = 0; i < n; i++) b[i] = W[i]*f[i] + grad[i];
+    const Kb = new Float64Array(n);
+    for (let i = 0; i < n; i++) { let s=0; for (let j=0;j<n;j++) s += K[i*n+j]*b[j]; Kb[i]=s; }
+    const rhs = new Float64Array(n);
+    for (let i = 0; i < n; i++) rhs[i] = sW[i]*Kb[i];
+    const sol = cholSolve(Lb, rhs, n);
+    const fNew = new Float64Array(n);
+    let delta = 0;
+    for (let i = 0; i < n; i++) {
+      let s = 0; for (let j = 0; j < n; j++) s += K[i*n+j]*(b[j] - sW[j]*sol[j]);
+      fNew[i] = s; delta = Math.max(delta, Math.abs(s - f[i]));
+    }
+    f = fNew;
+    if (delta < 1e-4) break;
   }
+  const a = new Float64Array(n);
+  for (let i = 0; i < n; i++) a[i] = y[i] - sigmoid(f[i]);
+  return { n, X, a, ls };
+}
+function gpcProb(m, hy, hx, py, vy) {
+  const q = [hy/m.ls[0], hx/m.ls[1], py/m.ls[2], vy/m.ls[3]];
+  let mu = 0;
+  for (let i = 0; i < m.n; i++) {
+    let d2 = 0; for (let k = 0; k < 4; k++) d2 += (m.X[i][k]-q[k])**2;
+    mu += 4 * Math.exp(-d2/2) * m.a[i];
+  }
+  return sigmoid(mu);
+}
 
-  function solve3x3(A, b) {
-    const M = [
-      [A[0][0], A[0][1], A[0][2], b[0]],
-      [A[1][0], A[1][1], A[1][2], b[1]],
-      [A[2][0], A[2][1], A[2][2], b[2]],
-    ];
-    for (let i = 0; i < 3; i++) {
-      let pivot = i;
-      for (let r = i + 1; r < 3; r++)
-        if (Math.abs(M[r][i]) > Math.abs(M[pivot][i])) pivot = r;
-      [M[i], M[pivot]] = [M[pivot], M[i]];
-      const div = M[i][i];
-      if (Math.abs(div) < 1e-12) return null;
-      for (let c = i; c < 4; c++) M[i][c] /= div;
-      for (let r = 0; r < 3; r++) {
-        if (r === i) continue;
-        const f = M[r][i];
-        for (let c = i; c < 4; c++) M[r][c] -= f * M[i][c];
+/* ============ colour ramps ============ */
+const lerp=(a,b,t)=>a+(b-a)*t;
+function rampDiverge(t) {            /* teal → paper → orange */
+  t = Math.max(0, Math.min(1, t));
+  if (t < .5) { const u = t/.5; return [lerp(38,242,u), lerp(196,232,u), lerp(178,217,u)]; }
+  const u = (t-.5)/.5; return [lerp(242,255,u), lerp(232,122,u), lerp(217,28,u)];
+}
+function rampHeat(t) {               /* ink → orange → near-white */
+  t = Math.max(0, Math.min(1, t));
+  if (t < .55) { const u=t/.55; return [lerp(14,255,u*.85), lerp(11,120,u), lerp(8,30,u)]; }
+  const u=(t-.55)/.45; return [lerp(217,255,u), lerp(102,206,u), lerp(26,150,u)];
+}
+function rampCool(t) {               /* ink → teal */
+  t = Math.max(0, Math.min(1, t));
+  return [lerp(14,79,t), lerp(11,216,t), lerp(8,196,t)];
+}
+
+/* ============ app state ============ */
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const busyEl = document.getElementById('busy');
+const frame = new Image(); frame.src = 'hoops_game_frame.png';
+let DATA = null, GP = null, GPC = null, OLS = null;
+let view = 'knn';
+let K = 3, ELL = 70, SN = 8;
+let hoopSel = { x: 660, y: 400 };
+let hover = null;
+let bobAnim = null;
+
+const REGION = { x0: 380, y0: 240, x1: 945, y1: 565 };
+const PHASE = { pyLo: 270, pyHi: 525, vyLo: -260, vyHi: 170 };
+
+const VIEWS = {
+  knn:  { name: 'KNN',     sub: 'k nearest makes, 1/d weighted' },
+  ols:  { name: 'OLS',     sub: 'one global plane' },
+  gpmu: { name: 'GP μ',    sub: 'posterior mean — the default' },
+  gpsd: { name: 'GP σ',    sub: 'what the bot does not know' },
+  prob: { name: 'P(MAKE)', sub: 'the classifier, in phase space' },
+};
+
+/* ============ tabs / controls / explainers ============ */
+const tabsEl = document.getElementById('tabs');
+for (const [id, v] of Object.entries(VIEWS)) {
+  const b = document.createElement('button');
+  b.className = 'tab'; b.id = 'tab-' + id;
+  b.innerHTML = '<span class="name">' + v.name + '</span><small>' + v.sub + '</small>';
+  b.onclick = () => setView(id);
+  tabsEl.appendChild(b);
+}
+
+const controlsEl = document.getElementById('controls');
+const explainEl = document.getElementById('explain');
+const EXPLAIN = {
+  knn: '<h3>What am I looking at</h3>' +
+    'Every white ring is a <b>real clean make</b> from <code>shots.db</code>, plotted at its hoop position. ' +
+    'The wash shows the offset KNN would advise for a hoop at each spot: ' +
+    '<span class="t">teal = fire with the platform above the hoop</span>, ' +
+    '<span class="o">orange = below</span>. <b>Hover</b> to see the K neighbours it ' +
+    'actually consulted — predictions snap as different neighbours take over. ' +
+    'That locality is KNN\'s whole personality.',
+  ols: '<h3>What am I looking at</h3>' +
+    'One plane, fit to all makes at once. Smooth, confident, and wrong wherever ' +
+    'the surface bends — watch the corners disagree with the rings sitting right ' +
+    'there. Kept as the humble baseline the fancier models must beat.',
+  gpmu: '<h3>What am I looking at</h3>' +
+    'The Gaussian process posterior <b>mean</b> — a distribution over functions, ' +
+    'conditioned on the rings, then averaged. Scrub the <b>lengthscale</b>: small ℓ ' +
+    'trusts only close neighbours (wiggly), large ℓ assumes smoothness and lets far ' +
+    'makes vote. This is the bot\'s default aim model.',
+  gpsd: '<h3>What am I looking at</h3>' +
+    'Same model, showing posterior <b>σ</b> instead: <span class="t">bright teal = ' +
+    'the model is guessing</span>. It glows exactly where there are no rings — GP is ' +
+    'the only model here that <b>knows when it doesn\'t know</b>. The bot scales its ' +
+    'post-miss exploration with this signal.',
+  prob: '<h3>What am I looking at</h3>' +
+    'The make-probability classifier over <b>phase space</b> — platform position (→) ' +
+    'vs platform velocity (↓), at one hoop. Rings/crosses are real makes/misses near ' +
+    'that hoop. <b>Click the mini-frame</b> to move the hoop. <b>RUN BOB</b> traces ' +
+    'the platform\'s actual oscillation through this plane — the bot fires where the ' +
+    'loop crosses the brightest ground. Lukewarm mid-orange far from any marks is the <b>prior</b> — ' +
+    'P=0.5, the classifier saying 'no idea'. A clank is simply <code>made=0</code> here, ' +
+    'which is why this view exists at all (<a href="predictors.html">the why</a>).',
+};
+
+function setControls() {
+  if (view === 'knn') controlsEl.innerHTML =
+    '<h3>Dials</h3>' +
+    '<label>K — neighbours consulted <output>' + K + '</output></label>' +
+    '<input type="range" min="1" max="15" value="' + K + '" id="kS">';
+  else if (view === 'gpmu' || view === 'gpsd') controlsEl.innerHTML =
+    '<h3>Dials</h3>' +
+    '<label>lengthscale ℓ <output>' + ELL + 'px</output></label>' +
+    '<input type="range" min="25" max="200" value="' + ELL + '" id="ellS">' +
+    '<label>noise σₙ <output>' + SN + 'px</output></label>' +
+    '<input type="range" min="2" max="30" value="' + SN + '" id="snS">';
+  else if (view === 'prob') controlsEl.innerHTML =
+    '<h3>Dials</h3>' +
+    '<div style="color:var(--dim);font-size:11px;margin-bottom:4px">query hoop — click to move</div>' +
+    '<canvas id="miniFrame" width="280" height="167" style="width:100%;border:1px solid var(--line);border-radius:3px;cursor:crosshair"></canvas>' +
+    '<button class="go" id="runBob">▶ RUN BOB</button>';
+  else controlsEl.innerHTML = '<h3>Dials</h3><div style="color:var(--dim);font-size:11px">No dials. A plane is a plane.</div>';
+
+  const kS = document.getElementById('kS');
+  if (kS) kS.oninput = e => { K = +e.target.value; kS.previousElementSibling.querySelector('output').textContent = K; render(); };
+  const ellS = document.getElementById('ellS');
+  if (ellS) ellS.oninput = e => { ELL = +e.target.value; ellS.previousElementSibling.querySelector('output').textContent = ELL + 'px'; refitGP(); };
+  const snS = document.getElementById('snS');
+  if (snS) snS.oninput = e => { SN = +e.target.value; snS.previousElementSibling.querySelector('output').textContent = SN + 'px'; refitGP(); };
+  if (view === 'prob') {
+    drawMini();
+    document.getElementById('runBob').onclick = runBob;
+    document.getElementById('miniFrame').onclick = e => {
+      const r = e.target.getBoundingClientRect();
+      hoopSel.x = Math.round(REGION.x0 + (e.clientX - r.left)/r.width * (REGION.x1-REGION.x0));
+      hoopSel.y = Math.round(REGION.y0 + (e.clientY - r.top)/r.height * (REGION.y1-REGION.y0));
+      stopBob(); drawMini(); render();
+    };
+  }
+  explainEl.innerHTML = EXPLAIN[view];
+}
+function drawMini() {
+  const m = document.getElementById('miniFrame'); if (!m || !frame.complete) return;
+  const mc = m.getContext('2d');
+  mc.drawImage(frame, REGION.x0, REGION.y0, REGION.x1-REGION.x0, REGION.y1-REGION.y0, 0, 0, m.width, m.height);
+  const mx = (hoopSel.x-REGION.x0)/(REGION.x1-REGION.x0)*m.width;
+  const my = (hoopSel.y-REGION.y0)/(REGION.y1-REGION.y0)*m.height;
+  mc.strokeStyle = '#ff8a2a'; mc.lineWidth = 1.5;
+  mc.beginPath(); mc.arc(mx, my, 7, 0, 7); mc.stroke();
+  mc.beginPath(); mc.moveTo(mx-11,my); mc.lineTo(mx+11,my); mc.moveTo(mx,my-11); mc.lineTo(mx,my+11); mc.stroke();
+}
+
+/* ============ rendering ============ */
+function setLegend() {
+  const bar = document.getElementById('legBar'), lo = document.getElementById('legLo'), hi = document.getElementById('legHi');
+  const stops = n => Array.from({length: 9}, (_, i) => {
+    const c = n(i/8); return 'rgb(' + (c[0]|0) + ',' + (c[1]|0) + ',' + (c[2]|0) + ') ' + (i*12.5) + '%';
+  }).join(',');
+  if (view === 'gpsd') { bar.style.background = 'linear-gradient(90deg,' + stops(rampCool) + ')'; lo.textContent='σ ≈ 6px — surrounded by data'; hi.textContent='σ ≈ 30px+ — guessing'; }
+  else if (view === 'prob') { bar.style.background = 'linear-gradient(90deg,' + stops(rampHeat) + ')'; lo.textContent='P(make) ≈ 0'; hi.textContent='P(make) ≈ 1 — mid-orange ≈ 0.5 = the prior (no data)'; }
+  else { bar.style.background = 'linear-gradient(90deg,' + stops(rampDiverge) + ')'; lo.textContent='offset −80 (platform above hoop)'; hi.textContent='offset +80 (below)'; }
+}
+
+function render() {
+  if (!DATA || !frame.complete) return;
+  setLegend();
+  if (view === 'prob') return renderProb();
+  ctx.drawImage(frame, 0, 0);
+  ctx.fillStyle = 'rgba(10,8,6,.45)'; ctx.fillRect(0,0,cv.width,cv.height);
+  const step = 4, alpha = 0.62;
+  const img = ctx.getImageData(0, 0, cv.width, cv.height);
+  for (let y = REGION.y0; y < REGION.y1; y += step) {
+    for (let x = REGION.x0; x < REGION.x1; x += step) {
+      let c;
+      if (view === 'knn') c = rampDiverge((knnPredict(DATA.makes, x, y, K).offset + 80) / 160);
+      else if (view === 'ols') c = rampDiverge(((OLS.a*y + OLS.b*x + OLS.c) - y + 80) / 160);
+      else {
+        const g = gpPredict(GP, y, x, view === 'gpsd');
+        c = view === 'gpsd' ? rampCool((g.sd - 5) / 26) : rampDiverge((g.mu + 80) / 160);
+      }
+      for (let dy = 0; dy < step; dy++) for (let dx = 0; dx < step; dx++) {
+        const i = ((y+dy)*cv.width + (x+dx)) * 4;
+        img.data[i]   = img.data[i]*(1-alpha)   + c[0]*alpha;
+        img.data[i+1] = img.data[i+1]*(1-alpha) + c[1]*alpha;
+        img.data[i+2] = img.data[i+2]*(1-alpha) + c[2]*alpha;
       }
     }
-    return [M[0][3], M[1][3], M[2][3]];
   }
-
-  // Bivariate OLS: platform_y = a*hoop_y + b*hoop_x + c.
-  let olsCache = null;
-  function fitOls() {
-    if (trainingData.length < 3) { olsCache = null; return; }
-    let Sxx = 0, Sxy = 0, Sx1 = 0, Syy = 0, Sy1 = 0, S11 = 0;
-    let Tx = 0, Ty = 0, T1 = 0;
-    for (const p of trainingData) {
-      Sxx += p.hoop_y * p.hoop_y;
-      Sxy += p.hoop_y * p.hoop_x;
-      Sx1 += p.hoop_y;
-      Syy += p.hoop_x * p.hoop_x;
-      Sy1 += p.hoop_x;
-      S11 += 1;
-      Tx += p.hoop_y * p.platform_y;
-      Ty += p.hoop_x * p.platform_y;
-      T1 += p.platform_y;
-    }
-    const A = [[Sxx, Sxy, Sx1], [Sxy, Syy, Sy1], [Sx1, Sy1, S11]];
-    const b = [Tx, Ty, T1];
-    olsCache = solve3x3(A, b);
+  ctx.putImageData(img, 0, 0);
+  for (const p of DATA.makes) {
+    ctx.strokeStyle = 'rgba(242,232,217,.9)'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(p.hoop_x, p.hoop_y, 3.4, 0, 7); ctx.stroke();
   }
-  function predictOls(hy, hx) {
-    if (!olsCache) return 0;
-    return olsCache[0] * hy + olsCache[1] * hx + olsCache[2];
+  drawHover();
+}
+function drawHover() {
+  if (!hover) return;
+  const { x, y } = hover;
+  if (x < REGION.x0 || x > REGION.x1 || y < REGION.y0 || y > REGION.y1) return;
+  if (view === 'knn') {
+    const r = knnPredict(DATA.makes, x, y, K);
+    ctx.lineWidth = 1;
+    for (const nb of r.neighbors) {
+      ctx.strokeStyle = 'rgba(255,176,102,.55)';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(nb.p.hoop_x, nb.p.hoop_y); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,138,42,.9)';
+      ctx.beginPath(); ctx.arc(nb.p.hoop_x, nb.p.hoop_y, 5.5, 0, 7); ctx.stroke();
+    }
   }
+  ctx.strokeStyle = '#ff8a2a'; ctx.lineWidth = 1;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(x, REGION.y0); ctx.lineTo(x, REGION.y1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(REGION.x0, y); ctx.lineTo(REGION.x1, y); ctx.stroke();
+  ctx.setLineDash([]);
+  let off;
+  if (view === 'knn') off = knnPredict(DATA.makes, x, y, K).offset;
+  else if (view === 'ols') off = OLS.a*y + OLS.b*x + OLS.c - y;
+  else off = gpPredict(GP, y, x, false).mu;
+  const py = y + off;
+  ctx.fillStyle = '#ff8a2a'; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 12;
+  ctx.fillRect(150 - 22, py - 2.5, 44, 5);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,176,102,.9)'; ctx.font = '10px Martian Mono';
+  ctx.fillText('advised platform_y ' + Math.round(py), 200, py + 3);
+}
 
-  function colourRamp(t) {
-    t = Math.max(0, Math.min(1, t));
-    const stops = [
-      [20,  30,  80],
-      [40,  80,  180],
-      [80,  180, 220],
-      [220, 220, 100],
-      [220, 120, 60],
-      [180, 40,  40],
-    ];
-    const f = t * (stops.length - 1);
-    const i = Math.floor(f);
-    const frac = f - i;
-    if (i >= stops.length - 1) return stops[stops.length - 1];
-    const a = stops[i], b = stops[i + 1];
-    return [
-      Math.round(a[0] + frac * (b[0] - a[0])),
-      Math.round(a[1] + frac * (b[1] - a[1])),
-      Math.round(a[2] + frac * (b[2] - a[2])),
-    ];
-  }
-
-  const cv = document.getElementById('cv');
-  const ctx = cv.getContext('2d');
-
-  // Load the game frame as a static image.
-  const frameImg = new Image();
-  let frameLoaded = false;
-  frameImg.onload = () => { frameLoaded = true; render(); };
-  frameImg.src = 'hoops_game_frame.png';
-
-  function render() {
-    const kind = document.getElementById('predictor').value;
-    const k = +document.getElementById('kSlider').value;
-    const alpha = +document.getElementById('alphaSlider').value / 100;
-    const showFrame = document.getElementById('showFrame').checked;
-    const showPoints = document.getElementById('showPoints').checked;
-    const clipToData = document.getElementById('clipToData').checked;
-
-    const predict = kind === 'knn'
-      ? (hy, hx) => predictKnn(hy, hx, k)
-      : (hy, hx) => predictOls(hy, hx);
-
-    ctx.clearRect(0, 0, FRAME_W, FRAME_H);
-
-    // Background frame.
-    if (showFrame && frameLoaded) {
-      ctx.drawImage(frameImg, 0, 0, FRAME_W, FRAME_H);
-    } else {
-      ctx.fillStyle = '#0a0a0a';
-      ctx.fillRect(0, 0, FRAME_W, FRAME_H);
-    }
-
-    // Heatmap region. Right half by default (where the rim lives in
-    // the game). Optionally clipped tighter to the actual data
-    // bounding box.
-    let xLo = FRAME_W / 2, xHi = FRAME_W;
-    let yLo = 0, yHi = FRAME_H;
-    if (clipToData && dataBounds) {
-      const pad = 30;
-      xLo = Math.max(xLo, dataBounds.xMin - pad);
-      xHi = Math.min(xHi, dataBounds.xMax + pad);
-      yLo = Math.max(yLo, dataBounds.yMin - pad);
-      yHi = Math.min(yHi, dataBounds.yMax + pad);
-    }
-
-    // Paint heatmap into an offscreen ImageData so we can apply alpha
-    // cleanly over the frame.
-    const STEP = 4;
-    const cellsX = Math.ceil((xHi - xLo) / STEP);
-    const cellsY = Math.ceil((yHi - yLo) / STEP);
-    let lo = Infinity, hi = -Infinity;
-    const grid = new Float32Array(cellsX * cellsY);
-    for (let cy = 0; cy < cellsY; cy++) {
-      for (let cx = 0; cx < cellsX; cx++) {
-        const hx = xLo + cx * STEP + STEP / 2;
-        const hy = yLo + cy * STEP + STEP / 2;
-        const v = predict(hy, hx);
-        grid[cy * cellsX + cx] = v;
-        if (v < lo) lo = v;
-        if (v > hi) hi = v;
-      }
-    }
-    const range = Math.max(hi - lo, 1e-6);
-
-    const overlay = ctx.createImageData(
-      Math.ceil(xHi - xLo), Math.ceil(yHi - yLo));
-    const ow = overlay.width;
-    for (let cy = 0; cy < cellsY; cy++) {
-      for (let cx = 0; cx < cellsX; cx++) {
-        const v = grid[cy * cellsX + cx];
-        const t = (v - lo) / range;
-        const [r, g, b] = colourRamp(t);
-        const a = Math.round(alpha * 255);
-        for (let dy = 0; dy < STEP; dy++) {
-          for (let dx = 0; dx < STEP; dx++) {
-            const px = cx * STEP + dx;
-            const py = cy * STEP + dy;
-            if (px >= ow || py >= overlay.height) continue;
-            const idx = (py * ow + px) * 4;
-            overlay.data[idx] = r;
-            overlay.data[idx + 1] = g;
-            overlay.data[idx + 2] = b;
-            overlay.data[idx + 3] = a;
-          }
+/* ---- make_prob phase-space view ---- */
+function phaseToPx(py, vy) {
+  return { x: (py - PHASE.pyLo) / (PHASE.pyHi - PHASE.pyLo) * cv.width,
+           y: (vy - PHASE.vyLo) / (PHASE.vyHi - PHASE.vyLo) * cv.height };
+}
+function pxToPhase(x, y) {
+  return { py: PHASE.pyLo + x / cv.width * (PHASE.pyHi - PHASE.pyLo),
+           vy: PHASE.vyLo + y / cv.height * (PHASE.vyHi - PHASE.vyLo) };
+}
+function renderProb() {
+  ctx.fillStyle = '#0e0b08'; ctx.fillRect(0,0,cv.width,cv.height);
+  const img = ctx.getImageData(0,0,cv.width,cv.height);
+  const step = 6;
+  for (let yp = 0; yp < cv.height; yp += step) {
+    for (let xp = 0; xp < cv.width; xp += step) {
+      const ph = pxToPhase(xp, yp);
+      const c = rampHeat(gpcProb(GPC, hoopSel.y, hoopSel.x, ph.py, ph.vy));
+      for (let dy = 0; dy < step && yp+dy < cv.height; dy++)
+        for (let dx = 0; dx < step && xp+dx < cv.width; dx++) {
+          const i = ((yp+dy)*cv.width + (xp+dx)) * 4;
+          img.data[i]=c[0]; img.data[i+1]=c[1]; img.data[i+2]=c[2];
         }
-      }
     }
-    ctx.putImageData(overlay, Math.round(xLo), Math.round(yLo));
-
-    // Training-make dots.
-    if (showPoints) {
-      for (const p of trainingData) {
-        ctx.beginPath();
-        ctx.arc(p.hoop_x, p.hoop_y, 4, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.85)';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      }
+  }
+  ctx.putImageData(img, 0, 0);
+  ctx.fillStyle = 'rgba(242,232,217,.55)'; ctx.font = '11px Martian Mono';
+  ctx.fillText('platform_y →  (' + PHASE.pyLo + ' … ' + PHASE.pyHi + 'px)', 14, cv.height - 12);
+  ctx.save(); ctx.translate(16, 200); ctx.rotate(-Math.PI/2);
+  ctx.fillText('← up    platform_vy    down →', 0, 0); ctx.restore();
+  const zero = phaseToPx(0, 0).y;
+  ctx.strokeStyle = 'rgba(242,232,217,.25)'; ctx.setLineDash([3,4]);
+  ctx.beginPath(); ctx.moveTo(0, zero); ctx.lineTo(cv.width, zero); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillText('vy = 0 (turnaround)', cv.width - 210, zero - 6);
+  for (const r of DATA.vy_rows) {
+    if (Math.hypot(r.hoop_x - hoopSel.x, r.hoop_y - hoopSel.y) > 60) continue;
+    const q = phaseToPx(r.platform_y, r.vy);
+    if (r.made) {
+      ctx.strokeStyle = '#ffb066'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(q.x, q.y, 5, 0, 7); ctx.stroke();
+    } else {
+      ctx.strokeStyle = 'rgba(255,90,77,.8)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(q.x-4,q.y-4); ctx.lineTo(q.x+4,q.y+4);
+      ctx.moveTo(q.x+4,q.y-4); ctx.lineTo(q.x-4,q.y+4); ctx.stroke();
     }
-
-    document.getElementById('legendLow').textContent = lo.toFixed(0);
-    document.getElementById('legendHigh').textContent = hi.toFixed(0);
   }
+  ctx.fillStyle = 'rgba(255,176,102,.9)'; ctx.font = '11px Martian Mono';
+  ctx.fillText('hoop (' + hoopSel.x + ', ' + hoopSel.y + ')   ○ make   ✕ miss   (real shots within 60px)', 14, 20);
+  if (bobAnim) drawBobFrame();
+}
 
-  function refresh() {
-    document.getElementById('alphaVal').textContent =
-      (document.getElementById('alphaSlider').value / 100).toFixed(2);
-    document.getElementById('kVal').textContent =
-      document.getElementById('kSlider').value;
-    fitOls();
-    render();
+/* ---- the bob loop animation ---- */
+function bobState(t) {               /* matched to the real bob: ~10s period, y 290..510 */
+  const c = 400, A = 110, w = 2*Math.PI/10;
+  const py = c + A*Math.sin(w*t);
+  const vy = A*w*Math.cos(w*(t - 0.7));  /* trailing-window vy lags ~0.7s, like the bot's */
+  return { py, vy };
+}
+function runBob() {
+  stopBob();
+  const btn = document.getElementById('runBob'); btn.disabled = true; btn.textContent = 'TRACING…';
+  let best = { p: -1 };
+  for (let t = 0; t < 10; t += 0.05) {
+    const s = bobState(t);
+    const p = gpcProb(GPC, hoopSel.y, hoopSel.x, s.py, s.vy);
+    if (p > best.p) best = { p, t, py: s.py, vy: s.vy };
   }
-
-  for (const id of ['predictor', 'kSlider', 'alphaSlider',
-                    'showFrame', 'showPoints', 'clipToData']) {
-    document.getElementById(id).addEventListener('input', refresh);
-    document.getElementById(id).addEventListener('change', refresh);
-  }
-
-  cv.addEventListener('mousemove', (e) => {
-    const rect = cv.getBoundingClientRect();
-    const px = (e.clientX - rect.left) * (FRAME_W / rect.width);
-    const py = (e.clientY - rect.top) * (FRAME_H / rect.height);
-    const hx = px, hy = py;
-    const kind = document.getElementById('predictor').value;
-    const k = +document.getElementById('kSlider').value;
-    const pred = kind === 'knn' ? predictKnn(hy, hx, k) : predictOls(hy, hx);
-    const offset = pred - hy;
-    document.getElementById('hover').textContent =
-      `hoop@(${hx.toFixed(0)}, ${hy.toFixed(0)})  → predicted platform_y = ${pred.toFixed(1)}  (offset = ${offset.toFixed(1)})`;
+  bobAnim = { t0: performance.now(), trail: [], best, fired: false };
+  requestAnimationFrame(bobTick);
+}
+function stopBob() {
+  bobAnim = null;
+  const b = document.getElementById('runBob');
+  if (b) { b.disabled = false; b.textContent = '▶ RUN BOB'; }
+}
+function bobTick(now) {
+  if (!bobAnim) return;
+  const t = (now - bobAnim.t0) / 1000 * 2.2;
+  render();
+  if (t > 11.5) { stopBob(); render(); return; }
+  requestAnimationFrame(bobTick);
+}
+function drawBobFrame() {
+  const t = (performance.now() - bobAnim.t0) / 1000 * 2.2;
+  const s = bobState(Math.min(t, 10));
+  bobAnim.trail.push(s);
+  ctx.strokeStyle = 'rgba(79,216,196,.8)'; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  bobAnim.trail.forEach((p, i) => {
+    const q = phaseToPx(p.py, p.vy);
+    i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
   });
+  ctx.stroke();
+  const cur = phaseToPx(s.py, s.vy);
+  ctx.fillStyle = '#4fd8c4'; ctx.shadowColor = '#4fd8c4'; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.arc(cur.x, cur.y, 5, 0, 7); ctx.fill(); ctx.shadowBlur = 0;
+  if (t >= bobAnim.best.t && !bobAnim.fired) bobAnim.fired = true;
+  if (bobAnim.fired) {
+    const b = phaseToPx(bobAnim.best.py, bobAnim.best.vy);
+    ctx.strokeStyle = '#ff8a2a'; ctx.lineWidth = 2; ctx.shadowColor = '#ff8a2a'; ctx.shadowBlur = 18;
+    const r = 9 + 4*Math.sin(performance.now()/120);
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, 7); ctx.stroke(); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffb066'; ctx.font = '700 13px Martian Mono';
+    ctx.fillText('FIRE  P(make)=' + bobAnim.best.p.toFixed(2) + '  y=' + Math.round(bobAnim.best.py) + '  vy=' + Math.round(bobAnim.best.vy), b.x + 16, b.y + 4);
+  }
+}
 
-  loadData().then(() => { fitOls(); render(); });
+/* ============ telemetry readout ============ */
+const teleEl = document.getElementById('tele');
+function setTele() {
+  let rows;
+  if (!hover) rows = [['status', view === 'prob' ? 'click mini-frame / run bob' : 'hover the frame', '']];
+  else if (view === 'prob') {
+    const ph = pxToPhase(hover.x, hover.y);
+    const p = gpcProb(GPC, hoopSel.y, hoopSel.x, ph.py, ph.vy);
+    rows = [
+      ['hoop', '(' + hoopSel.x + ', ' + hoopSel.y + ')', ''],
+      ['platform_y', Math.round(ph.py), ''],
+      ['platform_vy', Math.round(ph.vy) + ' px/s', ''],
+      ['P(make)', p.toFixed(3), p > 0.45 ? 'hot' : ''],
+    ];
+  } else {
+    const { x, y } = hover;
+    let off, extra = [];
+    if (view === 'knn') { const r = knnPredict(DATA.makes, x, y, K); off = r.offset;
+      extra = [['nearest make', Math.round(r.neighbors[0].d) + 'px away', '']]; }
+    else if (view === 'ols') off = OLS.a*y + OLS.b*x + OLS.c - y;
+    else { const g = gpPredict(GP, y, x, true); off = g.mu;
+      extra = [['posterior σ', g.sd.toFixed(1) + 'px', g.sd > 18 ? 'cool' : '']]; }
+    rows = [
+      ['hoop query', '(' + x + ', ' + y + ')', ''],
+      ['advised offset', (off >= 0 ? '+' : '') + off.toFixed(1) + 'px', 'hot'],
+      ['advised platform_y', Math.round(y + off), ''],
+    ].concat(extra);
+  }
+  teleEl.innerHTML = rows.map(r => '<dt>' + r[0] + '</dt><dd class="' + r[2] + '">' + r[1] + '</dd>').join('');
+}
+
+/* ============ events / boot ============ */
+cv.addEventListener('mousemove', e => {
+  const r = cv.getBoundingClientRect();
+  hover = { x: Math.round((e.clientX - r.left) / r.width * cv.width),
+            y: Math.round((e.clientY - r.top) / r.height * cv.height) };
+  setTele();
+  if (!bobAnim) render();
+});
+cv.addEventListener('mouseleave', () => { hover = null; setTele(); if (!bobAnim) render(); });
+
+function setView(v) {
+  view = v; stopBob();
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.id === 'tab-' + v));
+  setControls(); setTele(); render();
+}
+function refitGP() { GP = gpFit(DATA.makes, ELL, SN); render(); }
+
+async function boot() {
+  busyEl.classList.add('on');
+  const r = await fetch('playground_data.json', { cache: 'no-cache' });
+  DATA = await r.json();
+  document.getElementById('metaMakes').textContent = DATA.makes.length;
+  document.getElementById('metaShots').textContent = DATA.vy_rows.length;
+  document.getElementById('metaDate').textContent = (DATA.exported || '').slice(0, 10);
+  OLS = olsFit(DATA.makes);
+  GP = gpFit(DATA.makes, ELL, SN);
+  busyEl.textContent = 'FITTING CLASSIFIER… (LAPLACE, n=' + DATA.vy_rows.length + ')';
+  await new Promise(res => setTimeout(res, 30));
+  GPC = gpcFit(DATA.vy_rows, [50, 50, 25, 25]);
+  busyEl.classList.remove('on'); busyEl.textContent = 'FITTING…';
+  setView('knn');
+}
+frame.onload = () => { if (DATA) { render(); drawMini(); } };
+boot();
 </script>
 </body>
 </html>

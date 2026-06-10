@@ -16,8 +16,11 @@ Companion notes and tools for the screen-reading bots at
   candidate-ranking, and the planned darts E[stripe] model with its
   2D wind encoding.
 - **[predictor_playground.html](predictor_playground.html)** —
-  interactive heatmap visualisation. Switch between predictors,
-  scrub K and noise, hover for predicted vs true offset.
+  "the bot's eye": all four models fitted live in the browser on the
+  real shot record. Hover to watch KNN pick its neighbours, scrub the
+  GP lengthscale, see the σ map glow where the bot is guessing, and
+  run the bob loop through the make-probability field to watch it
+  pick its firing moment.
 
 ## Investigations
 
