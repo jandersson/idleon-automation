@@ -24,6 +24,28 @@ recent-changes snapshot that don't fit a single issue.
   signal is disabled there) recovered via the score-anchored retro-make
   (`made_source='score'`). Watch the 20+/30+ escalations for faster
   sweeps.
+- **Poll-loop tick rate (darts + the hoops "tick mystery")** —
+  profiled 2026-06-10 (`scripts/profile_poll_loop.py`): the darts loop
+  sleeps only 20ms but delivers ~248ms median cadence because the tick
+  is compute-bound — `find_game_over` 115ms (57% of the tick, run
+  every poll), `find_release_pose` 72ms, mss grab 13ms, arm centroid
+  2ms. "Increase polling" is therefore an optimization, not a setting:
+  there is no idle time to reclaim. Plan, in order: (1) normalize the
+  dy signal to px/second FIRST — dy, the band, and the E[stripe]
+  model's feature are all denominated in px/poll, so any cadence
+  change silently rescales them (polls store t_ms; historical rows
+  convert cleanly); (2) move `find_game_over` off the hot path (only
+  check during pose droughts / every Nth poll) — roughly halves the
+  tick; (3) optionally coarse-to-fine the release match; (4) only
+  then, if game stutter is actually observed, a launcher "target tick
+  ms" knob becomes meaningful as a CPU-budget control (the loop
+  currently burns ~90% of one core; cheaper ticks + a target cadence
+  would REDUCE load, not raise it). Hoops' unexplained 200-1000ms
+  tick (docs/hoops_findings.md open item) is almost certainly the
+  same per-tick template-match stack and the same fix order applies —
+  faster sampling there sharpens vy and the crossing detector, the
+  named miss mechanisms from #37.
+
 - **Catching minigame** — scaffold only; detectors return None. Need
   fly + hoop-gap detectors before this runs.
 - **Chopping** — last verified state was "button click is suspect".
