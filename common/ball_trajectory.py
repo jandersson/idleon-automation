@@ -28,6 +28,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from minigames.hoops.detector import find_ball
 
 
+# Top-right corner of the window holds the "Current Reward" coin counter,
+# which ANIMATES on makes — an orange moving blob the ball detector loved.
+# It stamped ball_peak_x ≈ 887 (at 960px width) on dozens of makes, faking
+# a huge backward drift that made the clean_make filter reject real makes
+# as ricochets (~20% of all training makes lost; found 2026-06-10 via a
+# flight composite of a "peak 887" make whose ball never went past ~720).
+# Real balls never appear in this corner: by x > 0.85w they're descending
+# well below 0.2h on even the wildest overshoots.
+UI_EXCLUDE_X_FRAC = 0.85
+UI_EXCLUDE_Y_FRAC = 0.20
+
+
+def _is_ui_artifact(x: int, y: int, w: int, h: int) -> bool:
+    """True for detections inside the reward-counter corner — UI
+    animation, not the ball."""
+    return x > UI_EXCLUDE_X_FRAC * w and y < UI_EXCLUDE_Y_FRAC * h
+
+
 def track_ball_trajectory(
     frames: list[np.ndarray],
     search_x0: int = 200,
@@ -39,7 +57,8 @@ def track_ball_trajectory(
 
     search_x0 cuts off the left edge so the player's sprite (around x=136
     in the 960-wide window) doesn't show up as a moving orange blob and
-    get picked up as the ball.
+    get picked up as the ball. Detections in the top-right reward-counter
+    corner are dropped (see _is_ui_artifact).
     """
     if not frames:
         return []
@@ -53,7 +72,7 @@ def track_ball_trajectory(
         prev = _ensure_bgra(frames[i - 1])
         ball = find_ball(cur, search_x0, 0, w, h, prev_frame=prev,
                          motion_threshold=motion_threshold)
-        if ball is not None:
+        if ball is not None and not _is_ui_artifact(ball[0], ball[1], w, h):
             positions.append((i + 1, ball[0], ball[1]))  # 1-based
     return positions
 

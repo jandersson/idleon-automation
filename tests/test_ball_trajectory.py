@@ -106,3 +106,31 @@ def test_overshoot_pattern():
     ]
     out = summarise_trajectory(positions, hoop_x, hoop_y)
     assert out["ball_x_at_rim_height"] == 750
+
+
+def test_ui_artifact_corner_is_excluded():
+    """The 'Current Reward' counter (top-right) animates on makes and was
+    detected as the ball, stamping peak_x ~887 and faking backward drift
+    that disqualified ~20% of training makes (found 2026-06-10)."""
+    from common.ball_trajectory import _is_ui_artifact
+    w, h = 960, 572
+    assert _is_ui_artifact(887, 50, w, h)        # the reward counter
+    assert _is_ui_artifact(940, 80, w, h)
+    assert not _is_ui_artifact(887, 300, w, h)   # descending overshoot ball
+    assert not _is_ui_artifact(600, 40, w, h)    # real apex mid-court
+    assert not _is_ui_artifact(700, 50, w, h)
+
+
+def test_track_drops_ui_corner_detections(monkeypatch):
+    """A detection inside the excluded corner never enters the trajectory."""
+    import numpy as np
+    import common.ball_trajectory as bt
+    fake_balls = [(887, 50), (600, 200), (650, 250)]
+    calls = iter(fake_balls)
+    monkeypatch.setattr(bt, "find_ball",
+                        lambda *a, **k: next(calls, None))
+    frames = [np.zeros((572, 960, 3), dtype=np.uint8) for _ in range(4)]
+    positions = bt.track_ball_trajectory(frames)
+    xs = [p[1] for p in positions]
+    assert 887 not in xs
+    assert xs == [600, 650]
