@@ -21,7 +21,7 @@ from common.git_info import current_code_commit
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.wind import parse_wind
 from minigames.darts.shot_log import open_db, log_throw, log_poll
-from minigames.darts.arm_motion import compute_arm_centroid
+from minigames.darts.arm_motion import centroid_dy_per_poll, compute_arm_centroid
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -451,7 +451,8 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # of the result every poll. Continuous signal independent of template-
     # match timing — the missing data the #25 discriminator needs.
     prev_bgr_for_motion: np.ndarray | None = None
-    prev_arm_centroid_y: int | None = None  # previous poll's centroid, for the dy discriminator
+    prev_arm_centroid_y: int | None = None  # last VALID centroid, for the dy discriminator
+    centroid_gap_polls = 1  # polls since prev_arm_centroid_y was captured
     last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
     overlay_probe_clicks = 0  # unknown-overlay probes since the last real pose match
     aim_skips = 0  # out-of-band passes skipped since the last fire (#41 dy-band aim)
@@ -485,20 +486,25 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         match_y = int(pose[1]) if pose else 0
         t_ms = int((time.time() - session_t0) * 1000)
         arm_centroid_y, arm_pixel_count = compute_arm_centroid(cur_bgr, prev_bgr_for_motion)
-        # Swing-pass discriminator (#26): arm-centroid dy vs the previous
-        # poll. Validated post-hoc 2026-06-10 against launch-angle ground
-        # truth over 23 fires: dy < 0 at fire → 9/10 hits, dy > 0 → 10/11
-        # misses. (The first candidate — re-matching the dart template in
-        # the previous frame — returned None on every live fire: the dart
-        # ROTATES between polls at the ~250ms cadence, so the release-angle
-        # template can't match the tilted prev-frame dart.) Instrumentation
-        # only; gate after at-fire logging confirms over another session.
-        arm_centroid_dy = (
-            arm_centroid_y - prev_arm_centroid_y
-            if arm_centroid_y is not None and prev_arm_centroid_y is not None
-            else None
+        # Swing-pass discriminator (#26): arm-centroid dy vs the last
+        # valid poll. Validated post-hoc 2026-06-10 against launch-angle
+        # ground truth over 23 fires: dy < 0 at fire → 9/10 hits, dy > 0
+        # → 10/11 misses. (The first candidate — re-matching the dart
+        # template in the previous frame — returned None on every live
+        # fire: the dart ROTATES between polls at the ~250ms cadence, so
+        # the release-angle template can't match the tilted prev-frame
+        # dart.) Single-poll centroid dropouts are bridged (#42): the
+        # mask collapses below MIN_AREA exactly on slow passes, which
+        # blanked dy on ~1/3 of fires when dy required two consecutive
+        # valid polls.
+        arm_centroid_dy = centroid_dy_per_poll(
+            arm_centroid_y, prev_arm_centroid_y, centroid_gap_polls,
         )
-        prev_arm_centroid_y = arm_centroid_y
+        if arm_centroid_y is not None:
+            prev_arm_centroid_y = arm_centroid_y
+            centroid_gap_polls = 1
+        else:
+            centroid_gap_polls += 1
         prev_bgr_for_motion = cur_bgr
 
         effective_threshold = _effective_release_threshold(

@@ -34,6 +34,34 @@ MOTION_THRESHOLD = 20
 # not an actual arm sweep.
 MIN_AREA = 30
 
+# How many polls back the dy computation may reach for its reference
+# centroid. 2 bridges a single-poll dropout; longer gaps mean the arm
+# velocity estimate is too stale to trust.
+MAX_DY_GAP_POLLS = 2
+
+
+def centroid_dy_per_poll(
+    cur_y: int | None,
+    prev_y: int | None,
+    gap_polls: int,
+    max_gap: int = MAX_DY_GAP_POLLS,
+) -> int | None:
+    """Per-poll vertical velocity of the arm centroid, bridged across
+    short dropouts.
+
+    `prev_y` is the last VALID centroid, captured `gap_polls` polls ago
+    (1 = the immediately preceding poll). A slow-moving arm produces a
+    small frame-diff, so `compute_arm_centroid` returns None (sub-
+    MIN_AREA mask) exactly at the slow passes the dy-band gate selects
+    for — requiring two consecutive valid polls blanked dy on ~1/3 of
+    fires (#42). Dividing the displacement by the gap recovers a
+    per-poll dy estimate through a single dropout; gaps beyond
+    `max_gap` return None as before.
+    """
+    if cur_y is None or prev_y is None or not 1 <= gap_polls <= max_gap:
+        return None
+    return round((cur_y - prev_y) / gap_polls)
+
 
 def compute_arm_centroid(
     cur_bgr: np.ndarray,
