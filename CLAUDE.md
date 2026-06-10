@@ -205,6 +205,24 @@ investigations:
   don't re-enable big perturbations (capped ±32, in-band holds capped
   at 2). Follow-up model work: issue #38.
 
+### Darts: established findings
+
+- **Dart landing is unsteerable** (settled 2026-06-10, 225 correct-pass
+  throws): once the bot fires on the release pass, landing_x correlates
+  with nothing controllable (launch angle r=0.10, pose, centroid-dy all
+  ~0, within and across spawns) — the game rolls a ~30px-std landing
+  and the stripe is a lottery (+3 ~45%, bullseye ~16%). Same doctrine
+  as hoops' click-position finding: the click is a button, not a
+  cursor. Don't build aim features (wind compensation, bust-zone
+  avoidance, bullseye targeting) — they have no actuator. The only
+  unexplored lever is pass *selection* timing against a time-varying
+  board state, if the bust zones turn out to animate (issue #40).
+- **The swing-pass discriminator is centroid-dy, not pose or conf**
+  (settled 2026-06-10, issue #26): dy ≤ 0 at fire ≈ release pass
+  (~90%+ hit), dy > 0 ≈ up-swing (~0%). The release threshold adapts
+  per spawn (template peaks differ by spawn); the dy-gate, not the
+  threshold, vets the moment.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
