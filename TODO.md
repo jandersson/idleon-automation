@@ -104,6 +104,12 @@ recent-changes snapshot that don't fit a single issue.
   late-round fire starvation (rising speed + shrinking green leaves
   fewer gate-open windows); the polls' leaf_vx_px_s column records
   the speed ramp for calibrating the budget per speed tier.
+  Community-mechanics research + per-attempt strategy (front-load
+  chops, always take yellow, never click red) in
+  `docs/chopping_notes.md` — headline: one red click ends the round,
+  yellow pays +2 AND slows the leaf, chops shift the zone layout,
+  and the inter-chop cooldown (~210ms) is the binding constraint on
+  score, not aim.
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.
