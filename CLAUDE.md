@@ -207,16 +207,17 @@ investigations:
 
 ### Darts: established findings
 
-- **Dart landing is unsteerable** (settled 2026-06-10, 225 correct-pass
-  throws): once the bot fires on the release pass, landing_x correlates
-  with nothing controllable (launch angle r=0.10, pose, centroid-dy all
-  ~0, within and across spawns) — the game rolls a ~30px-std landing
-  and the stripe is a lottery (+3 ~45%, bullseye ~16%). Same doctrine
-  as hoops' click-position finding: the click is a button, not a
-  cursor. Don't build aim features (wind compensation, bust-zone
-  avoidance, bullseye targeting) — they have no actuator. The only
-  unexplored lever is pass *selection* timing against a time-varying
-  board state, if the bust zones turn out to animate (issue #40).
+- **The stripe outcome IS steerable — vertically, via dy-at-fire**
+  (corrected 2026-06-10, same day as the first analysis, which measured
+  the wrong axis: landing_x is a mid-flight horizontal proxy and is
+  indeed noise, but the board's stripes are stacked VERTICALLY and the
+  stripe hit is set by arc height). The chain: where in the release
+  pass the click lands (centroid_dy at fire) → launch angle
+  (within-spawn corr +0.39..+0.79) → apex → board height → stripe
+  (corr 0.41). Empirically dy=-7 fires average stripe 3.8 with 50%
+  bullseyes vs ~8% at dy<=-10: late-pass (dy near 0 from below) =
+  flat arc = mid-board red/bullseye. Aim features are buildable as
+  dy-band fire selection; horizontal aim remains nonexistent.
 - **The swing-pass discriminator is centroid-dy, not pose or conf**
   (settled 2026-06-10, issue #26): dy ≤ 0 at fire ≈ release pass
   (~90%+ hit), dy > 0 ≈ up-swing (~0%). The release threshold adapts
