@@ -70,8 +70,21 @@ recent-changes snapshot that don't fit a single issue.
   since 2026-05-09 (~104ms full-frame match) — see
   docs/hoops_findings.md fire-latency addendum.
 
-- **Catching minigame** — scaffold only; detectors return None. Need
-  fly + hoop-gap detectors before this runs.
+- **Darts #40 — bust zones, new evidence (2026-06-10 23:30 session,
+  not yet posted to the issue):** the yellow stripe became a bust zone
+  late in the session and the bot logged the busts as generic misses.
+  Throws 18/19 (apex_y 211/204, inc=0) flew arcs identical to the same
+  session's yellow hits (throws 10/13: apex_y 207/212, +2 each); both
+  busts hit the same zone and ended the session. Trigger does NOT look
+  like live streak — streak was 0-1 at the busts (reset at throw 16)
+  but score was 100+; yellow still paid +2 at streaks 10/13 earlier.
+  So "high streak" may actually be "score threshold". Cheap mitigation
+  without visual zone detection: a band the session has scored that
+  suddenly returns inc=0 gets vetoed in `model_vy_band` for the rest
+  of the session (one life instead of two). Proper fix: classify the
+  stripes' bust state visually per throw. Also noted: the E[stripe]
+  model currently trains busts as zero-score outcomes at yellow-band
+  vy — directionally fine, but conflates board-miss with bust.
 - **Chopping** — last verified state was "button click is suspect".
   Hasn't been touched since the early-May Hoops focus push. Needs a
   fresh look + a careful single-attempt re-test.
