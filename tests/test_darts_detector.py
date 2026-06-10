@@ -193,8 +193,13 @@ def test_aim_fire_decision_matrix():
     assert _aim_fire_decision(-44, MAX_AIM_SKIPS, False) == (True, "fallback")
     # ε-exploration fires on any valid pass, tagged.
     assert _aim_fire_decision(-52, 0, True) == (True, "explore")
-    # Instrument dropout fires (never starve).
-    assert _aim_fire_decision(None, 0, False) == (True, "fallback")
+    # Instrument dropout WAITS within the skip budget (2026-06-11:
+    # blind fires hit 3/10 post-sprint; the budget prevents starvation).
+    assert _aim_fire_decision(None, 0, False) == (False, None)
+    assert _aim_fire_decision(None, MAX_AIM_SKIPS - 1, False) == (False, None)
+    assert _aim_fire_decision(None, MAX_AIM_SKIPS, False) == (True, "fallback")
+    # Dropout on an explore poll also waits (don't burn exploration blind).
+    assert _aim_fire_decision(None, 0, True) == (False, None)
 
 
 def test_aim_fire_decision_model_band_takes_precedence():
@@ -215,9 +220,11 @@ def test_aim_fire_decision_model_band_takes_precedence():
     assert _aim_fire_decision(VY_AIM_LO, 0, False, band) == (False, None)
     # Budget still applies under the model band.
     assert _aim_fire_decision(VY_AIM_LO, MAX_AIM_SKIPS, False, band) == (True, "fallback")
-    # Explore and dropout behave as before regardless of the band.
+    # Explore behaves as before regardless of the band; dropout waits
+    # within the budget (see test_aim_fire_decision_matrix).
     assert _aim_fire_decision(-8, 0, True, band) == (True, "explore")
-    assert _aim_fire_decision(None, 0, False, band) == (True, "fallback")
+    assert _aim_fire_decision(None, 0, False, band) == (False, None)
+    assert _aim_fire_decision(None, MAX_AIM_SKIPS, False, band) == (True, "fallback")
 
 
 def test_find_game_over_cascade_detects_planted_banner():

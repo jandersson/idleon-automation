@@ -241,20 +241,28 @@ def _aim_fire_decision(
       'band'     — vy inside the static calm-air EV band (model
                    unavailable)
       'explore'  — ε-exploration throw, fires on any valid pass
-      'fallback' — band not seen within the skip budget, or vy
-                   unavailable (instrument dropout must not starve)
+      'fallback' — band (or a vy reading) not seen within the skip
+                   budget
       (False, None) — wait for the next pass.
     Up-swing rejection happens before this (see _is_upswing_fire).
+
+    vy=None passes consume the skip budget instead of firing instantly
+    (changed 2026-06-11): the original "instrument dropout must not
+    starve" rule predates the budget and turned toxic at the faster
+    poll cadence — post-sprint blind fires hit 3/10 vs ~75% for
+    vy-known fires, and the 01:06 session threw three of them in 9s at
+    a near-static pose right after a wind change. Starvation is still
+    impossible: the budget fallback below fires after MAX_AIM_SKIPS
+    passes regardless of whether vy ever came back.
     """
-    if arm_centroid_vy is None:
-        return True, "fallback"
-    if explore_throw:
+    if explore_throw and arm_centroid_vy is not None:
         return True, "explore"
-    if model_band is not None:
-        if model_band[0] <= arm_centroid_vy <= model_band[1]:
-            return True, "model"
-    elif VY_AIM_LO <= arm_centroid_vy <= VY_AIM_HI:
-        return True, "band"
+    if arm_centroid_vy is not None:
+        if model_band is not None:
+            if model_band[0] <= arm_centroid_vy <= model_band[1]:
+                return True, "model"
+        elif VY_AIM_LO <= arm_centroid_vy <= VY_AIM_HI:
+            return True, "band"
     if aim_skips >= MAX_AIM_SKIPS:
         return True, "fallback"
     return False, None
@@ -561,13 +569,25 @@ def _run_inner(
         match_y = int(pose[1]) if pose else 0
         t_ms = int((time.time() - session_t0) * 1000)
         now = time.time()
-        # Reference frame for the motion diff: the newest history entry
-        # at least REF_MOTION_DT_S old (None during the first ~250ms).
+        # Reference frame for the motion diff: the history entry whose
+        # age is CLOSEST to REF_MOTION_DT_S (None during the first
+        # ~250ms). Was "newest entry >= REF_MOTION_DT_S old", which at
+        # the ~250ms cadence meant exactly 250ms but at the post-sprint
+        # ~119ms cadence silently widened the window to ~357ms — the
+        # arm-motion dropout rate tripled (1-3% -> 6-9% of polls)
+        # starting exactly at the sprint sessions. Closest-to keeps the
+        # diff spacing that MIN_AREA was calibrated against at any
+        # cadence.
         ref_bgr = None
-        for ft, fb in reversed(motion_history):
-            if now - ft >= REF_MOTION_DT_S:
+        best_age_err = None
+        for ft, fb in motion_history:
+            age = now - ft
+            if age < 0.6 * REF_MOTION_DT_S:
+                break  # too fresh for a calibrated diff; later entries only fresher
+            err = abs(age - REF_MOTION_DT_S)
+            if best_age_err is None or err < best_age_err:
+                best_age_err = err
                 ref_bgr = fb
-                break
         motion_history.append((now, cur_bgr))
         while motion_history and now - motion_history[0][0] > 2 * REF_MOTION_DT_S:
             motion_history.pop(0)
@@ -716,7 +736,8 @@ def _run_inner(
                 if model_band is not None
                 else f"band [{VY_AIM_LO},{VY_AIM_HI}] px/s"
             )
-            print(f"  [aim] vy={arm_centroid_vy:+d} px/s outside {band_desc} — "
+            vy_desc = f"{arm_centroid_vy:+d}" if arm_centroid_vy is not None else "?"
+            print(f"  [aim] vy={vy_desc} px/s outside {band_desc} — "
                   f"waiting for a better pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
             time.sleep(POLL_INTERVAL)
             continue
