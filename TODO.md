@@ -26,25 +26,31 @@ recent-changes snapshot that don't fit a single issue.
   sweeps.
 - **Poll-loop tick rate (darts + the hoops "tick mystery")** —
   profiled 2026-06-10 (`scripts/profile_poll_loop.py`): the darts loop
-  sleeps only 20ms but delivers ~248ms median cadence because the tick
-  is compute-bound — `find_game_over` 115ms (57% of the tick, run
+  sleeps only 20ms but delivered ~248ms median cadence because the
+  tick is compute-bound — `find_game_over` 115ms (57% of the tick, run
   every poll), `find_release_pose` 72ms, mss grab 13ms, arm centroid
   2ms. "Increase polling" is therefore an optimization, not a setting:
-  there is no idle time to reclaim. Plan, in order: (1) normalize the
-  dy signal to px/second FIRST — dy, the band, and the E[stripe]
-  model's feature are all denominated in px/poll, so any cadence
-  change silently rescales them (polls store t_ms; historical rows
-  convert cleanly); (2) move `find_game_over` off the hot path (only
-  check during pose droughts / every Nth poll) — roughly halves the
-  tick; (3) optionally coarse-to-fine the release match; (4) only
-  then, if game stutter is actually observed, a launcher "target tick
-  ms" knob becomes meaningful as a CPU-budget control (the loop
-  currently burns ~90% of one core; cheaper ticks + a target cadence
-  would REDUCE load, not raise it). Hoops' unexplained 200-1000ms
-  tick (docs/hoops_findings.md open item) is almost certainly the
-  same per-tick template-match stack and the same fix order applies —
-  faster sampling there sharpens vy and the crossing detector, the
-  named miss mechanisms from #37.
+  there is no idle time to reclaim. Progress:
+  - ~~(1) normalize the dy signal to px/second FIRST~~ — done
+    (64adbcd): vy px/s end-to-end, motion mask pinned to
+    `REF_MOTION_DT_S` frame spacing, legacy rows convert via per-fire
+    poll gaps.
+  - ~~(2) cheapen `find_game_over`~~ — done: template caching +
+    half-res coarse prefilter (gate 0.7 vs measured coarse floor
+    0.48-0.54, true banner 1.000). 115ms → ~35ms; tick ~202ms →
+    ~128ms measured, expected live cadence ~150ms.
+  - (3) `find_release_pose` is now the dominant cost (~78ms; 7
+    full-scale matchTemplates over the left 65%). Coarse-to-fine or a
+    scale-cache would halve the tick again, but it's the
+    accuracy-sacred path — separate change, validate against the
+    recorded pose conf floor.
+  - (4) only if game stutter is actually observed, a launcher "target
+    tick ms" knob becomes meaningful as a CPU-budget control (cheaper
+    ticks + a target cadence REDUCE load, not raise it).
+  Hoops' unexplained 200-1000ms tick (docs/hoops_findings.md open
+  item) is almost certainly the same per-tick template-match stack
+  and the same fix order applies — faster sampling there sharpens vy
+  and the crossing detector, the named miss mechanisms from #37.
 
 - **Catching minigame** — scaffold only; detectors return None. Need
   fly + hoop-gap detectors before this runs.

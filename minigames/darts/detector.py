@@ -10,12 +10,35 @@ from common.templates import match_multiscale_center
 
 ASSETS = Path(__file__).parent / "assets"
 
+# Templates are immutable for the lifetime of a bot process (capture
+# tooling writes them between sessions), and the poll loop calls the
+# detectors every ~250ms — re-reading PNGs from disk each call was
+# measurable tick cost. Missing optional templates are NOT cached so a
+# capture taken mid-session is picked up on the next poll.
+_TEMPLATE_CACHE: dict[str, np.ndarray] = {}
+
 
 def _load(name: str) -> np.ndarray:
+    cached = _TEMPLATE_CACHE.get(name)
+    if cached is not None:
+        return cached
     path = ASSETS / name
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Template not found: {path}")
+    _TEMPLATE_CACHE[name] = img
+    return img
+
+
+def _load_optional(name: str) -> np.ndarray | None:
+    """Like _load but returns None when the template hasn't been
+    captured yet, or exists but is unreadable (game_over.png,
+    celebration.png)."""
+    if name in _TEMPLATE_CACHE:
+        return _TEMPLATE_CACHE[name]
+    img = cv2.imread(str(ASSETS / name), cv2.IMREAD_COLOR)
+    if img is not None:
+        _TEMPLATE_CACHE[name] = img
     return img
 
 
@@ -104,15 +127,26 @@ def find_celebration(
     size); validated 1.0 on the celebration frame vs ~0.34 floor on
     normal play. Returns (False, 0.0) when the template isn't captured.
     """
-    path = ASSETS / "celebration.png"
-    if not path.exists():
+    template = _load_optional("celebration.png")
+    if template is None:
         return False, 0.0
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    template = _load("celebration.png")
     center, val, _scale = match_multiscale_center(bgr, template)
     if val < threshold:
         return False, val
     return True, val
+
+
+# Coarse-pass gate for the game-over cascade. Calibrated 2026-06-10
+# against 12 real frames: the half-res noise floor on normal play /
+# overlay screens is 0.48-0.54 (NOTE: higher than the full-res ~0.43
+# floor — downscaling smooths away the detail that kept the full-res
+# correlation low), while a true banner scores 1.000 at half res. 0.7
+# splits that with wide margin. If a real game-over ever slipped under
+# it, the no-pose timeout heuristic still ends the session — the
+# cascade affects how fast, not whether.
+GAME_OVER_COARSE_GATE = 0.7
+_GAME_OVER_COARSE_SCALE = 0.5
 
 
 def find_game_over(
@@ -125,6 +159,18 @@ def find_game_over(
     Capture the template via `darts-pick-game-over` while the game-over
     screen is visible.
 
+    Coarse-to-fine (2026-06-10): this runs on EVERY poll and the
+    full-window multi-scale match was 115ms — 57% of the compute-bound
+    poll tick. The half-resolution prefilter does ~1/16 of the
+    matchTemplate work (both operands' areas quarter); only when it
+    clears GAME_OVER_COARSE_GATE does the full-resolution match run
+    and decide. Normal play exits at the coarse pass, reporting conf
+    0.0 — half-res conf values run ~0.1 higher than full-res ones, so
+    leaking them to callers would silently shift the overlay probe's
+    `go_conf < OVERLAY_PROBE_GO_CONF_MAX` comparison; 0.0 states what
+    the coarse exit means ("clearly not game over") on the full-res
+    scale the callers expect.
+
     Threshold bumped 2026-05-24 from 0.7 to 0.85 after a session
     ended at conf=0.76 with the player visibly still in the dartboard
     scene — startup phase has no life cap (player keeps throwing until
@@ -132,12 +178,18 @@ def find_game_over(
     game-over. The earlier 0.7 was leaving ~6px of headroom against
     false positives during normal play.
     """
-    path = ASSETS / "game_over.png"
-    if not path.exists():
+    template = _load_optional("game_over.png")
+    if template is None:
         return False, 0.0
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if template is None:
+    s = _GAME_OVER_COARSE_SCALE
+    small = cv2.resize(bgr, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    small_t = _TEMPLATE_CACHE.get("game_over.png@coarse")
+    if small_t is None:
+        small_t = cv2.resize(template, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+        _TEMPLATE_CACHE["game_over.png@coarse"] = small_t
+    _, coarse_val, _scale = match_multiscale_center(small, small_t)
+    if coarse_val < GAME_OVER_COARSE_GATE:
         return False, 0.0
     _, val, _scale = match_multiscale_center(bgr, template)
     return val >= threshold, val

@@ -220,6 +220,41 @@ def test_aim_fire_decision_model_band_takes_precedence():
     assert _aim_fire_decision(None, 0, False, band) == (True, "fallback")
 
 
+def test_find_game_over_cascade_detects_planted_banner():
+    """Coarse-to-fine game-over detection: a frame containing the exact
+    template must pass the half-res prefilter AND the full-res confirm.
+    Guards the cascade's main hazard — a coarse gate so tight it stops
+    real game-over screens from ever reaching the full-res match.
+    (Measured: a true banner scores 1.000 at half res vs the 0.7 gate.)"""
+    from minigames.darts.detector import _load, find_game_over
+    tmpl = _load("game_over.png")
+    th, tw = tmpl.shape[:2]
+    frame = np.zeros((572, 960, 4), dtype=np.uint8)
+    frame[:, :, :3] = 25
+    frame[100:100 + th, 200:200 + tw, :3] = tmpl
+    is_over, conf = find_game_over(frame)
+    assert is_over and conf > 0.95
+
+
+def test_find_game_over_coarse_exit_on_normal_play():
+    """Normal-play frames must exit at the coarse pass and report conf
+    0.0 — half-res confs run ~0.1 higher than full-res ones (floor
+    0.48-0.54 vs ~0.43), so leaking them would push past the overlay
+    probe's `go_conf < 0.5` gate and suppress probe clicks during
+    droughts."""
+    from pathlib import Path
+    import cv2
+    from minigames.darts.detector import find_game_over
+    root = Path(__file__).parent.parent
+    neg = root / "minigames/darts/assets/monitor/throw_002_115254/post_throw.png"
+    if not neg.exists():
+        return  # monitor frames cleaned up — skip
+    frame = cv2.cvtColor(cv2.imread(str(neg)), cv2.COLOR_BGR2BGRA)
+    is_over, conf = find_game_over(frame)
+    assert not is_over
+    assert conf == 0.0
+
+
 def test_parse_wind_on_archived_states():
     """#41 step 2: speed digits + flow direction from the wind panel.
     Validated against the archived state library (gitignored — skip if
