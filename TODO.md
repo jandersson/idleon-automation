@@ -81,6 +81,9 @@ recent-changes snapshot that don't fit a single issue.
   the verdict to #37 and closes it if attempts >= 100; (2) checks the
   #38 data bar (>=50 dir=down shots in low+band regions with >=10
   makes, from the snapshot's vy_coverage) and posts status to #38.
+  Note: part (2) was overtaken on 2026-06-10 — make_prob was promoted
+  to default (ed4b841, 55/83 with CI clear of the policy stack), so
+  the routine's #38 readiness post is informational only.
 
 Manage at: https://claude.ai/code/routines
 
