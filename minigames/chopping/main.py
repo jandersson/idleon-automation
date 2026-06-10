@@ -15,6 +15,7 @@ from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
+    gold_distance_ahead,
     leaf_vx_px_s,
     nearest_red_distance,
     red_distance_ahead,
@@ -32,12 +33,23 @@ WINDOW_TITLE = "Legends Of Idleon"
 
 POLL_INTERVAL = 0.01
 
-# Time to wait after a click before sampling again. The leaf needs a frame
-# or two to register the chop visually, but 0.45 was way over — limited the
-# bot to 6 chops in ~9.6s (session 1 on 2026-05-24). 0.15 lets the leaf
-# scroll a healthy distance before we re-sample without re-clicking the
-# same window.
+# FALLBACK deadline for the post-chop fire hold (since 2026-06-11 no
+# longer a blind sleep). A successful chop shifts the zone layout
+# (docs/chopping_notes.md), so the layout re-rolling is the in-game
+# signal the chop registered — the bot re-arms the moment the layout
+# string changes, and this deadline only catches the case where it
+# never visibly changes. Points-per-second is the score constraint
+# (front-loading, see the notes doc), so re-arming early matters; the
+# actual observed settle time is measurable in polls as the lag from a
+# fired=1 row to the first changed zone_layout.
 COOLDOWN_AFTER_CLICK = 0.15
+
+# Cap on the same-sweep gold upgrade: defer a safe green fire only when
+# the gold ahead is reachable within this long. Keeps a crawling leaf
+# from stalling the chop rate; in practice a full bar sweep at the
+# slowest observed speed (~257 px/s over 222px) is ~860ms, so this
+# rarely binds mid-round.
+GOLD_RIDE_MAX_MS = 1000
 
 # If the same pointer x is reported in the same zone this many clicks in a row,
 # assume the minigame is over (a stationary post-game UI element looks like a
@@ -119,6 +131,12 @@ def _run_inner():
     # estimate feeding the time-to-red gate. Cleared whenever the leaf
     # isn't detected so a respawned leaf can't inherit stale direction.
     leaf_track: list[tuple[float, int]] = []
+    # Post-chop fire hold: the pre-click layout string + fallback
+    # deadline. Fires resume when the layout re-rolls (chop registered)
+    # or the deadline passes. See COOLDOWN_AFTER_CLICK.
+    fire_hold_layout: str | None = None
+    fire_hold_until = 0.0
+    riding_gold = False  # print-once flag for the gold-upgrade hold
 
     while True:
         check_failsafe()
@@ -153,6 +171,7 @@ def _run_inner():
             )
         pointer_x, zone = analyze_bar(bar_frame, leaf_frame=leaf_frame)
         bar_px = bar_pixel_count(bar_frame)
+        layout = zone_layout(bar_frame)  # reused by logs + the fire hold
 
         # Round-end check via bar disappearance — replaces game_over template.
         now = time.time()
@@ -183,6 +202,24 @@ def _run_inner():
         leaf_vx = leaf_vx_px_s(leaf_track)
 
         if pointer_x is not None and zone in ("green", "gold"):
+            # Post-chop re-arm: hold fire until the zone layout re-rolls
+            # (the in-game signal the chop registered — chops shift the
+            # zones) or the fallback deadline passes. Replaces the fixed
+            # 150ms blind sleep, and the loop keeps sampling the leaf at
+            # full rate during the hold.
+            if fire_hold_layout is not None:
+                if layout != fire_hold_layout or now >= fire_hold_until:
+                    fire_hold_layout = None
+                else:
+                    if now - last_poll_log >= POLL_LOG_INTERVAL:
+                        log_poll(conn, session_started,
+                                 int((now - session_start_t) * 1000),
+                                 pointer_x, zone, red_dist, bar_px, 0,
+                                 zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                        last_poll_log = now
+                    time.sleep(POLL_INTERVAL)
+                    continue
+
             # Time-to-red gate (directional, the load-bearing one) plus
             # the legacy pixel-margin floor. See MIN_TIME_TO_RED_MS.
             red_ahead = None
@@ -200,11 +237,40 @@ def _run_inner():
                     log_poll(conn, session_started,
                              int((now - session_start_t) * 1000),
                              pointer_x, zone, red_dist, bar_px, 0,
-                             zone_layout=zone_layout(bar_frame),
+                             zone_layout=layout,
                              leaf_vx_px_s=leaf_vx)
                     last_poll_log = now
                 time.sleep(POLL_INTERVAL)
                 continue
+
+            # Same-sweep gold upgrade: when gold lies ahead of the leaf
+            # BEFORE any red, ride to it instead of taking the green —
+            # +2 beats +1, gold also slows the leaf, and the same sweep
+            # reaches it with no extra bounce (docs/chopping_notes.md).
+            if zone == "green" and leaf_vx is not None and abs(leaf_vx) > 1e-6:
+                gold_ahead = gold_distance_ahead(bar_frame, pointer_x, leaf_vx)
+                gold_ride_ms = (
+                    int(gold_ahead / abs(leaf_vx) * 1000)
+                    if gold_ahead is not None else None
+                )
+                if (
+                    gold_ride_ms is not None
+                    and gold_ride_ms <= GOLD_RIDE_MAX_MS
+                    and (red_ahead is None or gold_ahead < red_ahead)
+                ):
+                    if not riding_gold:
+                        riding_gold = True
+                        print(f"  [aim] gold {gold_ahead}px ahead (~{gold_ride_ms}ms) "
+                              f"— riding past green")
+                    if now - last_poll_log >= POLL_LOG_INTERVAL:
+                        log_poll(conn, session_started,
+                                 int((now - session_start_t) * 1000),
+                                 pointer_x, zone, red_dist, bar_px, 0,
+                                 zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                        last_poll_log = now
+                    time.sleep(POLL_INTERVAL)
+                    continue
+            riding_gold = False
             if last_click == (pointer_x, zone):
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:
@@ -260,22 +326,27 @@ def _run_inner():
             log_poll(conn, session_started,
                      int((click_time - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 1,
-                     zone_layout=zone_layout(bar_frame),
+                     zone_layout=layout,
                      leaf_vx_px_s=leaf_vx)
             last_poll_log = click_time
             pending = (row_id, click_time)
 
-            # Random delay goes AFTER the click (no fire-time latency);
-            # cooldown lets the bar reset visually before we re-sample.
+            # Random delay goes AFTER the click (no fire-time latency).
+            # No blind cooldown sleep: arm the layout-settle fire hold
+            # instead, so the loop keeps sampling while the chop
+            # registers and re-arms the moment the layout re-rolls.
+            fire_hold_layout = layout
+            fire_hold_until = click_time + COOLDOWN_AFTER_CLICK
+            riding_gold = False
             random_delay(20, 60)
-            time.sleep(COOLDOWN_AFTER_CLICK)
+            time.sleep(POLL_INTERVAL)
             continue
 
         if now - last_poll_log >= POLL_LOG_INTERVAL:
             log_poll(conn, session_started,
                      int((now - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 0,
-                     zone_layout=zone_layout(bar_frame),
+                     zone_layout=layout,
                      leaf_vx_px_s=leaf_vx)
             last_poll_log = now
 

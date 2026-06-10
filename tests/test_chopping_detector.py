@@ -5,6 +5,7 @@ from minigames.chopping.detector import (
     _leftmost_column,
     analyze_bar,
     bar_pixel_count,
+    gold_distance_ahead,
     leaf_vx_px_s,
     red_distance_ahead,
     zone_layout,
@@ -84,6 +85,15 @@ def test_red_distance_ahead_respects_direction():
     assert red_distance_ahead(bar, 64, direction=+1) == 16
     # Moving left: nearest red ahead is the left block's right edge (19) -> 45px.
     assert red_distance_ahead(bar, 64, direction=-1) == 45
+
+
+def test_gold_distance_ahead_respects_direction():
+    # gold 60-80; leaf at x=40.
+    bar = _bar_with_zones()
+    assert gold_distance_ahead(bar, 40, direction=+1) == 20
+    assert gold_distance_ahead(bar, 40, direction=-1) is None
+    # Standing inside gold counts as 0 ahead.
+    assert gold_distance_ahead(bar, 70, direction=+1) == 0
 
 
 def test_red_distance_ahead_none_when_no_red_in_direction():

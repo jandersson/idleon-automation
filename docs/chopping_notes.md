@@ -61,18 +61,20 @@ confidence noted since none of this is from the game's code.
 1. **Front-load chops.** "Click multiple times when the arrow passes
    over the green at the start" is the community max-score line: the
    first seconds are the slowest and safest, and points-per-pass is
-   highest before the speed ramp. For the bot this means the
-   ~210ms+ inter-chop delay (COOLDOWN_AFTER_CLICK=0.15 +
-   random_delay 20–60ms) is the binding constraint early — at
-   ~257 px/s the leaf spends ~450ms crossing a 115px green, so only
-   ~2 chops per pass fit today. Tuning the cooldown down (with the
-   time-to-red gate and post-chop re-sample as the safety net) is
-   the highest-leverage change. Open question: the minimum delay at
-   which consecutive chops still register in-game.
-2. **Always take yellow.** +2 and a slowdown. Worth biasing toward:
-   if the leaf is heading toward a yellow zone within the safe
-   horizon, prefer waiting for it over a marginal green chop;
-   never skip a safe yellow.
+   highest before the speed ramp. IMPLEMENTED 2026-06-11: the fixed
+   150ms post-chop sleep became a layout-settle hold — the bot
+   re-arms the moment the zone layout re-rolls (the in-game signal
+   the chop registered), with 150ms as the fallback deadline only.
+   The polls record the actual settle lag (fired=1 row → first
+   changed zone_layout), which calibrates whether the fallback can
+   shrink further.
+2. **Always take yellow.** +2 and a slowdown. IMPLEMENTED 2026-06-11
+   as the same-sweep gold upgrade: a safe green fire is deferred when
+   gold lies ahead of the leaf before any red (same sweep, no extra
+   bounce, capped at GOLD_RIDE_MAX_MS); a leaf already over gold
+   fires as before. Cross-pass gold waiting was deliberately NOT
+   built — its value depends on the unresolved speed-attribution
+   question below.
 3. **Never click red** — the bot's one death condition. The
    directional time-to-red gate (MIN_TIME_TO_RED_MS) is the
    load-bearing control; late-round it will (correctly) starve fires

@@ -67,6 +67,13 @@ def nearest_red_distance(bar_frame: np.ndarray, x: int) -> int | None:
     return int(np.min(np.abs(red_cols - x)))
 
 
+def _distance_ahead(cols: np.ndarray, x: int, direction: float) -> int | None:
+    ahead = cols[cols >= x] if direction > 0 else cols[cols <= x]
+    if len(ahead) == 0:
+        return None
+    return int(np.min(np.abs(ahead - x)))
+
+
 def red_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int | None:
     """Distance in px from `x` to the nearest red column in the leaf's
     direction of travel (direction > 0 = rightward). None when no red
@@ -78,11 +85,20 @@ def red_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int |
     measured 257-386 px/s leaf speed, 19px ahead is only ~50-75ms of
     click latency. Risk is distance-ahead over speed, i.e. time.
     """
-    red_cols = _red_columns(bar_frame)
-    ahead = red_cols[red_cols >= x] if direction > 0 else red_cols[red_cols <= x]
-    if len(ahead) == 0:
-        return None
-    return int(np.min(np.abs(ahead - x)))
+    return _distance_ahead(_red_columns(bar_frame), x, direction)
+
+
+def gold_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int | None:
+    """Distance in px from `x` to the nearest gold column in the leaf's
+    direction of travel; None when no gold lies ahead. Powers the
+    same-sweep gold upgrade: gold pays +2 AND slows the leaf
+    (docs/chopping_notes.md), so a safe green fire is deferred when
+    gold lies ahead of the leaf before any red.
+    """
+    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
+    gold_cols = np.where((_mask(bar_hsv, *GOLD_HSV) > 0).any(axis=0))[0]
+    return _distance_ahead(gold_cols, x, direction)
 
 
 def leaf_vx_px_s(
