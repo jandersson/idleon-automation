@@ -279,7 +279,7 @@ meetings.
 
 ---
 
-## Next: E[stripe] for darts — GP regression again, different cleverness
+## E[stripe] for darts — GP regression again, different cleverness (shipped June 2026)
 
 Darts turned out to have exactly one steerable axis: *where in the
 release pass the click lands* (measured by `centroid_dy`) sets the
@@ -308,7 +308,42 @@ Two design choices worth recording:
   physics textbook; if it doesn't, the parse is wrong and we'll know
   before trusting it with throws.
 
-Until the model has its ~150 throws across two wind tiers, a static
-dy band ([-8, -5], with an ε-exploration throw every 8th) does the
-aiming and generates the training data — the same
+Until the model had its ~150 throws across two wind tiers, a static
+dy band ([-8, -5], with an ε-exploration throw every 8th) did the
+aiming and generated the training data — the same
 policy-first-model-second sequence that worked for hoops.
+
+### The shipped model (`minigames/darts/stripe_model.py`, 2026-06-10)
+
+Fitted on 190 throws (155 hits, 35 misses; misses contribute score 0 —
+one EV currency for both hit probability and stripe steering). First
+fit's learned kernel: RBF length scales (wind_x 11.5, wind_y 19.8,
+dy 5.4, pose_y 98) with white-noise level 0.52. Wind length scales
+larger than the ±10 mph data range mean the GP currently sees wind as
+a near-linear tilt, not a curved surface — expected at this sample
+size, and the right amount of humility.
+
+What the surface reproduces without being told:
+
+- **Calm-air peak at dy=-8**, EV 3.43, band [-10, -6] — independently
+  rediscovering the empirically-derived static band.
+- **Headwind penalty at every dy** (calm 3.43 → 6 mph head 2.16 →
+  10 mph head 1.46), matching the observed 96%→82% hit-rate drop and
+  the streak-breaking 10 mph session.
+- **Tailwind bonus** (4.02 at the same dy).
+- The **wind_y → dy compensation is still unresolved** (best dy stays
+  -8 across wind_y) — the falsifiable prediction that more high-wind
+  sessions will either confirm or kill.
+
+Live mechanics: the gate scans a dy grid (-16..0) at each candidate
+pass and fires when the pass's dy lands in the **contiguous** run of
+grid points within `EV_MARGIN=0.5` (half a gray stripe) of the argmax.
+Contiguity matters: where the data runs out, a GP slides back toward
+the global mean, which can poke a *fake second peak* over the margin
+threshold at the grid edge — a disconnected band member there would
+admit fires on dys no throw has ever sampled. The band naturally
+*widens* as wind worsens (a low flat surface puts more dys within the
+margin), which is the right behavior: when nothing is good, don't be
+picky, just throw. Fires are tagged `aim_mode='model'`; the static
+band stays as the fallback when the fit is below floor or the wind
+panel is unparseable at decision time.

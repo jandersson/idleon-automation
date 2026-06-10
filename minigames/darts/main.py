@@ -22,6 +22,13 @@ from minigames.darts.detector import find_release_pose, find_game_over, find_cel
 from minigames.darts.wind import parse_wind
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import centroid_dy_per_poll, compute_arm_centroid
+from minigames.darts.stripe_model import (
+    MIN_SAMPLES as STRIPE_MIN_SAMPLES,
+    StripeEvModel,
+    fetch_stripe_rows,
+    fit_stripe_gp,
+    model_dy_band,
+)
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -210,10 +217,15 @@ def _aim_fire_decision(
     arm_centroid_dy: int | None,
     aim_skips: int,
     explore_throw: bool,
+    model_band: set[int] | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether a valid (non-up-swing) match should fire, and tag
     the intent. Returns (fire, aim_mode):
-      'band'     — dy inside the EV band
+      'model'    — dy inside the wind-conditioned E[stripe] band
+                   (#41 step 3; supplied by the caller when the GP is
+                   fitted and the wind parse succeeded this poll)
+      'band'     — dy inside the static calm-air EV band (model
+                   unavailable)
       'explore'  — ε-exploration throw, fires on any valid pass
       'fallback' — band not seen within the skip budget, or dy
                    unavailable (instrument dropout must not starve)
@@ -224,7 +236,10 @@ def _aim_fire_decision(
         return True, "fallback"
     if explore_throw:
         return True, "explore"
-    if DY_AIM_LO <= arm_centroid_dy <= DY_AIM_HI:
+    if model_band is not None:
+        if arm_centroid_dy in model_band:
+            return True, "model"
+    elif DY_AIM_LO <= arm_centroid_dy <= DY_AIM_HI:
         return True, "band"
     if aim_skips >= MAX_AIM_SKIPS:
         return True, "fallback"
@@ -417,13 +432,29 @@ def run():
         if code_commit:
             print(f"Code commit: {code_commit}")
         throw_db = open_db(THROW_DB_PATH)
+        # E[stripe] GP (#41 step 3): wind-conditioned dy band. Fitted
+        # once per session — the training set only grows between
+        # sessions, and a startup fit keeps the poll loop allocation-free.
+        ev_rows = fetch_stripe_rows(throw_db)
+        ev_model = fit_stripe_gp(ev_rows)
+        if ev_model is None:
+            print(f"stripe EV model: data floor not met ({len(ev_rows)} rows "
+                  f"< {STRIPE_MIN_SAMPLES}) — static dy band [{DY_AIM_LO},{DY_AIM_HI}]")
+        else:
+            print(f"stripe EV model: fitted on {len(ev_rows)} throws — "
+                  f"wind-conditioned dy band live (#41 step 3)")
         try:
-            _run_inner(session_started, throw_db, code_commit)
+            _run_inner(session_started, throw_db, code_commit, ev_model)
         finally:
             throw_db.close()
 
 
-def _run_inner(session_started: str, throw_db, code_commit: str | None):
+def _run_inner(
+    session_started: str,
+    throw_db,
+    code_commit: str | None,
+    ev_model: StripeEvModel | None = None,
+):
     print(f"Darts bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -590,9 +621,24 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # dy-band aim (#41): valid release pass, but is it the arc we
         # want? Band fires hit mid-board red/bullseye; out-of-band passes
         # get skipped within a budget; ε-exploration keeps sampling the
-        # whole surface.
+        # whole surface. With the E[stripe] GP fitted, the band is
+        # wind-conditioned (step 3): parse the wind panel from the
+        # current frame (a ~ms template-OCR on a small crop — acceptable
+        # pre-click latency) and scan the model for the near-argmax dys.
+        # Unparseable wind or no model falls back to the static band.
         explore_throw = (throws_taken + 1) % EXPLORE_EVERY_N == 0
-        fire, aim_mode = _aim_fire_decision(arm_centroid_dy, aim_skips, explore_throw)
+        model_band: set[int] | None = None
+        model_best_dy: int | None = None
+        model_best_ev: float | None = None
+        if ev_model is not None and arm_centroid_dy is not None and not explore_throw:
+            _, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
+            if wx_now is not None:
+                model_band, model_best_dy, model_best_ev = model_dy_band(
+                    ev_model, wx_now, wy_now, float(pose[1]),
+                )
+        fire, aim_mode = _aim_fire_decision(
+            arm_centroid_dy, aim_skips, explore_throw, model_band,
+        )
         if not fire:
             log_poll(
                 throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
@@ -601,8 +647,13 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             last_pose_time = time.time()
             overlay_probe_clicks = 0
             aim_skips += 1
-            print(f"  [aim] dy={arm_centroid_dy:+d} outside band [{DY_AIM_LO},{DY_AIM_HI}] — "
-                  f"waiting for a flatter pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
+            band_desc = (
+                f"model band {sorted(model_band)} (best dy={model_best_dy}, ev={model_best_ev:.2f})"
+                if model_band is not None
+                else f"band [{DY_AIM_LO},{DY_AIM_HI}]"
+            )
+            print(f"  [aim] dy={arm_centroid_dy:+d} outside {band_desc} — "
+                  f"waiting for a better pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
             time.sleep(POLL_INTERVAL)
             continue
         aim_skips = 0

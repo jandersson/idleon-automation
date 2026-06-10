@@ -197,6 +197,25 @@ def test_aim_fire_decision_matrix():
     assert _aim_fire_decision(None, 0, False) == (True, "fallback")
 
 
+def test_aim_fire_decision_model_band_takes_precedence():
+    """#41 step 3: when the wind-conditioned band is supplied it replaces
+    the static one entirely — a dy inside the static band but outside
+    the model band waits, and vice versa."""
+    from minigames.darts.main import (
+        _aim_fire_decision, DY_AIM_LO, MAX_AIM_SKIPS,
+    )
+    band = {-12, -11, -10}
+    # Inside model band (outside static) → 'model'.
+    assert _aim_fire_decision(-11, 0, False, band) == (True, "model")
+    # Inside static band but outside model band → wait.
+    assert _aim_fire_decision(DY_AIM_LO, 0, False, band) == (False, None)
+    # Budget still applies under the model band.
+    assert _aim_fire_decision(DY_AIM_LO, MAX_AIM_SKIPS, False, band) == (True, "fallback")
+    # Explore and dropout behave as before regardless of the band.
+    assert _aim_fire_decision(-2, 0, True, band) == (True, "explore")
+    assert _aim_fire_decision(None, 0, False, band) == (True, "fallback")
+
+
 def test_parse_wind_on_archived_states():
     """#41 step 2: speed digits + flow direction from the wind panel.
     Validated against the archived state library (gitignored — skip if
