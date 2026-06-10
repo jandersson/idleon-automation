@@ -140,3 +140,11 @@ def test_throw_carries_arm_centroid_dy(tmp_path):
         "SELECT arm_centroid_dy_at_fire FROM throws"
     ).fetchone()[0] == -8
     conn.close()
+
+
+def test_throw_carries_aim_mode(tmp_path):
+    from minigames.darts.shot_log import open_db, log_throw
+    conn = open_db(tmp_path / "darts.db")
+    log_throw(conn, session_started="s", throw_idx=1, aim_mode="band", hit=1)
+    assert conn.execute("SELECT aim_mode FROM throws").fetchone()[0] == "band"
+    conn.close()

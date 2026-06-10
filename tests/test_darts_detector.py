@@ -173,3 +173,25 @@ def test_effective_release_threshold_adapts_during_stall():
     assert _effective_release_threshold(10.0, 0.40, base) == base
     # Floor clamp.
     assert _effective_release_threshold(10.0, 0.59, base) >= MIN_RELEASE_THRESHOLD
+
+
+def test_aim_fire_decision_matrix():
+    """#41 dy-band aim: band fires tagged 'band'; out-of-band passes wait
+    within the skip budget then 'fallback'; ε-explore throws fire on any
+    valid pass; dy dropout never starves."""
+    from minigames.darts.main import (
+        _aim_fire_decision, DY_AIM_LO, DY_AIM_HI, MAX_AIM_SKIPS,
+    )
+    # In-band → fire as 'band'.
+    assert _aim_fire_decision(DY_AIM_LO, 0, False) == (True, "band")
+    assert _aim_fire_decision(DY_AIM_HI, 0, False) == (True, "band")
+    assert _aim_fire_decision(-7, 1, False) == (True, "band")
+    # Out-of-band with budget left → wait.
+    assert _aim_fire_decision(-11, 0, False) == (False, None)
+    assert _aim_fire_decision(-2, MAX_AIM_SKIPS - 1, False) == (False, None)
+    # Budget exhausted → fire as 'fallback'.
+    assert _aim_fire_decision(-11, MAX_AIM_SKIPS, False) == (True, "fallback")
+    # ε-exploration fires on any valid pass, tagged.
+    assert _aim_fire_decision(-13, 0, True) == (True, "explore")
+    # Instrument dropout fires (never starve).
+    assert _aim_fire_decision(None, 0, False) == (True, "fallback")

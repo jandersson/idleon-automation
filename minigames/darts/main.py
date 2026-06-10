@@ -188,6 +188,47 @@ def _is_upswing_fire(arm_centroid_dy: int | None) -> bool:
     pass (skip it); False fires — including when dy is unavailable."""
     return arm_centroid_dy is not None and arm_centroid_dy > DY_GATE_MAX
 
+
+# dy-band aim (#41 step 1): WITHIN the release pass, where the click
+# lands steers the arc — dy near 0-from-below = late-pass = flat arc =
+# mid-board red/bullseye (dy=-7 fires averaged stripe 3.8 with 50%
+# bullseyes vs ~8% at dy<=-10; see CLAUDE.md darts findings). Prefer
+# fires inside the band; skip up to MAX_AIM_SKIPS passes waiting for
+# one (a skipped pass costs one ~2-4s swing cycle), then take any
+# valid pass rather than starve. Every EXPLORE_EVERY_N-th throw fires
+# on the first valid pass regardless, so the dy→outcome surface keeps
+# getting sampled outside the band — darts has no free shots, so
+# exploration is budgeted rather than free (unlike hoops).
+DY_AIM_LO = -8
+DY_AIM_HI = -5
+MAX_AIM_SKIPS = 2
+EXPLORE_EVERY_N = 8
+
+
+def _aim_fire_decision(
+    arm_centroid_dy: int | None,
+    aim_skips: int,
+    explore_throw: bool,
+) -> tuple[bool, str | None]:
+    """Decide whether a valid (non-up-swing) match should fire, and tag
+    the intent. Returns (fire, aim_mode):
+      'band'     — dy inside the EV band
+      'explore'  — ε-exploration throw, fires on any valid pass
+      'fallback' — band not seen within the skip budget, or dy
+                   unavailable (instrument dropout must not starve)
+      (False, None) — wait for the next pass.
+    Up-swing rejection happens before this (see _is_upswing_fire).
+    """
+    if arm_centroid_dy is None:
+        return True, "fallback"
+    if explore_throw:
+        return True, "explore"
+    if DY_AIM_LO <= arm_centroid_dy <= DY_AIM_HI:
+        return True, "band"
+    if aim_skips >= MAX_AIM_SKIPS:
+        return True, "fallback"
+    return False, None
+
 # Stripe color → score-increment mapping (confirmed 2026-05-24 from user
 # session reporting 3 red/bullseye hits + the +1/+2/+3/+5 stripe values
 # in STRATEGY.md). Lookup is increment → color so log_throw can derive
@@ -412,6 +453,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     prev_arm_centroid_y: int | None = None  # previous poll's centroid, for the dy discriminator
     last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
     overlay_probe_clicks = 0  # unknown-overlay probes since the last real pose match
+    aim_skips = 0  # out-of-band passes skipped since the last fire (#41 dy-band aim)
 
     while True:
         check_failsafe()
@@ -538,6 +580,26 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             time.sleep(POLL_INTERVAL)
             continue
 
+        # dy-band aim (#41): valid release pass, but is it the arc we
+        # want? Band fires hit mid-board red/bullseye; out-of-band passes
+        # get skipped within a budget; ε-exploration keeps sampling the
+        # whole surface.
+        explore_throw = (throws_taken + 1) % EXPLORE_EVERY_N == 0
+        fire, aim_mode = _aim_fire_decision(arm_centroid_dy, aim_skips, explore_throw)
+        if not fire:
+            log_poll(
+                throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
+                arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
+            )
+            last_pose_time = time.time()
+            overlay_probe_clicks = 0
+            aim_skips += 1
+            print(f"  [aim] dy={arm_centroid_dy:+d} outside band [{DY_AIM_LO},{DY_AIM_HI}] — "
+                  f"waiting for a flatter pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
+            time.sleep(POLL_INTERVAL)
+            continue
+        aim_skips = 0
+
         log_poll(
             throw_db, session_started, t_ms, conf, match_x, match_y, threw=1,
             arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
@@ -554,7 +616,8 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
         # was built on N=2 captured streaks at one player position; the
         # live bot at a different spawn showed the OPPOSITE pattern.
         # Insufficient data to commit to a directional rule.
-        cdy_tag = f", centroid_dy={arm_centroid_dy:+d}" if arm_centroid_dy is not None else ", centroid_dy=?"
+        cdy_tag = (f", centroid_dy={arm_centroid_dy:+d} [{aim_mode}]"
+                   if arm_centroid_dy is not None else f", centroid_dy=? [{aim_mode}]")
         print(f"Release pose at ({px},{py}), conf={conf:.2f}{cdy_tag} "
               f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}"
               + (f", adapted thr={effective_threshold:.2f}" if effective_threshold < RELEASE_THRESHOLD else "")
@@ -677,6 +740,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             release_pose_y=int(py),
             release_conf=float(conf),
             arm_centroid_dy_at_fire=arm_centroid_dy,
+            aim_mode=aim_mode,
             wind_sample=wind_sample_name,
             launch_angle_deg=trajectory["launch_angle_deg"],
             apex_y=trajectory["apex_y"],

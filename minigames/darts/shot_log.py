@@ -110,6 +110,11 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # hits, dy > 0 → 10/11 misses. Logged at fire so the eventual gate
     # uses exactly the quantity the validation measured.
     ("arm_centroid_dy_at_fire", "INTEGER"),
+    # How the dy-band aim decided this fire (#41): 'band' (inside the EV
+    # band), 'fallback' (skip budget exhausted or dy unavailable), or
+    # 'explore' (ε-exploration throw). Lets the gate's EV be evaluated
+    # per intent and keeps model training aware of the sampling policy.
+    ("aim_mode", "TEXT"),
 ]
 
 
