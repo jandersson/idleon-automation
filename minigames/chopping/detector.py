@@ -91,19 +91,42 @@ def leaf_vx_px_s(
     max_span_s: float = 0.2,
 ) -> float | None:
     """Leaf horizontal velocity in px/SECOND (sign = direction) from
-    recent (wall_time, x) samples; None until the track spans
-    min_span_s. Samples older than max_span_s are ignored so a
-    post-click cooldown gap can't bridge a bounce reversal. px/s, not
-    px/poll — cadence-invariant, same units rule as the darts arm
-    signal (see CLAUDE.md).
+    recent (wall_time, x) samples; None until the usable track spans
+    min_span_s. px/s, not px/poll — cadence-invariant, same units rule
+    as the darts arm signal (see CLAUDE.md).
+
+    Only samples since the leaf's most recent direction reversal are
+    used. The leaf accelerates as the round progresses (game fact,
+    2026-06-11), so bounces come quicker late-round and an estimate
+    spanning one would smear the magnitude and could flip the sign —
+    exactly when the time-to-red gate matters most. Right after a
+    reversal the usable track is briefly too short and this returns
+    None; the caller's pixel-margin floor covers that gap. Samples
+    older than max_span_s are ignored regardless (a post-click
+    cooldown gap shouldn't bridge into stale motion).
     """
-    if not track:
+    if len(track) < 2:
         return None
+    # Walk backwards, keeping the run of samples moving in the newest
+    # pair's direction. dx == 0 pairs carry no direction information
+    # (jitter / sub-pixel motion) and don't break the run.
+    direction = 0
+    start = len(track) - 1
+    for i in range(len(track) - 2, -1, -1):
+        dx = track[i + 1][1] - track[i][1]
+        if dx != 0:
+            if direction == 0:
+                direction = 1 if dx > 0 else -1
+            elif (dx > 0) != (direction > 0):
+                break
+        start = i
     t1, x1 = track[-1]
-    in_window = [(t, x) for t, x in track[:-1] if min_span_s <= t1 - t <= max_span_s]
+    in_window = [
+        (t, x) for t, x in track[start:-1] if min_span_s <= t1 - t <= max_span_s
+    ]
     if not in_window:
         return None
-    t0, x0 = in_window[0]  # oldest sample still inside the window
+    t0, x0 = in_window[0]  # oldest usable sample still inside the window
     return (x1 - x0) / (t1 - t0)
 
 

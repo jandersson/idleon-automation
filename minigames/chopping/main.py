@@ -70,7 +70,15 @@ RED_SAFETY_MARGIN_PX = 8
 # chop #2 survived 8px of red BEHIND a rightward leaf — the pixel
 # margin can't represent that asymmetry. 150ms = ~2x the observed kill
 # latency; tighten once outcome data accumulates. With no velocity
-# estimate (leaf just appeared), only the pixel margin applies.
+# estimate (leaf just appeared or just bounced), only the pixel margin
+# applies.
+#
+# The leaf ACCELERATES as the round progresses (game fact, 2026-06-11).
+# The gate self-adapts — vx is measured live, so a faster leaf needs
+# proportionally more red-free runway — but that also means fewer
+# gate-open windows late-round as green shrinks and speed rises. If
+# validation sessions show fire starvation late-round, lower this
+# toward the measured kill latency rather than bypassing the gate.
 MIN_TIME_TO_RED_MS = 150
 
 # Per-poll DB write rate cap. ~100Hz polling × many fields would flood the

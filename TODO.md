@@ -99,6 +99,11 @@ recent-changes snapshot that don't fit a single issue.
   vs chop count — every session so far ended by death or unknown),
   gold-zone value (gold appeared only in a transition layout so far),
   and whether 150ms is the right budget (tighten from outcome data).
+  The leaf ACCELERATES over the round (game fact, 2026-06-11) — the
+  vx-based gate self-adapts, but watch validation sessions for
+  late-round fire starvation (rising speed + shrinking green leaves
+  fewer gate-open windows); the polls' leaf_vx_px_s column records
+  the speed ramp for calibrating the budget per speed tier.
 - **Darts** — release-pose template matching works, score-region diff
   per throw works. Multi-template per spawn-height (the dominant
   accuracy variable) not yet built.

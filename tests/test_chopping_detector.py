@@ -112,6 +112,28 @@ def test_leaf_vx_ignores_samples_older_than_max_span():
     assert abs(leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) - 300.0) < 1e-9
 
 
+def test_leaf_vx_only_uses_samples_since_direction_reversal():
+    # Leaf swept left to x=20, bounced, now moving right. Samples from
+    # before the bounce must not dilute the estimate: since the
+    # reversal it covered 80px in 0.1s -> +800 px/s. (A naive
+    # oldest-in-window estimate over the full track would give 0.)
+    track = [(0.0, 100), (0.05, 60), (0.1, 20), (0.15, 60), (0.2, 100)]
+    assert abs(leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) - 800.0) < 1e-9
+
+
+def test_leaf_vx_none_right_after_reversal():
+    # Only one post-reversal pair, 10ms apart — below min span, and the
+    # pre-reversal samples must not be used to satisfy it.
+    track = [(0.0, 100), (0.05, 60), (0.1, 20), (0.11, 24)]
+    assert leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) is None
+
+
+def test_leaf_vx_zero_dx_samples_do_not_break_the_run():
+    # A flat pair mid-run (sub-pixel motion) keeps the run intact.
+    track = [(0.0, 10), (0.05, 10), (0.1, 40)]
+    assert abs(leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) - 300.0) < 1e-9
+
+
 def test_analyze_bar_returns_gold_for_leaf_over_gold_zone():
     bar = _bar_with_zones()
     leaf = _leaf_at(x_start=65)  # gold zone is 60..80
