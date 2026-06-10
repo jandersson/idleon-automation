@@ -40,6 +40,16 @@ _GRAY_VAL_MIN = 130
 # dart is only ~40x9 px and motion masking shaves both edges, leaving
 # a thin sliver. Upper bound rejects the held-dart-plus-arm or any
 # cosmetics blob that happens to be gray.
+#
+# Known residual hazard (2026-06-10, user report): Steam toast
+# notifications ("X is playing Y") overlap the window's bottom-right —
+# the EXIT button and the board's bottom tip. The toast body is gray
+# and far above _DART_AREA_MAX so it's rejected, but its sliding edge
+# can pass the area window for the ~10 slide-in/out frames and corrupt
+# landing_x for a throw in flight at that moment. Rare (friend events,
+# 2-3s) and not excludable by region — the board's bottom tip is
+# legitimate landing territory. If trajectory rows ever show suspicious
+# landing clusters at the far bottom-right, check toast timing first.
 _DART_AREA_MIN = 6
 _DART_AREA_MAX = 200
 
