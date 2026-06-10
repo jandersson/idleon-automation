@@ -125,6 +125,14 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("wind_angle_deg", "REAL"),
     ("wind_x", "REAL"),
     ("wind_y", "REAL"),
+    # Arm-centroid vertical velocity at fire in px/SECOND — the
+    # cadence-invariant replacement for arm_centroid_dy_at_fire
+    # (px/poll at the ~250ms compute-bound cadence; dormant from
+    # 2026-06-10, kept per append-only convention). The unit change
+    # unblocks poll-loop speedups: per-poll units rescale with every
+    # tick-cost optimization. Convert legacy rows via each fire's
+    # actual poll gap (see stripe_model.fetch_stripe_rows).
+    ("arm_centroid_vy_at_fire", "INTEGER"),
 ]
 
 

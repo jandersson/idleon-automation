@@ -223,6 +223,15 @@ investigations:
   (~90%+ hit), dy > 0 ≈ up-swing (~0%). The release threshold adapts
   per spawn (template peaks differ by spawn); the dy-gate, not the
   threshold, vets the moment.
+- **Units (since 2026-06-10): the live arm-motion signal is vy in
+  px/SECOND**, cadence-invariant (`arm_motion.centroid_vy_px_s`,
+  logged as `arm_centroid_vy_at_fire`). Historical dy figures in this
+  file and in the dormant `arm_centroid_dy_at_fire` column are px/poll
+  at the ~250ms compute-bound cadence — multiply by ~4 to compare
+  (static band [-8,-5] px/poll = [-32,-20] px/s). Per-poll units would
+  silently rescale with every poll-loop speedup; px/s doesn't. The
+  motion mask still diffs frames ~250ms apart regardless of cadence
+  (`REF_MOTION_DT_S`), so MIN_AREA's dropout behavior stays calibrated.
 
 ### Safety
 

@@ -99,16 +99,16 @@ def test_match_or_save_wind_sample_returns_stable_name(tmp_path, monkeypatch):
     assert dm._match_or_save_wind_sample(None, seen) is None
 
 
-def test_dy_gate_skips_upswing_fires_only():
-    """The #26 fire gate: positive centroid-dy = up-swing pass (skip);
+def test_vy_gate_skips_upswing_fires_only():
+    """The #26 fire gate: positive centroid-vy = up-swing pass (skip);
     negative or zero fires; None fires (instrument dropout must not
     starve the bot). Thresholds from the validated record: up-swing
-    misses at dy +6..+12, release hits at dy -7..-13."""
-    from minigames.darts.main import _is_upswing_fire, DY_GATE_MAX
-    assert _is_upswing_fire(7)            # tonight's miss signature
-    assert _is_upswing_fire(DY_GATE_MAX + 1)
-    assert not _is_upswing_fire(-8)       # release-pass hit signature
-    assert not _is_upswing_fire(DY_GATE_MAX)
+    misses at vy +24..+48 px/s, release hits at vy -28..-52 px/s."""
+    from minigames.darts.main import _is_upswing_fire, VY_GATE_MAX
+    assert _is_upswing_fire(28)           # up-swing miss signature
+    assert _is_upswing_fire(VY_GATE_MAX + 1)
+    assert not _is_upswing_fire(-32)      # release-pass hit signature
+    assert not _is_upswing_fire(VY_GATE_MAX)
     assert not _is_upswing_fire(None)     # dropout → fire, don't starve
 
 
@@ -176,43 +176,47 @@ def test_effective_release_threshold_adapts_during_stall():
 
 
 def test_aim_fire_decision_matrix():
-    """#41 dy-band aim: band fires tagged 'band'; out-of-band passes wait
+    """#41 vy-band aim: band fires tagged 'band'; out-of-band passes wait
     within the skip budget then 'fallback'; ε-explore throws fire on any
-    valid pass; dy dropout never starves."""
+    valid pass; vy dropout never starves. Units are px/s."""
     from minigames.darts.main import (
-        _aim_fire_decision, DY_AIM_LO, DY_AIM_HI, MAX_AIM_SKIPS,
+        _aim_fire_decision, VY_AIM_LO, VY_AIM_HI, MAX_AIM_SKIPS,
     )
     # In-band → fire as 'band'.
-    assert _aim_fire_decision(DY_AIM_LO, 0, False) == (True, "band")
-    assert _aim_fire_decision(DY_AIM_HI, 0, False) == (True, "band")
-    assert _aim_fire_decision(-7, 1, False) == (True, "band")
+    assert _aim_fire_decision(VY_AIM_LO, 0, False) == (True, "band")
+    assert _aim_fire_decision(VY_AIM_HI, 0, False) == (True, "band")
+    assert _aim_fire_decision(-28, 1, False) == (True, "band")
     # Out-of-band with budget left → wait.
-    assert _aim_fire_decision(-11, 0, False) == (False, None)
-    assert _aim_fire_decision(-2, MAX_AIM_SKIPS - 1, False) == (False, None)
+    assert _aim_fire_decision(-44, 0, False) == (False, None)
+    assert _aim_fire_decision(-8, MAX_AIM_SKIPS - 1, False) == (False, None)
     # Budget exhausted → fire as 'fallback'.
-    assert _aim_fire_decision(-11, MAX_AIM_SKIPS, False) == (True, "fallback")
+    assert _aim_fire_decision(-44, MAX_AIM_SKIPS, False) == (True, "fallback")
     # ε-exploration fires on any valid pass, tagged.
-    assert _aim_fire_decision(-13, 0, True) == (True, "explore")
+    assert _aim_fire_decision(-52, 0, True) == (True, "explore")
     # Instrument dropout fires (never starve).
     assert _aim_fire_decision(None, 0, False) == (True, "fallback")
 
 
 def test_aim_fire_decision_model_band_takes_precedence():
     """#41 step 3: when the wind-conditioned band is supplied it replaces
-    the static one entirely — a dy inside the static band but outside
-    the model band waits, and vice versa."""
+    the static one entirely — a vy inside the static band but outside
+    the model band waits, and vice versa. The band is an inclusive
+    (lo, hi) px/s interval: observed vys land between the model's grid
+    points, so membership must be a range check."""
     from minigames.darts.main import (
-        _aim_fire_decision, DY_AIM_LO, MAX_AIM_SKIPS,
+        _aim_fire_decision, VY_AIM_LO, MAX_AIM_SKIPS,
     )
-    band = {-12, -11, -10}
-    # Inside model band (outside static) → 'model'.
-    assert _aim_fire_decision(-11, 0, False, band) == (True, "model")
+    band = (-48, -40)
+    # Inside model band (outside static) → 'model', including between
+    # grid points.
+    assert _aim_fire_decision(-44, 0, False, band) == (True, "model")
+    assert _aim_fire_decision(-43, 0, False, band) == (True, "model")
     # Inside static band but outside model band → wait.
-    assert _aim_fire_decision(DY_AIM_LO, 0, False, band) == (False, None)
+    assert _aim_fire_decision(VY_AIM_LO, 0, False, band) == (False, None)
     # Budget still applies under the model band.
-    assert _aim_fire_decision(DY_AIM_LO, MAX_AIM_SKIPS, False, band) == (True, "fallback")
+    assert _aim_fire_decision(VY_AIM_LO, MAX_AIM_SKIPS, False, band) == (True, "fallback")
     # Explore and dropout behave as before regardless of the band.
-    assert _aim_fire_decision(-2, 0, True, band) == (True, "explore")
+    assert _aim_fire_decision(-8, 0, True, band) == (True, "explore")
     assert _aim_fire_decision(None, 0, False, band) == (True, "fallback")
 
 

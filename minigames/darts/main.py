@@ -21,13 +21,17 @@ from common.git_info import current_code_commit
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.wind import parse_wind
 from minigames.darts.shot_log import open_db, log_throw, log_poll
-from minigames.darts.arm_motion import centroid_dy_per_poll, compute_arm_centroid
+from minigames.darts.arm_motion import (
+    REF_MOTION_DT_S,
+    centroid_vy_px_s,
+    compute_arm_centroid,
+)
 from minigames.darts.stripe_model import (
     MIN_SAMPLES as STRIPE_MIN_SAMPLES,
     StripeEvModel,
     fetch_stripe_rows,
     fit_stripe_gp,
-    model_dy_band,
+    model_vy_band,
 )
 
 _HERE = Path(__file__).parent
@@ -175,71 +179,81 @@ def _effective_release_threshold(
         return max(MIN_RELEASE_THRESHOLD, min(base, best_recent_conf - ADAPT_MARGIN))
     return base
 
-# Swing-pass fire gate (#26): skip the fire when the arm-centroid dy vs
-# the previous poll is positive — the up-swing pass signature. Validated
-# against launch-angle ground truth across every instrumented fire
-# (sessions 2026-05-24 .. 2026-06-10): dy > 0 fires hit ~0/15 (launch
-# angles +20..26°, the guaranteed up-swing miss), dy <= -7 fires hit
-# ~21/24 with all exceptions explained by the #40 high-streak zone
-# shift. dy=None (first poll, or arm-motion dropout) fires rather than
-# starves — the signal is an instrument, not a precondition.
+# Swing-pass fire gate (#26): skip the fire when the arm-centroid
+# vertical velocity is positive — the up-swing pass signature.
+# Validated against launch-angle ground truth across every instrumented
+# fire (sessions 2026-05-24 .. 2026-06-10): vy > 0 fires hit ~0/15
+# (launch angles +20..26°, the guaranteed up-swing miss), vy <= ~-28
+# px/s fires hit ~21/24 with all exceptions explained by the #40
+# high-streak zone shift. vy=None (first poll, or arm-motion dropout)
+# fires rather than starves — the signal is an instrument, not a
+# precondition.
+#
+# UNITS (since 2026-06-10): px/second, cadence-invariant. Historical
+# arm_centroid_dy_at_fire was px/poll at the ~250ms compute-bound
+# cadence — multiply by ~4 to compare. The change unblocks poll-loop
+# speedups: per-poll units would silently rescale with every tick-cost
+# optimization.
 #
 # Replaces the #25 arm-area apex gate (MAX_ARM_AREA_AT_FIRE=210): its
 # N=16 calibration ("HIT 174..197, MISS 204..1665") did not survive more
 # data — both classes span 174..220 in the fuller record — so it both
 # missed most up-swings and risked skipping good releases.
-DY_GATE_MAX = 0  # fire only when arm_centroid_dy <= this (or is None)
+VY_GATE_MAX = 0  # fire only when arm_centroid_vy <= this (or is None)
 
 
-def _is_upswing_fire(arm_centroid_dy: int | None) -> bool:
-    """True when the centroid-dy signal says this match is the up-swing
-    pass (skip it); False fires — including when dy is unavailable."""
-    return arm_centroid_dy is not None and arm_centroid_dy > DY_GATE_MAX
+def _is_upswing_fire(arm_centroid_vy: int | None) -> bool:
+    """True when the centroid-vy signal says this match is the up-swing
+    pass (skip it); False fires — including when vy is unavailable."""
+    return arm_centroid_vy is not None and arm_centroid_vy > VY_GATE_MAX
 
 
-# dy-band aim (#41 step 1): WITHIN the release pass, where the click
-# lands steers the arc — dy near 0-from-below = late-pass = flat arc =
-# mid-board red/bullseye (dy=-7 fires averaged stripe 3.8 with 50%
-# bullseyes vs ~8% at dy<=-10; see CLAUDE.md darts findings). Prefer
-# fires inside the band; skip up to MAX_AIM_SKIPS passes waiting for
-# one (a skipped pass costs one ~2-4s swing cycle), then take any
-# valid pass rather than starve. Every EXPLORE_EVERY_N-th throw fires
-# on the first valid pass regardless, so the dy→outcome surface keeps
-# getting sampled outside the band — darts has no free shots, so
-# exploration is budgeted rather than free (unlike hoops).
-DY_AIM_LO = -8
-DY_AIM_HI = -5
+# vy-band aim (#41 step 1): WITHIN the release pass, where the click
+# lands steers the arc — vy near 0-from-below = late-pass = flat arc =
+# mid-board red/bullseye (see CLAUDE.md darts findings). Prefer fires
+# inside the band; skip up to MAX_AIM_SKIPS passes waiting for one (a
+# skipped pass costs one ~2-4s swing cycle), then take any valid pass
+# rather than starve. Every EXPLORE_EVERY_N-th throw fires on the
+# first valid pass regardless, so the vy→outcome surface keeps getting
+# sampled outside the band — darts has no free shots, so exploration
+# is budgeted rather than free (unlike hoops).
+#
+# [-32, -20] px/s is the exact px/s image of the original [-8, -5]
+# px/poll band: the 90 recorded band fires span -38..-19 px/s with
+# median -28 (per-fire dt from the polls table; median gap 253ms).
+VY_AIM_LO = -32
+VY_AIM_HI = -20
 MAX_AIM_SKIPS = 2
 EXPLORE_EVERY_N = 8
 
 
 def _aim_fire_decision(
-    arm_centroid_dy: int | None,
+    arm_centroid_vy: int | None,
     aim_skips: int,
     explore_throw: bool,
-    model_band: set[int] | None = None,
+    model_band: tuple[int, int] | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether a valid (non-up-swing) match should fire, and tag
     the intent. Returns (fire, aim_mode):
-      'model'    — dy inside the wind-conditioned E[stripe] band
+      'model'    — vy inside the wind-conditioned E[stripe] band
                    (#41 step 3; supplied by the caller when the GP is
                    fitted and the wind parse succeeded this poll)
-      'band'     — dy inside the static calm-air EV band (model
+      'band'     — vy inside the static calm-air EV band (model
                    unavailable)
       'explore'  — ε-exploration throw, fires on any valid pass
-      'fallback' — band not seen within the skip budget, or dy
+      'fallback' — band not seen within the skip budget, or vy
                    unavailable (instrument dropout must not starve)
       (False, None) — wait for the next pass.
     Up-swing rejection happens before this (see _is_upswing_fire).
     """
-    if arm_centroid_dy is None:
+    if arm_centroid_vy is None:
         return True, "fallback"
     if explore_throw:
         return True, "explore"
     if model_band is not None:
-        if arm_centroid_dy in model_band:
+        if model_band[0] <= arm_centroid_vy <= model_band[1]:
             return True, "model"
-    elif DY_AIM_LO <= arm_centroid_dy <= DY_AIM_HI:
+    elif VY_AIM_LO <= arm_centroid_vy <= VY_AIM_HI:
         return True, "band"
     if aim_skips >= MAX_AIM_SKIPS:
         return True, "fallback"
@@ -439,7 +453,7 @@ def run():
         ev_model = fit_stripe_gp(ev_rows)
         if ev_model is None:
             print(f"stripe EV model: data floor not met ({len(ev_rows)} rows "
-                  f"< {STRIPE_MIN_SAMPLES}) — static dy band [{DY_AIM_LO},{DY_AIM_HI}]")
+                  f"< {STRIPE_MIN_SAMPLES}) — static vy band [{VY_AIM_LO},{VY_AIM_HI}] px/s")
         else:
             print(f"stripe EV model: fitted on {len(ev_rows)} throws — "
                   f"wind-conditioned dy band live (#41 step 3)")
@@ -477,13 +491,14 @@ def _run_inner(
     # relative to this so we can correlate poll rows with throws rows
     # post-hoc without a perfectly synced clock.
     session_t0 = time.time()
-    # Previous frame buffer for arm-motion centroid computation. We diff
-    # current vs previous, AND with player-white mask, and log the centroid
-    # of the result every poll. Continuous signal independent of template-
-    # match timing — the missing data the #25 discriminator needs.
-    prev_bgr_for_motion: np.ndarray | None = None
-    prev_arm_centroid_y: int | None = None  # last VALID centroid, for the dy discriminator
-    centroid_gap_polls = 1  # polls since prev_arm_centroid_y was captured
+    # Frame history for arm-motion centroid computation. We diff the
+    # current frame against one ~REF_MOTION_DT_S old — NOT simply the
+    # previous poll — so the per-diff motion magnitude (and MIN_AREA's
+    # dropout behavior) stays calibrated no matter how fast the poll
+    # loop runs. Each entry is (wall_time, bgr).
+    motion_history: list[tuple[float, np.ndarray]] = []
+    prev_arm_centroid_y: int | None = None  # last VALID centroid, for the vy discriminator
+    prev_arm_centroid_t: float | None = None  # wall time of that centroid
     last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
     overlay_probe_clicks = 0  # unknown-overlay probes since the last real pose match
     aim_skips = 0  # out-of-band passes skipped since the last fire (#41 dy-band aim)
@@ -516,27 +531,37 @@ def _run_inner(
         match_x = int(pose[0]) if pose else 0
         match_y = int(pose[1]) if pose else 0
         t_ms = int((time.time() - session_t0) * 1000)
-        arm_centroid_y, arm_pixel_count = compute_arm_centroid(cur_bgr, prev_bgr_for_motion)
-        # Swing-pass discriminator (#26): arm-centroid dy vs the last
-        # valid poll. Validated post-hoc 2026-06-10 against launch-angle
-        # ground truth over 23 fires: dy < 0 at fire → 9/10 hits, dy > 0
-        # → 10/11 misses. (The first candidate — re-matching the dart
-        # template in the previous frame — returned None on every live
-        # fire: the dart ROTATES between polls at the ~250ms cadence, so
-        # the release-angle template can't match the tilted prev-frame
-        # dart.) Single-poll centroid dropouts are bridged (#42): the
-        # mask collapses below MIN_AREA exactly on slow passes, which
-        # blanked dy on ~1/3 of fires when dy required two consecutive
-        # valid polls.
-        arm_centroid_dy = centroid_dy_per_poll(
-            arm_centroid_y, prev_arm_centroid_y, centroid_gap_polls,
+        now = time.time()
+        # Reference frame for the motion diff: the newest history entry
+        # at least REF_MOTION_DT_S old (None during the first ~250ms).
+        ref_bgr = None
+        for ft, fb in reversed(motion_history):
+            if now - ft >= REF_MOTION_DT_S:
+                ref_bgr = fb
+                break
+        motion_history.append((now, cur_bgr))
+        while motion_history and now - motion_history[0][0] > 2 * REF_MOTION_DT_S:
+            motion_history.pop(0)
+        arm_centroid_y, arm_pixel_count = compute_arm_centroid(cur_bgr, ref_bgr)
+        # Swing-pass discriminator (#26): arm-centroid vertical velocity
+        # (px/s) vs the last valid centroid. Validated post-hoc
+        # 2026-06-10 against launch-angle ground truth over 23 fires:
+        # vy < 0 at fire → 9/10 hits, vy > 0 → 10/11 misses. (The first
+        # candidate — re-matching the dart template in the previous
+        # frame — returned None on every live fire: the dart ROTATES
+        # between polls at the ~250ms cadence, so the release-angle
+        # template can't match the tilted prev-frame dart.) Dropout
+        # bridging (#42) is inherent in the time denominator: dt is the
+        # real elapsed time since the last valid centroid, capped by
+        # MAX_VY_DT_S inside centroid_vy_px_s.
+        arm_centroid_vy = centroid_vy_px_s(
+            arm_centroid_y,
+            prev_arm_centroid_y,
+            (now - prev_arm_centroid_t) if prev_arm_centroid_t is not None else 0.0,
         )
         if arm_centroid_y is not None:
             prev_arm_centroid_y = arm_centroid_y
-            centroid_gap_polls = 1
-        else:
-            centroid_gap_polls += 1
-        prev_bgr_for_motion = cur_bgr
+            prev_arm_centroid_t = now
 
         effective_threshold = _effective_release_threshold(
             time.time() - last_pose_time, best_recent_conf, RELEASE_THRESHOLD,
@@ -601,38 +626,38 @@ def _run_inner(
             time.sleep(POLL_INTERVAL)
             continue
 
-        # Swing-pass skip-gate (#26). Bot's about to fire but centroid-dy
+        # Swing-pass skip-gate (#26). Bot's about to fire but centroid-vy
         # says this match is the up-swing pass — a guaranteed +20° launch
         # into the bottom of the screen. Logs the candidate as threw=0 so
         # the polls table reflects the skip, then waits for the release
         # pass (~250ms later).
-        if _is_upswing_fire(arm_centroid_dy):
+        if _is_upswing_fire(arm_centroid_vy):
             log_poll(
                 throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
                 arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
             )
             last_pose_time = time.time()  # don't fire, but keep game-over heuristic happy
             overlay_probe_clicks = 0
-            print(f"  [skip] dy-gate: centroid_dy={arm_centroid_dy:+d} > "
-                  f"{DY_GATE_MAX} — up-swing pass, waiting for release")
+            print(f"  [skip] vy-gate: centroid_vy={arm_centroid_vy:+d} px/s > "
+                  f"{VY_GATE_MAX} — up-swing pass, waiting for release")
             time.sleep(POLL_INTERVAL)
             continue
 
-        # dy-band aim (#41): valid release pass, but is it the arc we
+        # vy-band aim (#41): valid release pass, but is it the arc we
         # want? Band fires hit mid-board red/bullseye; out-of-band passes
         # get skipped within a budget; ε-exploration keeps sampling the
         # whole surface. With the E[stripe] GP fitted, the band is
         # wind-conditioned (step 3): parse the wind panel from the
         # current frame (a ~ms template-OCR on a small crop — acceptable
-        # pre-click latency) and scan the model for the near-argmax dys.
+        # pre-click latency) and scan the model for the near-argmax vys.
         # Unparseable wind or no model falls back to the static band.
         explore_throw = (throws_taken + 1) % EXPLORE_EVERY_N == 0
-        model_band: set[int] | None = None
-        model_best_dy: int | None = None
+        model_band: tuple[int, int] | None = None
+        model_best_vy: int | None = None
         model_best_ev: float | None = None
         if (
             ev_model is not None
-            and arm_centroid_dy is not None
+            and arm_centroid_vy is not None
             and not explore_throw
             # Outside the training data's pose_y support the band is GP
             # mean-reversion junk — seen live when the (146, 38) phantom
@@ -642,11 +667,11 @@ def _run_inner(
         ):
             _, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
             if wx_now is not None:
-                model_band, model_best_dy, model_best_ev = model_dy_band(
+                model_band, model_best_vy, model_best_ev = model_vy_band(
                     ev_model, wx_now, wy_now, float(pose[1]),
                 )
         fire, aim_mode = _aim_fire_decision(
-            arm_centroid_dy, aim_skips, explore_throw, model_band,
+            arm_centroid_vy, aim_skips, explore_throw, model_band,
         )
         if not fire:
             log_poll(
@@ -657,11 +682,12 @@ def _run_inner(
             overlay_probe_clicks = 0
             aim_skips += 1
             band_desc = (
-                f"model band {sorted(model_band)} (best dy={model_best_dy}, ev={model_best_ev:.2f})"
+                f"model band [{model_band[0]},{model_band[1]}] px/s "
+                f"(best vy={model_best_vy}, ev={model_best_ev:.2f})"
                 if model_band is not None
-                else f"band [{DY_AIM_LO},{DY_AIM_HI}]"
+                else f"band [{VY_AIM_LO},{VY_AIM_HI}] px/s"
             )
-            print(f"  [aim] dy={arm_centroid_dy:+d} outside {band_desc} — "
+            print(f"  [aim] vy={arm_centroid_vy:+d} px/s outside {band_desc} — "
                   f"waiting for a better pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
             time.sleep(POLL_INTERVAL)
             continue
@@ -683,9 +709,9 @@ def _run_inner(
         # was built on N=2 captured streaks at one player position; the
         # live bot at a different spawn showed the OPPOSITE pattern.
         # Insufficient data to commit to a directional rule.
-        cdy_tag = (f", centroid_dy={arm_centroid_dy:+d} [{aim_mode}]"
-                   if arm_centroid_dy is not None else f", centroid_dy=? [{aim_mode}]")
-        print(f"Release pose at ({px},{py}), conf={conf:.2f}{cdy_tag} "
+        cvy_tag = (f", centroid_vy={arm_centroid_vy:+d} px/s [{aim_mode}]"
+                   if arm_centroid_vy is not None else f", centroid_vy=? [{aim_mode}]")
+        print(f"Release pose at ({px},{py}), conf={conf:.2f}{cvy_tag} "
               f"(recent best while waiting={best_recent_conf:.2f}, streak={match_streak_len}"
               + (f", adapted thr={effective_threshold:.2f}" if effective_threshold < RELEASE_THRESHOLD else "")
               + ") — throwing")
@@ -809,7 +835,7 @@ def _run_inner(
             release_pose_x=int(px),
             release_pose_y=int(py),
             release_conf=float(conf),
-            arm_centroid_dy_at_fire=arm_centroid_dy,
+            arm_centroid_vy_at_fire=arm_centroid_vy,
             aim_mode=aim_mode,
             wind_sample=wind_sample_name,
             wind_speed=wind_speed,

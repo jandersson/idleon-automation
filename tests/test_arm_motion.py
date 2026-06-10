@@ -2,11 +2,11 @@
 import numpy as np
 
 from minigames.darts.arm_motion import (
-    MAX_DY_GAP_POLLS,
+    MAX_VY_DT_S,
     MIN_AREA,
     WHITE_HSV_HIGH,
     WHITE_HSV_LOW,
-    centroid_dy_per_poll,
+    centroid_vy_px_s,
     compute_arm_centroid,
 )
 
@@ -89,32 +89,38 @@ def test_centroid_moves_with_blob_position():
     assert high_cy < low_cy
 
 
-def test_dy_consecutive_polls():
-    """gap=1 is the plain previous-poll difference."""
-    assert centroid_dy_per_poll(364, 374, 1) == -10
-    assert centroid_dy_per_poll(374, 364, 1) == 10
+def test_vy_is_time_denominated():
+    """px/second, invariant to poll cadence: the same displacement over
+    half the time is twice the velocity."""
+    assert centroid_vy_px_s(364, 374, 0.25) == -40
+    assert centroid_vy_px_s(364, 374, 0.125) == -80
+    assert centroid_vy_px_s(374, 364, 0.25) == 40
 
 
-def test_dy_bridges_single_dropout():
-    """One missing poll (gap=2): displacement is averaged per poll.
+def test_vy_bridges_dropouts_by_elapsed_time():
+    """A masked-out poll between two valid centroids just lengthens dt
+    (#42): displacement over the real elapsed time is still a velocity.
     Values from the #42 diagnosis — session 2026-06-10T19:48 throw 6
-    fired at cen_y=364 with the last valid centroid 374 two polls back."""
-    assert centroid_dy_per_poll(364, 374, 2) == -5
+    fired at cen_y=364 with the last valid centroid 374 ~0.5s back."""
+    assert centroid_vy_px_s(364, 374, 0.5) == -20
 
 
-def test_dy_none_beyond_max_gap():
-    """Gaps longer than MAX_DY_GAP_POLLS are too stale to trust."""
-    assert centroid_dy_per_poll(364, 374, MAX_DY_GAP_POLLS + 1) is None
+def test_vy_none_beyond_max_dt():
+    """Too long since the last valid centroid: the arm has moved
+    unobserved for too long for a velocity to mean anything."""
+    assert centroid_vy_px_s(364, 374, MAX_VY_DT_S + 0.01) is None
+    assert centroid_vy_px_s(364, 374, MAX_VY_DT_S) is not None
 
 
-def test_dy_none_when_either_centroid_missing():
-    assert centroid_dy_per_poll(None, 374, 1) is None
-    assert centroid_dy_per_poll(364, None, 1) is None
+def test_vy_none_when_either_centroid_missing():
+    assert centroid_vy_px_s(None, 374, 0.25) is None
+    assert centroid_vy_px_s(364, None, 0.25) is None
 
 
-def test_dy_rejects_nonpositive_gap():
-    """gap < 1 is a bookkeeping bug upstream — refuse to divide."""
-    assert centroid_dy_per_poll(364, 374, 0) is None
+def test_vy_rejects_nonpositive_dt():
+    """dt <= 0 is a bookkeeping bug upstream — refuse to divide."""
+    assert centroid_vy_px_s(364, 374, 0.0) is None
+    assert centroid_vy_px_s(364, 374, -0.25) is None
 
 
 def test_hsv_bounds_constants_have_expected_shape():

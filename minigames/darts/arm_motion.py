@@ -34,33 +34,41 @@ MOTION_THRESHOLD = 20
 # not an actual arm sweep.
 MIN_AREA = 30
 
-# How many polls back the dy computation may reach for its reference
-# centroid. 2 bridges a single-poll dropout; longer gaps mean the arm
-# velocity estimate is too stale to trust.
-MAX_DY_GAP_POLLS = 2
+# Frame spacing the motion mask is calibrated at. MIN_AREA (and the
+# observed dropout behavior on slow passes) assume ~250ms between the
+# diffed frames — the loop cadence when the mask was tuned. The main
+# loop keeps a short frame history and always diffs against a frame
+# ~this old, so making the poll loop faster does NOT shrink the
+# per-diff motion (and silently raise the dropout rate).
+REF_MOTION_DT_S = 0.25
+
+# Longest gap between valid centroids the velocity estimate may span.
+# Bridges dropouts (sub-MIN_AREA mask on slow passes, #42) up to the
+# legacy two-poll equivalent; beyond it the arm has moved too long
+# unobserved for a velocity to mean anything.
+MAX_VY_DT_S = 0.8
 
 
-def centroid_dy_per_poll(
+def centroid_vy_px_s(
     cur_y: int | None,
     prev_y: int | None,
-    gap_polls: int,
-    max_gap: int = MAX_DY_GAP_POLLS,
+    dt_s: float,
+    max_dt_s: float = MAX_VY_DT_S,
 ) -> int | None:
-    """Per-poll vertical velocity of the arm centroid, bridged across
-    short dropouts.
+    """Vertical velocity of the arm centroid in px/second (positive =
+    downward), between the last valid centroid and the current one.
 
-    `prev_y` is the last VALID centroid, captured `gap_polls` polls ago
-    (1 = the immediately preceding poll). A slow-moving arm produces a
-    small frame-diff, so `compute_arm_centroid` returns None (sub-
-    MIN_AREA mask) exactly at the slow passes the dy-band gate selects
-    for — requiring two consecutive valid polls blanked dy on ~1/3 of
-    fires (#42). Dividing the displacement by the gap recovers a
-    per-poll dy estimate through a single dropout; gaps beyond
-    `max_gap` return None as before.
+    Time-denominated so the value is invariant to the poll cadence —
+    the units the dy-band gate, the E[stripe] model, and the logged
+    `arm_centroid_vy_at_fire` column all use from 2026-06-10 onward.
+    (Historical `arm_centroid_dy_at_fire` was px/poll at the ~250ms
+    compute-bound cadence; ×~4 converts to px/s.) Dropout bridging is
+    inherent: `dt_s` is simply the real elapsed time since the last
+    valid centroid, whether that was one poll ago or three.
     """
-    if cur_y is None or prev_y is None or not 1 <= gap_polls <= max_gap:
+    if cur_y is None or prev_y is None or not 0.0 < dt_s <= max_dt_s:
         return None
-    return round((cur_y - prev_y) / gap_polls)
+    return round((cur_y - prev_y) / dt_s)
 
 
 def compute_arm_centroid(

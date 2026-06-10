@@ -352,3 +352,14 @@ outside the training data's support interval (5th–95th percentile
 known phantom template match at (146, 38) slipped past the adapted
 confidence gate during pose droughts, and at pose_y=38 — one training
 row — the "band" was pure mean-reversion (best dy=0, band [-3..0]).
+
+**Unit migration (same day):** the dy feature became **vy in
+px/second** — cadence-invariant — ahead of poll-loop speedups
+(per-poll units rescale whenever the tick gets cheaper). Historical
+px/poll rows convert via each fire's actual poll gap from the polls
+table; the numbers above ×~4. The refit on converted units (221 rows
+after the first model session) reproduces the same surface: calm peak
+at vy=-36 px/s, band [-48,-24] (the old dy=-8 peak, band [-10,-6]),
+headwind penalty at every vy, bands widening as wind worsens. The
+model band is now an inclusive (lo, hi) interval rather than a grid
+set — observed vys land between grid points.

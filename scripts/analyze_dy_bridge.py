@@ -14,15 +14,22 @@ fires the bridge recovers. At fix time: 22 of 24 recovered, 7 in band;
 the 2 remainder were the first poll of a session (no previous frame).
 """
 import sqlite3
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from minigames.darts.arm_motion import centroid_dy_per_poll  # noqa: E402
-from minigames.darts.main import DY_AIM_HI, DY_AIM_LO  # noqa: E402
-
 root = Path(__file__).parent.parent
+
+# Frozen copies of the values this replay was run with (2026-06-10).
+# The live code has since moved to time-denominated px/s units
+# (arm_motion.centroid_vy_px_s); this script replays the HISTORICAL
+# px/poll record and keeps the original per-poll bridge math inline.
+DY_AIM_LO, DY_AIM_HI = -8, -5  # px/poll at the ~250ms cadence
+MAX_DY_GAP_POLLS = 2
+
+
+def centroid_dy_per_poll(cur_y, prev_y, gap_polls, max_gap=MAX_DY_GAP_POLLS):
+    if cur_y is None or prev_y is None or not 1 <= gap_polls <= max_gap:
+        return None
+    return round((cur_y - prev_y) / gap_polls)
 
 
 def main() -> None:
