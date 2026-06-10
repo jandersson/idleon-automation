@@ -630,7 +630,16 @@ def _run_inner(
         model_band: set[int] | None = None
         model_best_dy: int | None = None
         model_best_ev: float | None = None
-        if ev_model is not None and arm_centroid_dy is not None and not explore_throw:
+        if (
+            ev_model is not None
+            and arm_centroid_dy is not None
+            and not explore_throw
+            # Outside the training data's pose_y support the band is GP
+            # mean-reversion junk — seen live when the (146, 38) phantom
+            # match slipped past the adapted conf gate. Static band
+            # handles those passes.
+            and ev_model.supports_pose(float(pose[1]))
+        ):
             _, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
             if wx_now is not None:
                 model_band, model_best_dy, model_best_ev = model_dy_band(

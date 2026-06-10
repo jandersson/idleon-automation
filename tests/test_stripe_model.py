@@ -107,6 +107,26 @@ def test_model_band_is_contiguous():
     assert sorted(band) == list(range(min(band), max(band) + 1))
 
 
+def test_pose_support_excludes_sparse_tails():
+    """A single stray pose_y row (e.g. the historical phantom-match
+    fire at pose_y=38) must not extend the trusted interval — the band
+    outside data support is mean-reversion junk, observed live as
+    'best dy=0 band [-3..0]' on phantom (146, 38) matches."""
+    rng = random.Random(1)
+    rows = [
+        (0.0, 0.0, float(rng.randint(-12, -4)), float(rng.randint(250, 400)), 3.0)
+        for _ in range(MIN_SAMPLES + 10)
+    ]
+    rows.append((0.0, 0.0, -8.0, 38.0, 1.0))  # the phantom row
+    model = fit_stripe_gp(rows)
+    assert model is not None
+    assert not model.supports_pose(38.0)
+    assert model.supports_pose(316.0)
+    lo, hi = model.pose_support
+    assert lo > 150.0  # the stray row didn't drag the interval down
+    assert 250.0 - 30 <= lo <= 280.0
+
+
 def test_band_members_are_within_margin():
     class FlatModel:
         def predict_grid(self, wx, wy, pose_y, dys):

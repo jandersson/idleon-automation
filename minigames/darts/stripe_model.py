@@ -45,6 +45,17 @@ DY_GRID = tuple(range(-16, 1))
 # motion — the recorded swing tops out around 30 px/poll.
 DY_OUTLIER_ABS = 40
 
+# pose_y support interval: the model's band is only trusted between the
+# 5th and 95th percentile of training pose_y (± padding). Outside it
+# the GP mean-reverts and the "band" is junk — observed live in the
+# first model session (2026-06-10 21:30): the (146, 38) phantom
+# template match passed the adaptive conf gate during pose droughts,
+# fed pose_y=38 (1 training row within 50px) to the model, and got
+# back best dy=0 band [-3..0]. Callers fall back to the static band
+# outside support.
+POSE_SUPPORT_PCT = 0.05
+POSE_SUPPORT_PAD = 25.0
+
 
 class StripeEvModel:
     """Wraps a fitted sklearn GP regressor over
@@ -53,6 +64,18 @@ class StripeEvModel:
     def __init__(self, rows, gp):
         self.rows = rows
         self._gp = gp
+        poses = sorted(r[3] for r in rows)
+        lo_i = int(len(poses) * POSE_SUPPORT_PCT)
+        hi_i = max(lo_i, int(len(poses) * (1 - POSE_SUPPORT_PCT)) - 1)
+        self.pose_support = (
+            poses[lo_i] - POSE_SUPPORT_PAD,
+            poses[hi_i] + POSE_SUPPORT_PAD,
+        )
+
+    def supports_pose(self, pose_y: float) -> bool:
+        """Whether the training data covers this pose_y well enough for
+        the band to be data-driven rather than prior mean-reversion."""
+        return self.pose_support[0] <= pose_y <= self.pose_support[1]
 
     def predict(self, wind_x: float, wind_y: float, dy: float, pose_y: float) -> float:
         import numpy as np

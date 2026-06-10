@@ -345,5 +345,10 @@ admit fires on dys no throw has ever sampled. The band naturally
 *widens* as wind worsens (a low flat surface puts more dys within the
 margin), which is the right behavior: when nothing is good, don't be
 picky, just throw. Fires are tagged `aim_mode='model'`; the static
-band stays as the fallback when the fit is below floor or the wind
-panel is unparseable at decision time.
+band stays as the fallback when the fit is below floor, the wind
+panel is unparseable at decision time, or the pass's pose_y falls
+outside the training data's support interval (5th–95th percentile
+± 25 px). That last guard came from the first live session: the
+known phantom template match at (146, 38) slipped past the adapted
+confidence gate during pose droughts, and at pose_y=38 — one training
+row — the "band" was pure mean-reversion (best dy=0, band [-3..0]).
