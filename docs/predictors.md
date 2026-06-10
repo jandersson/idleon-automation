@@ -224,8 +224,7 @@ weighting and a posterior variance".
 ## GP Classification — `make_prob` (hoops, June 2026)
 
 The same "distribution over functions" idea, pointed at a yes/no
-question: \(P(\text{make} \mid \text{hoop\_y}, \text{hoop\_x},
-\text{platform\_y}, \text{platform\_vy})\).
+question: \\(P(\text{make} \mid \text{hoop\_y}, \text{hoop\_x}, \text{platform\_y}, \text{platform\_vy})\\).
 
 ### Why classification, when we had a perfectly good regressor
 
@@ -248,10 +247,10 @@ You can't put a Gaussian likelihood on a 0/1 label. The standard
 construction:
 
 1. Keep the GP exactly as before, but over a **latent function**
-   \(f(x)\) you never observe.
-2. Squash it through a link: \(P(y{=}1 \mid x) = \sigma(f(x))\), with
-   \(\sigma\) the logistic (or probit) function.
-3. The posterior over \(f\) is no longer Gaussian (the Bernoulli
+   \\(f(x)\\) you never observe.
+2. Squash it through a link: \\(P(y{=}1 \mid x) = \sigma(f(x))\\), with
+   \\(\sigma\\) the logistic (or probit) function.
+3. The posterior over \\(f\\) is no longer Gaussian (the Bernoulli
    likelihood breaks conjugacy), so you approximate it — sklearn's
    `GaussianProcessClassifier` uses the **Laplace approximation**: find
    the posterior mode, fit a Gaussian there, carry on as if.
@@ -289,11 +288,10 @@ flat passes hit the mid-board red/bullseye stripes at ~5× the baseline
 rate. Wind bends the same arc, in 2D (the indicator shows speed and a
 direction arrow that ranges over the full compass).
 
-The planned model (issue #41): \(E[\text{stripe value} \mid
-\text{wind\_x}, \text{wind\_y}, \text{dy}, \text{pose\_y}]\).
+The planned model (issue #41): \\(E[\text{stripe value} \mid \text{wind\_x}, \text{wind\_y}, \text{dy}, \text{pose\_y}]\\).
 Two design choices worth recording:
 
-- **Expectation over probability.** \(P(\text{bullseye})\) sounds
+- **Expectation over probability.** \\(P(\text{bullseye})\\) sounds
   natural but bullseyes are ~30 positives all-time — a classifier
   starves. Stripe value (0–5) labels every throw, and chasing the
   expectation chases bullseyes anyway, since the 5 dominates it.
@@ -302,8 +300,7 @@ Two design choices worth recording:
 - **Wind as vector components, not (speed, direction).** Angles
   wrap around (359° ≈ 1°), and an RBF kernel has no idea — it sees
   maximal distance where the physics sees near-identity. Decompose
-  instead: \(\text{wind\_x} = s\cos\theta\), \(\text{wind\_y} =
-  s\sin\theta\) (screen convention: y-positive = down, matching every
+  instead: \\(\text{wind\_x} = s\cos\theta\\), \\(\text{wind\_y} = s\sin\theta\\) (screen convention: y-positive = down, matching every
   other coordinate in the repo). Speed isn't lost — it's the norm of
   the vector — and each component acts on a flight axis we measure:
   wind_y presses the arc (the stripe axis), wind_x stretches range.
