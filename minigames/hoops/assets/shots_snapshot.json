@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-10T01:38:48",
-  "total_shots": 929,
-  "total_makes": 170,
+  "generated_at": "2026-06-10T08:55:19",
+  "total_shots": 933,
+  "total_makes": 171,
   "make_rate": 0.183,
   "sessions": [
     {
@@ -633,6 +633,13 @@
       "makes": 6,
       "explore_shots": 0,
       "explore_makes": 0
+    },
+    {
+      "started": "2026-06-10T08:54:35",
+      "shots": 4,
+      "makes": 1,
+      "explore_shots": 0,
+      "explore_makes": 0
     }
   ],
   "buckets": [
@@ -897,6 +904,12 @@
     {
       "hoop_x_bucket": 620,
       "hoop_y_bucket": 390,
+      "shots": 3,
+      "makes": 0
+    },
+    {
+      "hoop_x_bucket": 620,
+      "hoop_y_bucket": 400,
       "shots": 3,
       "makes": 0
     },
@@ -1413,8 +1426,8 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 48,
-      "makes": 32
+      "shots": 49,
+      "makes": 33
     },
     {
       "hoop_x_bucket": 710,
@@ -4526,6 +4539,29 @@
     {
       "hoop_x": 715,
       "hoop_y": 450,
+      "platform_y": 426,
+      "offset": -18,
+      "target_y": 432,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 54,
+      "ball_x_at_rim_height": 689,
+      "ball_landing_x": 642,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": -18,
+      "code_commit": "2081159c66be",
+      "predictor_kind": "trajectory_gp"
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
       "platform_y": 427,
       "offset": -18,
       "target_y": 432,
@@ -5483,7 +5519,7 @@
     {
       "required_direction": "up",
       "region": "band",
-      "shots": 41,
+      "shots": 44,
       "makes": 4
     },
     {
@@ -5495,8 +5531,8 @@
     {
       "required_direction": "up",
       "region": "mid_far",
-      "shots": 33,
-      "makes": 23
+      "shots": 34,
+      "makes": 24
     }
   ]
 }
