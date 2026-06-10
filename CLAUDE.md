@@ -119,6 +119,11 @@ Concrete cases in the codebase:
 - **Darts**: see the comment at `darts/main.py` above the throw `click()`
   — even 20–60ms of latency drifts the arm a few degrees off the
   captured release angle.
+- **It crept back once** (hoops, caught 2026-06-10): the pre-game prompt
+  check (cc42529, 2026-05-09) put a 104ms full-frame template match
+  between the fire decision and the click — five days after the original
+  latency fix. If a pre-click signal is computed from a frame that's
+  already in memory, compute it AFTER the click; the result is identical.
 
 ### Entry points and the sys.path dance
 

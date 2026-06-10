@@ -126,5 +126,26 @@ lower bound clear of the 25.5% baseline. #37 closed with that verdict.
 
 - ~~Measurement gate for closing #37~~ — passed (above).
 - Make-probability model: issue #38.
-- Loop tick rate (200–1000ms vs documented 15–30ms) unexplained; faster
-  sampling would sharpen both vy and the crossing detector.
+- ~~Loop tick rate (200–1000ms vs documented 15–30ms) unexplained~~ —
+  explained 2026-06-10 by profiling (`scripts/profile_hoops_loop.py`):
+  the tick is compute-bound on per-poll template matching, same as the
+  darts loop. Steady state was ~179ms (`find_game_over` 112ms full-frame
+  every tick + `find_platform` 54ms + grab 13ms); between shots +63ms
+  `find_rim`; pre-game +104ms `find_game_prompt` — stacking to the
+  observed 200–1000ms. See TODO.md "Poll-loop tick rate" for the fixes.
+
+## Post-investigation addendum (2026-06-10): fire-latency regression
+
+Every shot from 2026-05-09 (cc42529) to 2026-06-10 fired ~100ms after
+its fire decision: the start-prompt template match (104ms, full-frame)
+sat between the crossing detector and the click — re-introduced five
+days after the original click-latency fix. Launch y therefore trailed
+the sampled `platform_y` by roughly `platform_vy * 0.1s` (tens of px on
+fast bobs), which is the same mechanism as the velocity-driven
+over/undershoots documented above and inflated their magnitude during
+the whole #37 window. Fixed by computing the prompt match after the
+click from the already-held frame (identical result, zero latency).
+Interpretation caveats: rows before/after the fix embed systematically
+different decision→launch latencies, so velocity-coupled effects fitted
+on pre-fix data (and the predictors trained on it) will run slightly
+hot until post-fix sessions accumulate.

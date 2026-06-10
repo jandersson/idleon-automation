@@ -1512,12 +1512,6 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                     if last_fired_at_ms is not None else None
                 )
                 last_fired_at_ms = fired_at_ms
-                # Detect the "Make a shot to start the game!" prompt
-                # *before* firing — it's the in-game signal that this is
-                # the first shot of a fresh game. If the prompt was up
-                # before and is gone after, that's a make regardless of
-                # OCR or trajectory checks.
-                prompt_visible_before = find_game_prompt(frame)[0]
                 # Click at the center of the game window. Click coordinates
                 # have no measurable effect on aim (verified 2026-05-03 via
                 # CLICK_STRATEGY experiments — see docs/cleanup_backlog.md
@@ -1530,6 +1524,19 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 # target, and eliminates corner-case "click at extreme
                 # screen position" risks.
                 click(left + width // 2, top + height // 2)
+                # "Make a shot to start the game!" prompt state at fire
+                # time — the in-game signal that this is the first shot of
+                # a fresh game (prompt up before + gone after = make,
+                # regardless of OCR or trajectory checks). Computed AFTER
+                # the click, from the frame already in memory: the match
+                # result is identical (the frame predates the click either
+                # way), but running it pre-click sat ~100ms of full-frame
+                # template matching between the fire decision and the
+                # click, scattering launch y by platform_vy * latency —
+                # the exact bias the click-timing rule exists to prevent.
+                # It crept in 2026-05-09 (cc42529), five days after the
+                # original latency fix, and shipped with every shot since.
+                prompt_visible_before = find_game_prompt(frame)[0]
                 # Per-shot monitor folder: we'll save pre/post-shot screenshots
                 # plus all flight frames captured during the cooldown.
                 shot_dir = _make_monitor_dir(shot_idx) if MONITOR_MODE else None
