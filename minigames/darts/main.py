@@ -18,7 +18,7 @@ from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
 from common.git_info import current_code_commit
-from minigames.darts.detector import find_release_pose, find_game_over, score_region, score_changed
+from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import compute_arm_centroid
 
@@ -107,6 +107,16 @@ FLIGHT_POLL = 0.05
 # cycles (wind change, score animations) while still terminating quickly
 # when the dartboard is actually gone.
 GAME_OVER_NO_POSE_SEC = 25.0
+
+# Streak celebration handling ("...one hundred and EIGHTY!", appears at
+# 4 bullseyes in a row): the celebration animation replaces the throwing
+# pose, so no release match happens until it's dismissed — without
+# detection the no-pose timeout bails mid-game (observed session
+# 2026-06-10 11:52). Start checking for the banner once the pose has
+# been missing this long, and click periodically to continue (clicks
+# are button-presses in Idleon).
+CELEBRATION_CHECK_AFTER_S = 6.0
+CELEBRATION_CLICK_EVERY_S = 4.0
 
 # Swing-pass fire gate (#26): skip the fire when the arm-centroid dy vs
 # the previous poll is positive — the up-swing pass signature. Validated
@@ -351,6 +361,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     # match timing — the missing data the #25 discriminator needs.
     prev_bgr_for_motion: np.ndarray | None = None
     prev_arm_centroid_y: int | None = None  # previous poll's centroid, for the dy discriminator
+    last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
 
     while True:
         check_failsafe()
@@ -407,6 +418,18 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             # diagnostic state vars so the next match starts a fresh streak.
             match_streak_len = 0
             prev_match_y = None
+            # Streak celebration check: the banner replaces the throwing
+            # pose, so a long no-pose stretch may be a celebration, not
+            # game over. Keep the timeout from bailing while it's up and
+            # click periodically to continue.
+            if time.time() - last_pose_time > CELEBRATION_CHECK_AFTER_S:
+                celebrating, celeb_conf = find_celebration(frame)
+                if celebrating:
+                    last_pose_time = time.time()
+                    if time.time() - last_celebration_click > CELEBRATION_CLICK_EVERY_S:
+                        print(f"  [celebration] streak banner up (conf={celeb_conf:.2f}) — clicking to continue")
+                        click(left + width // 2, top + height // 2)
+                        last_celebration_click = time.time()
             # Game-over signal: the entire dartboard scene is replaced when
             # the trial ends, so the player avatar disappears and the release
             # template can't match. If we haven't seen the player in a while,

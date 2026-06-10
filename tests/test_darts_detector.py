@@ -110,3 +110,24 @@ def test_dy_gate_skips_upswing_fires_only():
     assert not _is_upswing_fire(-8)       # release-pass hit signature
     assert not _is_upswing_fire(DY_GATE_MAX)
     assert not _is_upswing_fire(None)     # dropout → fire, don't starve
+
+
+def test_find_celebration_on_real_frames():
+    """The streak banner ('...one hundred and EIGHTY!', 4 bullseyes in a
+    row) replaced the throwing pose and made the no-pose timeout bail
+    mid-game (session 2026-06-10 11:52). Template-matched against the
+    captured frame; normal-play frames stay under threshold."""
+    from pathlib import Path
+    import cv2
+    from minigames.darts.detector import find_celebration
+    root = Path(__file__).parent.parent
+    pos = root / "minigames/darts/assets/monitor/throw_003_115303/post_throw.png"
+    neg = root / "minigames/darts/assets/monitor/throw_002_115254/post_throw.png"
+    if not (pos.exists() and neg.exists()):
+        return  # monitor frames cleaned up — skip
+    pos_bgra = cv2.cvtColor(cv2.imread(str(pos)), cv2.COLOR_BGR2BGRA)
+    neg_bgra = cv2.cvtColor(cv2.imread(str(neg)), cv2.COLOR_BGR2BGRA)
+    is_celeb, conf = find_celebration(pos_bgra)
+    assert is_celeb and conf > 0.9
+    is_celeb_neg, conf_neg = find_celebration(neg_bgra)
+    assert not is_celeb_neg and conf_neg < 0.6

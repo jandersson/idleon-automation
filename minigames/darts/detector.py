@@ -85,6 +85,29 @@ def find_release_pose(
     return center, val
 
 
+def find_celebration(
+    frame: np.ndarray, threshold: float = 0.75
+) -> tuple[bool, float]:
+    """Detect the streak celebration banner ("...one hundred and
+    EIGHTY!", observed at 4 bullseyes in a row, 2026-06-10). While it
+    plays, the player sprite celebrates instead of swinging, so the
+    release pose can't match and the no-pose timeout would misread the
+    state as game over. Template is the stable middle words of the
+    bottom-center text (the Ooo/IIGHTY ends may stretch with streak
+    size); validated 1.0 on the celebration frame vs ~0.34 floor on
+    normal play. Returns (False, 0.0) when the template isn't captured.
+    """
+    path = ASSETS / "celebration.png"
+    if not path.exists():
+        return False, 0.0
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    template = _load("celebration.png")
+    center, val, _scale = match_multiscale_center(bgr, template)
+    if val < threshold:
+        return False, val
+    return True, val
+
+
 def find_game_over(
     frame: np.ndarray, threshold: float = 0.85
 ) -> tuple[bool, float]:
