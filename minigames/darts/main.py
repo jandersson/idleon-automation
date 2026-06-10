@@ -118,6 +118,19 @@ GAME_OVER_NO_POSE_SEC = 25.0
 CELEBRATION_CHECK_AFTER_S = 6.0
 CELEBRATION_CLICK_EVERY_S = 4.0
 
+# Generic unknown-overlay handling: a second stuck-mid-game report
+# (2026-06-10 12:01) was NOT the 180 banner — some other popup replaced
+# the throwing pose and the bot bailed blind. Templating popups one at a
+# time is whack-a-mole; instead, when the pose has been missing this
+# long AND the frame is definitely not the game-over screen (conf well
+# below threshold), probe-click the center a few times — Idleon popups
+# dismiss on click. A diagnostic frame is saved on the first probe and
+# at bail time so the next unknown overlay arrives with evidence.
+UNKNOWN_OVERLAY_PROBE_AFTER_S = 10.0
+MAX_OVERLAY_PROBE_CLICKS = 3
+OVERLAY_PROBE_GO_CONF_MAX = 0.5  # only probe when clearly not game over
+DIAGNOSTICS_DIR = Path(__file__).parent / "assets" / "diagnostics"
+
 # Swing-pass fire gate (#26): skip the fire when the arm-centroid dy vs
 # the previous poll is positive — the up-swing pass signature. Validated
 # against launch-angle ground truth across every instrumented fire
@@ -362,6 +375,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
     prev_bgr_for_motion: np.ndarray | None = None
     prev_arm_centroid_y: int | None = None  # previous poll's centroid, for the dy discriminator
     last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
+    overlay_probe_clicks = 0  # unknown-overlay probes since the last real pose match
 
     while True:
         check_failsafe()
@@ -422,7 +436,8 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             # pose, so a long no-pose stretch may be a celebration, not
             # game over. Keep the timeout from bailing while it's up and
             # click periodically to continue.
-            if time.time() - last_pose_time > CELEBRATION_CHECK_AFTER_S:
+            elapsed_no_pose = time.time() - last_pose_time
+            if elapsed_no_pose > CELEBRATION_CHECK_AFTER_S:
                 celebrating, celeb_conf = find_celebration(frame)
                 if celebrating:
                     last_pose_time = time.time()
@@ -430,14 +445,37 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                         print(f"  [celebration] streak banner up (conf={celeb_conf:.2f}) — clicking to continue")
                         click(left + width // 2, top + height // 2)
                         last_celebration_click = time.time()
+                elif (
+                    elapsed_no_pose > UNKNOWN_OVERLAY_PROBE_AFTER_S
+                    and go_conf < OVERLAY_PROBE_GO_CONF_MAX
+                    and overlay_probe_clicks < MAX_OVERLAY_PROBE_CLICKS
+                    and time.time() - last_celebration_click > CELEBRATION_CLICK_EVERY_S
+                ):
+                    # Unknown overlay: not the celebration, clearly not the
+                    # game-over screen, and the pose is long gone. Save
+                    # evidence, then probe-click — Idleon popups dismiss
+                    # on click. The pose reappearing resets the budget.
+                    if overlay_probe_clicks == 0:
+                        DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
+                        diag = DIAGNOSTICS_DIR / f"nopose_{datetime.now():%Y%m%d_%H%M%S}.png"
+                        save_frame(diag, frame)
+                        print(f"  [overlay] saved diagnostic frame to {diag}")
+                    overlay_probe_clicks += 1
+                    print(f"  [overlay] unknown screen state (no pose {elapsed_no_pose:.0f}s, "
+                          f"go_conf={go_conf:.2f}) — probe click {overlay_probe_clicks}/{MAX_OVERLAY_PROBE_CLICKS}")
+                    click(left + width // 2, top + height // 2)
+                    last_celebration_click = time.time()
             # Game-over signal: the entire dartboard scene is replaced when
             # the trial ends, so the player avatar disappears and the release
             # template can't match. If we haven't seen the player in a while,
             # bail.
             if time.time() - last_pose_time > GAME_OVER_NO_POSE_SEC:
                 throw_db.commit()  # flush any unflushed polls before exit
+                DIAGNOSTICS_DIR.mkdir(parents=True, exist_ok=True)
+                diag = DIAGNOSTICS_DIR / f"bail_{datetime.now():%Y%m%d_%H%M%S}.png"
+                save_frame(diag, frame)
                 print(f"No release pose detected for {GAME_OVER_NO_POSE_SEC:.0f}s — "
-                      f"assuming game over. Final session: "
+                      f"assuming game over (bail frame: {diag}). Final session: "
                       f"{shot_stats['makes']}/{shot_stats['attempts']} makes.")
                 return
             time.sleep(POLL_INTERVAL)
@@ -454,6 +492,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                 arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
             )
             last_pose_time = time.time()  # don't fire, but keep game-over heuristic happy
+            overlay_probe_clicks = 0
             print(f"  [skip] dy-gate: centroid_dy={arm_centroid_dy:+d} > "
                   f"{DY_GATE_MAX} — up-swing pass, waiting for release")
             time.sleep(POLL_INTERVAL)
@@ -464,6 +503,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
             arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
         )
         last_pose_time = time.time()
+        overlay_probe_clicks = 0
         px, py = pose
         match_streak_len += 1
         prev_match_y_for_log = prev_match_y  # capture for log_throw below
