@@ -480,6 +480,7 @@ def _run_inner(
         print(f"Loaded {len(wind_seen)} existing wind samples; will only save new states.")
     last_pose_time = time.time()
     last_wind_crop: np.ndarray | None = None
+    last_wind_parse: tuple | None = None  # (speed, rounded angle) last announced
     # Temporal diagnostics for the apex-vs-forward-release discriminator
     # (see STRATEGY.md "Game-physics assumptions"). match_streak_len counts
     # consecutive POLL_INTERVAL frames where pose was detected; prev_match_y
@@ -523,6 +524,34 @@ def _run_inner(
             print(f"Game over detected (conf={go_conf:.2f}). Final session: "
                   f"{shot_stats['makes']}/{shot_stats['attempts']} hits.")
             return
+
+        # Wind-change watch. The game flips the wind panel (plus a "The
+        # wind has changed" toast just below it — outside the wind
+        # region, so no occlusion) during the PREVIOUS throw's cooldown;
+        # see monitor/throw_012_233144 flight_008->014. The per-poll
+        # model band and the at-fire DB snapshot both read the live
+        # panel, so aim and attribution were already fresh — but the
+        # change used to be printed only as post-click bookkeeping of
+        # the NEXT throw, which read in the log as one-throw-late
+        # detection (user report, 2026-06-10 23:30 session). Announce it
+        # the poll it appears instead. The pixel diff gates the ~ms
+        # parse; comparing the parsed (speed, angle) suppresses repeat
+        # announcements from panel animation frames.
+        wind_now = _crop_wind(frame)
+        if wind_now is not None and wind_now.size:
+            if last_wind_crop is None or wind_now.shape != last_wind_crop.shape:
+                last_wind_crop = wind_now
+            else:
+                wind_diff = float(cv2.absdiff(wind_now, last_wind_crop).astype(np.float32).mean())
+                if wind_diff >= WIND_DEDUP_THRESHOLD:
+                    last_wind_crop = wind_now
+                    w_speed, w_angle, w_x, w_y = parse_wind(wind_now)
+                    parse_key = (w_speed, None if w_angle is None else round(w_angle))
+                    if parse_key != last_wind_parse:
+                        last_wind_parse = parse_key
+                        desc = (f"{w_speed} mph @ {w_angle:+.0f}° -> components ({w_x:+.1f}, {w_y:+.1f})"
+                                if w_speed else "calm")
+                        print(f"  [wind] changed (diff={wind_diff:.1f}): {desc}")
 
         # threshold=0 so we get a position+conf for every poll, including
         # sub-threshold ones — required for the polls table. The fire
@@ -729,16 +758,9 @@ def _run_inner(
         # updates after the dart lands, so the region still shows the
         # pre-throw value here.
         score_before = _capture_score(left, top, width, height)
-        # Log wind change between throws (vs the previous throw's reading,
-        # not vs the saved library — that one only fires on never-seen-before
-        # samples). Useful for correlating bullseye-or-not with wind shifts.
-        if wind_crop is not None and last_wind_crop is not None \
-                and wind_crop.shape == last_wind_crop.shape:
-            wind_diff = float(cv2.absdiff(wind_crop, last_wind_crop).astype(np.float32).mean())
-            if wind_diff >= WIND_DEDUP_THRESHOLD:
-                print(f"  [wind] changed since last throw (diff={wind_diff:.1f})")
-        if wind_crop is not None:
-            last_wind_crop = wind_crop
+        # (Wind-change announcements happen in the per-poll watch at the
+        # top of the loop, the poll the panel flips — not here. This
+        # block only attributes the fire-frame wind to the throw row.)
         n_wind_before = len(wind_seen)
         wind_sample_name = _match_or_save_wind_sample(wind_crop, wind_seen)
         wind_speed, wind_angle, wind_x, wind_y = parse_wind(wind_crop)
