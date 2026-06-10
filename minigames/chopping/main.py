@@ -81,9 +81,13 @@ RED_SAFETY_MARGIN_PX = 8
 # toward the measured kill latency rather than bypassing the gate.
 MIN_TIME_TO_RED_MS = 150
 
-# Per-poll DB write rate cap. ~100Hz polling × many fields would flood the
-# DB; 10Hz is plenty to see what happens between chops.
-POLL_LOG_INTERVAL = 0.1
+# Per-poll DB write rate cap. 0 = log every loop iteration (~40-80Hz).
+# Raised from 10Hz to full rate 2026-06-11: attributing the speed ramp
+# (per-chop? per-bounce? eased motion?) needs leaf positions at loop
+# resolution — 10Hz aliases sweeps that bounce between samples. A 60s
+# round is ~4k rows / ~quarter MB, fine for SQLite; rows are committed
+# in batches (per fire + at round end), not per insert.
+POLL_LOG_INTERVAL = 0.0
 
 
 def run():
