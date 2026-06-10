@@ -475,3 +475,24 @@ def test_fetch_clean_trajectories_floor_bounce_uses_peak_as_arrival(tmp_path):
     rows = fetch_clean_trajectories(conn, "up")
     conn.close()
     assert rows == [(534.0, 674.0, 501.0, 395.0)]  # arrival = peak
+
+
+def test_fetch_vy_labeled_returns_all_directions_and_explore(tmp_path):
+    """#38 training fetch: direction-agnostic, includes exploration rows,
+    excludes rows missing vy or the made label."""
+    from minigames.hoops.shot_log import fetch_vy_labeled
+    conn = open_db(tmp_path / "shots.db")
+    log_shot(conn, hoop_y=389, hoop_x=602, platform_y=460, platform_vy=-40.0,
+             made=1, required_direction="up", target_source="predictor")
+    log_shot(conn, hoop_y=545, hoop_x=700, platform_y=505, platform_vy=110.0,
+             made=0, required_direction="down", target_source="explore")
+    log_shot(conn, hoop_y=400, hoop_x=650, platform_y=420,
+             made=0, required_direction="up")  # no vy -> excluded
+    log_shot(conn, hoop_y=400, hoop_x=650, platform_y=420, platform_vy=-30.0,
+             required_direction="up")  # no label -> excluded
+    rows = fetch_vy_labeled(conn)
+    conn.close()
+    assert sorted(rows) == [
+        (389.0, 602.0, 460.0, -40.0, 1),
+        (545.0, 700.0, 505.0, 110.0, 0),
+    ]

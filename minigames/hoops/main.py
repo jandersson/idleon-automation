@@ -25,8 +25,8 @@ from common.monitor import make_shot_dir, save_frame, save_meta
 from common.regions import get_region
 from common.session_log import session_log
 from common.git_info import current_code_commit
-from minigames.hoops.shot_log import open_db, log_shot, set_make, fetch_makes, fetch_clean_trajectories, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
-from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf
+from minigames.hoops.shot_log import open_db, log_shot, set_make, fetch_makes, fetch_clean_trajectories, fetch_vy_labeled, CLEAN_MAKE_TOLERANCE, MAX_BACK_DRIFT_PX
+from common.predictor import fit_knn, fit_bivariate, fit_gp, fit_trajectory_knn, fit_trajectory_gp, fit_trajectory_rf, fit_make_prob
 from common.auto_commit import commit_file_if_changed
 from minigames.hoops.review_nag import maybe_print_nag
 from common.ball_trajectory import analyse_shot_dir
@@ -296,6 +296,40 @@ def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     if arrival_x is None or hoop_x is None:
         return True
     return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
+
+
+def _crossing_candidates(
+    samples: list[tuple[float, int, int]],
+    bucket_px: int = 8,
+    max_age_s: float = 40.0,
+) -> list[tuple[int, float, str]]:
+    """Candidate (target_y, expected_vy, direction) triples from the live
+    platform buffer (#38).
+
+    Each consecutive sample pair sweeps a y-band in one direction; the
+    bob is periodic, so the platform will cross those ys again next
+    cycle at a similar phase — meaning the trailing-window vy observed
+    during the sweep is the expected vy of a future fire at that y.
+    This is what lets the make-probability model choose a (y, vy, dir)
+    state empirically instead of from bob physics. Bucketed by y band
+    and direction; the newest observation of a bucket wins.
+    """
+    if len(samples) < 3:
+        return []
+    t_end = samples[-1][0]
+    buckets: dict[tuple[int, str], tuple[int, float]] = {}
+    for i in range(1, len(samples)):
+        t1, _, y1 = samples[i]
+        t0, _, y0 = samples[i - 1]
+        if t_end - t1 > max_age_s or y1 == y0:
+            continue
+        direction = "up" if y1 < y0 else "down"
+        mid_y = (y0 + y1) // 2
+        vy = _platform_velocity(samples[: i + 1])
+        if vy is None:
+            continue
+        buckets[(mid_y // bucket_px, direction)] = (mid_y, vy)
+    return [(y, vy, d) for (_b, d), (y, vy) in buckets.items()]
 
 
 def _explore_target(
@@ -794,6 +828,29 @@ def _select_target(
     offset = base_offset + perturbation
     target_y = hoop_y + offset
     target_source = "sweep" if perturbation else "predictor"
+    model_tag = ""
+    # Make-probability override (#38): rank the live (platform_y, vy,
+    # dir) candidates from the bob buffer and fire at the most makeable
+    # state — direction included, so the model can out-vote the
+    # hand-drawn direction policy where it has the data. Falls through
+    # to the per-direction predictor when the model or buffer is thin.
+    # The miss-sweep perturbation still applies around the model's pick.
+    model = predictors.get("make_prob")
+    if model is not None and len(range_samples) >= 40:
+        cands = _crossing_candidates(list(range_samples))
+        if cands:
+            probs = model.score_candidates(
+                hoop_y, hoop_x, [(y, vy) for y, vy, _d in cands],
+            )
+            best_i = max(range(len(cands)), key=lambda i: probs[i])
+            best_y, best_vy, best_dir = cands[best_i]
+            required_dir = best_dir
+            predicted_offset_value = best_y - hoop_y
+            offset = predicted_offset_value + perturbation
+            target_y = hoop_y + offset
+            target_source = "model"
+            predictor = model  # marks predictor_fit for logging
+            model_tag = f" [model p={probs[best_i]:.2f} @ y={best_y} vy~{best_vy:+.0f} dir={best_dir}]"
     # Free-shot exploration: pre-game misses cost no lives, so once the
     # predictor-aimed first shot has missed, sample targets across the
     # whole bob range instead of grinding the predictor's neighborhood —
@@ -811,6 +868,7 @@ def _select_target(
             offset = target_y - hoop_y
             perturbation = offset - predicted_offset_value
             target_source = "explore"
+            model_tag = ""  # exploration overrides the model's pick
     # Cap target_y inside the platform's observed bob range with a small
     # margin so the platform passes through (rather than only kissing at
     # the apex). Without this, a perturbation that lands target_y exactly
@@ -839,7 +897,7 @@ def _select_target(
     override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
     sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
     dir_tag = f", dir={required_dir}" if required_dir != REQUIRED_DIRECTION else ""
-    print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{dir_tag}, target launch y={target_y}")
+    print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{model_tag}{dir_tag}, target launch y={target_y}")
     return _Target(
         target_y=target_y,
         offset=offset,
@@ -1098,6 +1156,17 @@ def run():
             predictors = {
                 d: _fit_predictor(shot_db, d) for d in ("up", "down")
             }
+            if PREDICTOR_KIND == "make_prob":
+                # The classifier ranks live (platform_y, vy, dir)
+                # candidates; the per-direction predictors above stay as
+                # the cold-start / thin-buffer fallback.
+                vy_rows = fetch_vy_labeled(shot_db)
+                model = fit_make_prob(vy_rows)
+                if model is None:
+                    print(f"make_prob: data floor not met ({len(vy_rows)} labeled vy rows) — running on the per-direction fallback")
+                else:
+                    print(f"MAKE_PROB classifier fitted (n={model.n}, makes={sum(r[4] for r in vy_rows)}) — ranking live candidates")
+                    predictors["make_prob"] = model
             _run_inner(session_started, shot_db, predictors, code_commit)
         finally:
             shot_db.close()
@@ -1106,39 +1175,41 @@ def run():
 
 def _fit_predictor(shot_db, direction: str):
     """Fit the PREDICTOR_KIND model on rows for one firing direction.
-    Returns None (cold start) when too few samples exist."""
-    if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf"):
+    Returns None (cold start) when too few samples exist. make_prob's
+    per-direction fallback uses gp."""
+    kind = "gp" if PREDICTOR_KIND == "make_prob" else PREDICTOR_KIND
+    if kind in ("trajectory_knn", "trajectory_gp", "trajectory_rf"):
         # All trajectory predictors learn from every shot (make or miss)
         # and use the same input schema (4-tuple with arrival_x) and
         # envelope clamp from nearby makes.
         rows = fetch_clean_trajectories(shot_db, direction)
         makes = fetch_makes(shot_db, direction)
-        if PREDICTOR_KIND == "trajectory_knn":
+        if kind == "trajectory_knn":
             predictor = fit_trajectory_knn(rows, makes=makes, k=5)
-        elif PREDICTOR_KIND == "trajectory_gp":
+        elif kind == "trajectory_gp":
             predictor = fit_trajectory_gp(rows, makes=makes)
         else:
             predictor = fit_trajectory_rf(rows, makes=makes)
     else:
         rows = fetch_makes(shot_db, direction)
-        if PREDICTOR_KIND == "knn":
+        if kind == "knn":
             # k=3 (was 5): smaller K is more local. With k=5 the
             # predictor over-smoothed in regions with sparse training
             # data — a single nearby make at hoop=(593,390) with
             # offset=78 got diluted to offset=23 by 4 distant
             # neighbours. k=3 lets the local data dominate more.
             predictor = fit_knn(rows, k=3)
-        elif PREDICTOR_KIND == "bivariate":
+        elif kind == "bivariate":
             predictor = fit_bivariate(rows)
-        elif PREDICTOR_KIND == "gp":
+        elif kind == "gp":
             predictor = fit_gp(rows)
         else:
             raise ValueError(f"Unknown PREDICTOR_KIND {PREDICTOR_KIND!r}")
     if predictor is None:
-        print(f"No predictor fit ({PREDICTOR_KIND!r}, too few samples in dir={direction!r}); using cold-start offset={COLD_START_OFFSET}")
+        print(f"No predictor fit ({kind!r}, too few samples in dir={direction!r}); using cold-start offset={COLD_START_OFFSET}")
     else:
-        sample_kind = "shots" if PREDICTOR_KIND in ("trajectory_knn", "trajectory_gp", "trajectory_rf") else "makes"
-        print(f"{PREDICTOR_KIND.upper()} target predictor (dir={direction!r}, n={predictor.n} {sample_kind})")
+        sample_kind = "shots" if kind in ("trajectory_knn", "trajectory_gp", "trajectory_rf") else "makes"
+        print(f"{kind.upper()} target predictor (dir={direction!r}, n={predictor.n} {sample_kind})")
     return predictor
 
 

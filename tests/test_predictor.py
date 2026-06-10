@@ -412,3 +412,39 @@ def test_trajectory_knn_matches_predictor_protocol():
     assert pred is not None
     assert isinstance(pred.n, int)
     assert isinstance(pred.predict(400, 700), float)
+
+
+def test_make_prob_learns_a_separable_make_zone():
+    """#38 classifier: synthetic world where makes happen only in a
+    (platform_y, vy) pocket at one hoop — the model must rank an
+    in-pocket candidate above out-of-pocket ones."""
+    from common.predictor import fit_make_prob
+    import random
+    rng = random.Random(0)
+    rows = []
+    for _ in range(120):
+        py = rng.uniform(300, 510)
+        vy = rng.uniform(-150, 80)
+        made = 1 if (440 <= py <= 480 and -60 <= vy <= -20) else 0
+        rows.append((380.0, 610.0, py, vy, made))
+    # Guarantee enough positives for the fit floor.
+    for _ in range(10):
+        rows.append((380.0, 610.0, rng.uniform(445, 475), rng.uniform(-55, -25), 1))
+    model = fit_make_prob(rows)
+    assert model is not None
+    probs = model.score_candidates(380.0, 610.0, [
+        (460.0, -40.0),   # in the make pocket
+        (320.0, -130.0),  # far outside
+        (500.0, 60.0),    # turnaround zone
+    ])
+    assert probs[0] > probs[1]
+    assert probs[0] > probs[2]
+    assert probs[0] > 0.4
+
+
+def test_make_prob_returns_none_below_floors():
+    from common.predictor import fit_make_prob
+    few = [(380.0, 610.0, 400.0, -50.0, 1)] * 10
+    assert fit_make_prob(few) is None  # n floor
+    no_makes = [(380.0, 610.0, 400.0 + i, -50.0, 0) for i in range(80)]
+    assert fit_make_prob(no_makes) is None  # positives floor

@@ -591,3 +591,36 @@ def test_direction_policy_band_stays_on_default():
     assert _required_direction_for(326, 631) == REQUIRED_DIRECTION
     assert _required_direction_for(404, 617) == REQUIRED_DIRECTION
     assert _required_direction_for(350, 580) == REQUIRED_DIRECTION
+
+
+def test_crossing_candidates_from_triangle_wave():
+    """#38 candidate builder: a triangle-wave bob yields candidates on
+    both directions with sensible vy signs (positive = downward), and
+    buckets dedupe repeated crossings."""
+    from minigames.hoops.main import _crossing_candidates
+    samples = []
+    t = 0.0
+    y = 300
+    direction = 1
+    for _ in range(120):
+        samples.append((t, 136, y))
+        y += direction * 20
+        if y >= 500 or y <= 300:
+            direction *= -1
+        t += 0.25
+    cands = _crossing_candidates(samples)
+    assert cands, "expected candidates from a moving platform"
+    dirs = {d for _y, _vy, d in cands}
+    assert dirs == {"up", "down"}
+    for y_c, vy, d in cands:
+        assert 300 <= y_c <= 500
+        # Mid-swing candidates carry the sweep's sign (window-averaged,
+        # so turnaround-adjacent ones may straddle — check the clear ones).
+        if 360 <= y_c <= 440:
+            assert (vy > 0) == (d == "down")
+
+
+def test_crossing_candidates_empty_for_static_platform():
+    from minigames.hoops.main import _crossing_candidates
+    samples = [(i * 0.25, 136, 400) for i in range(60)]
+    assert _crossing_candidates(samples) == []

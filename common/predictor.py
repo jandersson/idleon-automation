@@ -620,6 +620,82 @@ def fit_trajectory_gp(
     )
 
 
+class MakeProbPredictor:
+    """P(make | hoop_y, hoop_x, platform_y, platform_vy) classifier (#38).
+
+    Unlike the reach-regression predictors, this one has no censoring
+    problem: every shot is a labeled sample (a structure clank is simply
+    made=0), so it can learn the clank band's geometry that reach models
+    structurally cannot see — at the band's hoops, reach is right and
+    the make probability is what varies.
+
+    It deliberately does NOT implement predict(hoop_y, hoop_x): firing
+    direction and bob phase are embedded in the candidate (platform_y,
+    platform_vy) pairs, which only the caller can supply (built
+    empirically from the live platform sample buffer — each recent
+    crossing of a y is a candidate carrying the vy actually observed
+    there). Use score_candidates and take the argmax.
+    """
+
+    def __init__(self, points: list[tuple[float, float, float, float, int]], clf):
+        self.points = points
+        self._clf = clf
+
+    @property
+    def n(self) -> int:
+        return len(self.points)
+
+    def score_candidates(
+        self,
+        hoop_y: float,
+        hoop_x: float,
+        candidates: list[tuple[float, float]],
+    ) -> list[float]:
+        """P(make) for each candidate (platform_y, platform_vy) at the
+        given hoop. Order matches the input."""
+        import numpy as np
+
+        X = np.array([[hoop_y, hoop_x, py, vy] for py, vy in candidates])
+        return [float(p) for p in self._clf.predict_proba(X)[:, 1]]
+
+
+def fit_make_prob(
+    rows: list[tuple[float, float, float, float, int]],
+    min_samples: int = 60,
+    min_makes: int = 8,
+) -> MakeProbPredictor | None:
+    """Fit the make-probability classifier on
+    (hoop_y, hoop_x, platform_y, platform_vy, made) rows.
+
+    GP classifier with an anisotropic RBF: length scales mirror the
+    trajectory GP's (hoop dims smooth at ~50px) with tighter platform_y
+    and vy scales — the band's make window is narrow in both. Returns
+    None below the sample/positive-label floors (a classifier without
+    positives can only say "never fire").
+
+    sklearn import is lazy, matching the other fit_* factories.
+    """
+    if len(rows) < min_samples or sum(r[4] for r in rows) < min_makes:
+        return None
+    import numpy as np
+    from sklearn.gaussian_process import GaussianProcessClassifier
+    from sklearn.gaussian_process.kernels import RBF, ConstantKernel
+
+    points = [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3]), int(r[4]))
+        for r in rows
+    ]
+    X = np.array([[p[0], p[1], p[2], p[3]] for p in points])
+    y = np.array([p[4] for p in points])
+    kernel = ConstantKernel(1.0, (1e-2, 1e3)) * RBF(
+        length_scale=[50.0, 50.0, 25.0, 25.0],
+        length_scale_bounds=(1.0, 1e3),
+    )
+    clf = GaussianProcessClassifier(kernel=kernel, n_restarts_optimizer=1)
+    clf.fit(X, y)
+    return MakeProbPredictor(points, clf)
+
+
 def _solve_3x3(M: list[list[float]], v: list[float]) -> tuple[float, float, float] | None:
     def det3(m: list[list[float]]) -> float:
         return (

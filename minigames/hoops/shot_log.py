@@ -367,3 +367,28 @@ def fetch_clean_trajectories_vy(
         if arrival is not None:
             out.append((float(hy), float(hx), float(py), float(vy), float(arrival)))
     return out
+
+
+def fetch_vy_labeled(
+    conn: sqlite3.Connection,
+) -> list[tuple[float, float, float, float, int]]:
+    """Return (hoop_y, hoop_x, platform_y, platform_vy, made) for every
+    velocity-instrumented shot with a make label — training data for the
+    make-probability predictor (#38).
+
+    Deliberately NOT direction-filtered and NOT censored: classification
+    has no reach-censoring problem (a clank is simply made=0), the
+    firing direction is embedded in the (platform_y, platform_vy) pair,
+    and exploration shots are included — wild targets with honest labels
+    are exactly the coverage the model needs. `made` labels are
+    respawn-corrected (see set_make), so they're trustworthy.
+    """
+    return [
+        (float(r[0]), float(r[1]), float(r[2]), float(r[3]), int(r[4]))
+        for r in conn.execute(
+            'SELECT hoop_y, hoop_x, platform_y, platform_vy, made FROM shots '
+            'WHERE platform_vy IS NOT NULL AND made IS NOT NULL '
+            'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
+            'AND platform_y IS NOT NULL'
+        )
+    ]

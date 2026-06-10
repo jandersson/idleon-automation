@@ -57,7 +57,7 @@ MINIGAMES = [
             {
                 "label": "Predictor",
                 "env": "HOOPS_PREDICTOR_KIND",
-                "values": ["gp", "knn", "bivariate", "trajectory_knn", "trajectory_gp", "trajectory_rf"],
+                "values": ["gp", "make_prob", "knn", "bivariate", "trajectory_knn", "trajectory_gp", "trajectory_rf"],
                 "default": "gp",
             },
         ],
@@ -265,6 +265,7 @@ class Launcher:
     # Type colors are arbitrary but consistent (each model gets one).
     _PREDICTOR_CARD_SPECS = [
         ("gp",             "🧠", "GP",     "#7B68EE"),
+        ("make_prob",      "🎲", "P(make)", "#DC143C"),
         ("knn",            "🎯", "KNN",    "#4682B4"),
         ("bivariate",      "📐", "Biv",    "#808080"),
         ("trajectory_knn", "📍", "T-KNN",  "#FF8C00"),
