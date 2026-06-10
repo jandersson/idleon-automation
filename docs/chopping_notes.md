@@ -22,17 +22,44 @@ confidence noted since none of this is from the game's code.
 
 ## Speed model
 
-- **Edge bounces speed the leaf up** ("Each time it hits an edge it
-  speeds up" — Steam tips thread). Time spent not scoring is
-  therefore actively harmful: the leaf keeps bouncing and ramping.
+- **Leaf motion is EASED, not constant-speed** (measured, 00:46
+  full-rate session): mid-bar ~630 px/s vs ~290–350 near the edges,
+  with sample density to match — sinusoidal-ish, like the hoops
+  platform bob. Gate consequence: an instantaneous vx sampled in the
+  slow edge region understates the speed the leaf reaches crossing
+  toward mid-bar red; the gate floors its projected speed at half the
+  recent-max |vx| (EASING_SPEED_FLOOR_FRAC).
+- **No measurable per-chop or per-bounce ramp at low scores**
+  (measured, same session): peak speed per sweep 786/580/791/724 px/s
+  across 0→5 chops and 3 bounces — flat. The maintainer's per-chop
+  intuition and the Steam per-bounce claim both remain possible at
+  higher scores (the "hyperspeed" reports come from much longer
+  rounds); a longer round's polls will tell.
 - **Yellow chops slow the leaf down** ("Hitting yellow slows down the
   speed the mark moves") — yellow is doubly valuable: +2 AND a brake.
-- DigitalTQ instead claims "for each successful chop, the speed
-  increases" — conflicts with the Steam model. UNRESOLVED; our own
-  polls data can settle it: leaf_vx_px_s over t_ms vs chop times
-  (fired=1) vs bounce times (vx sign flips) from any session.
-- Bot's measured speeds 2026-06-11: 257–386 px/s within the first
-  ~1.2s (3 chops, ~2 bounces deep).
+  (Community claim, not yet observed — no yellow chopped yet.)
+
+## Chop registration (measured, 00:46 session)
+
+- A registered chop re-rolls the zone layout within **86–201ms** —
+  the re-roll is the in-game ack.
+- The re-roll is NOT the end of the game's chop cooldown: clicks
+  198/201/225ms after a registered chop were **silently ignored** (no
+  re-roll, no point), while 655/720/812ms gaps registered. The
+  registration boundary sits somewhere in (225, 655)ms;
+  MIN_INTERCHOP_S=0.45 is the current bisection probe and each
+  session's polls tighten the bound for free.
+- **Ignored clicks are not free**: the 00:46 round's fatal click came
+  225ms after its predecessor — no point was possible, but the death
+  still happened. Working model: every click is evaluated against the
+  logic-leaf position (green during cooldown → nothing; red → death,
+  always). So clicks during the cooldown window carry pure downside —
+  the fire hold now enforces the full interval.
+- The fatal click itself: the leaf read the same x twice 127ms apart
+  (stale/frozen render or capture) → vx = exactly 0.0 → the old
+  `abs(vx) > 1e-6` check disarmed the directional gate → click landed
+  with the real leaf likely ~355 px/s and red ~31px (~87ms) ahead.
+  Direction-unknown fires are now banned (MIN_VX_FOR_FIRE).
 
 ## Round end
 

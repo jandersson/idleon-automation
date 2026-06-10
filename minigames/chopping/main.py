@@ -33,16 +33,20 @@ WINDOW_TITLE = "Legends Of Idleon"
 
 POLL_INTERVAL = 0.01
 
-# FALLBACK deadline for the post-chop fire hold (since 2026-06-11 no
-# longer a blind sleep). A successful chop shifts the zone layout
-# (docs/chopping_notes.md), so the layout re-rolling is the in-game
-# signal the chop registered — the bot re-arms the moment the layout
-# string changes, and this deadline only catches the case where it
-# never visibly changes. Points-per-second is the score constraint
-# (front-loading, see the notes doc), so re-arming early matters; the
-# actual observed settle time is measurable in polls as the lag from a
-# fired=1 row to the first changed zone_layout.
-COOLDOWN_AFTER_CLICK = 0.15
+# Post-chop fire hold. A successful chop re-rolls the zone layout
+# within 86-201ms (observed, 00:46 session) — that re-roll is the
+# in-game ack the chop registered. But the re-roll is NOT the end of
+# the game's own chop cooldown: clicks fired 198/201/225ms after a
+# registered chop were silently IGNORED (no re-roll, no point), while
+# 655/720/812ms gaps all registered. So the hold releases only when
+# BOTH the layout has re-rolled AND MIN_INTERCHOP_S has passed; the
+# 450ms value bisects the unmeasured (225, 655)ms registration
+# boundary — each session's polls show whether 450ms chops register
+# (re-roll follows) and the bound tightens for free.
+# COOLDOWN_AFTER_CLICK is the fallback when no re-roll is ever seen
+# (a 0px re-roll is possible — shifts run 1-3px).
+MIN_INTERCHOP_S = 0.45
+COOLDOWN_AFTER_CLICK = 0.70
 
 # Cap on the same-sweep gold upgrade: defer a safe green fire only when
 # the gold ahead is reachable within this long. Keeps a crawling leaf
@@ -81,9 +85,7 @@ RED_SAFETY_MARGIN_PX = 8
 # chop #3 died with red 19px ahead at ~257-386 px/s (~50-75ms), while
 # chop #2 survived 8px of red BEHIND a rightward leaf — the pixel
 # margin can't represent that asymmetry. 150ms = ~2x the observed kill
-# latency; tighten once outcome data accumulates. With no velocity
-# estimate (leaf just appeared or just bounced), only the pixel margin
-# applies.
+# latency; tighten once outcome data accumulates.
 #
 # The leaf ACCELERATES as the round progresses (game fact, 2026-06-11).
 # The gate self-adapts — vx is measured live, so a faster leaf needs
@@ -92,6 +94,25 @@ RED_SAFETY_MARGIN_PX = 8
 # validation sessions show fire starvation late-round, lower this
 # toward the measured kill latency rather than bypassing the gate.
 MIN_TIME_TO_RED_MS = 150
+
+# Direction-unknown fires are banned (2026-06-11, the 00:46 death):
+# the leaf read the same x twice 127ms apart (stale/frozen render),
+# vx came out exactly 0.0, the old `abs(vx) > 1e-6` guard silently
+# disarmed the time-to-red gate, and the click landed while the real
+# leaf was doing ~355 px/s with red 31px (~87ms) ahead. Below this
+# speed the direction signal is jitter/turnaround/stale — wait ~one
+# poll for a clean read instead of firing blind.
+MIN_VX_FOR_FIRE = 30.0
+
+# Leaf motion is EASED, not constant-speed (00:46 session: mid-bar
+# ~630 px/s vs ~290-350 near the edges — sinusoidal like the hoops
+# platform bob). An instantaneous vx sampled in the slow edge region
+# understates the speed the leaf will reach crossing toward a mid-bar
+# red, so time-to-red uses an effective speed of at least
+# EASING_SPEED_FLOOR_FRAC of the fastest |vx| seen in the recent
+# window (the window tracks the round's ramp, if any).
+EASING_SPEED_FLOOR_FRAC = 0.5
+SPEED_WINDOW_S = 3.0
 
 # Per-poll DB write rate cap. 0 = log every loop iteration (~40-80Hz).
 # Raised from 10Hz to full rate 2026-06-11: attributing the speed ramp
@@ -131,12 +152,14 @@ def _run_inner():
     # estimate feeding the time-to-red gate. Cleared whenever the leaf
     # isn't detected so a respawned leaf can't inherit stale direction.
     leaf_track: list[tuple[float, int]] = []
-    # Post-chop fire hold: the pre-click layout string + fallback
-    # deadline. Fires resume when the layout re-rolls (chop registered)
-    # or the deadline passes. See COOLDOWN_AFTER_CLICK.
+    # Post-chop fire hold: the pre-click layout string + timestamps.
+    # Fires resume when the layout has re-rolled AND MIN_INTERCHOP_S
+    # has passed (or the COOLDOWN_AFTER_CLICK fallback expires).
     fire_hold_layout: str | None = None
-    fire_hold_until = 0.0
+    fire_hold_click_t = 0.0
     riding_gold = False  # print-once flag for the gold-upgrade hold
+    # (wall_time, |vx|) over the recent window — the easing speed floor.
+    speed_track: list[tuple[float, float]] = []
 
     while True:
         check_failsafe()
@@ -200,15 +223,23 @@ def _run_inner():
             while leaf_track and now - leaf_track[0][0] > 0.3:
                 leaf_track.pop(0)
         leaf_vx = leaf_vx_px_s(leaf_track)
+        if leaf_vx is not None:
+            speed_track.append((now, abs(leaf_vx)))
+        while speed_track and now - speed_track[0][0] > SPEED_WINDOW_S:
+            speed_track.pop(0)
 
         if pointer_x is not None and zone in ("green", "gold"):
-            # Post-chop re-arm: hold fire until the zone layout re-rolls
-            # (the in-game signal the chop registered — chops shift the
-            # zones) or the fallback deadline passes. Replaces the fixed
-            # 150ms blind sleep, and the loop keeps sampling the leaf at
-            # full rate during the hold.
+            # Post-chop re-arm: layout re-rolled (chop registered) AND
+            # the game's own chop-registration interval has passed —
+            # clicks earlier than that are silently ignored in-game
+            # (and an ignored click is pure downside: no point, still
+            # evaluated against red). Fallback deadline covers a 0px
+            # re-roll. The loop keeps sampling at full rate throughout.
             if fire_hold_layout is not None:
-                if layout != fire_hold_layout or now >= fire_hold_until:
+                rerolled = layout != fire_hold_layout
+                interchop_ok = now - fire_hold_click_t >= MIN_INTERCHOP_S
+                fallback = now - fire_hold_click_t >= COOLDOWN_AFTER_CLICK
+                if (rerolled and interchop_ok) or fallback:
                     fire_hold_layout = None
                 else:
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
@@ -221,15 +252,22 @@ def _run_inner():
                     continue
 
             # Time-to-red gate (directional, the load-bearing one) plus
-            # the legacy pixel-margin floor. See MIN_TIME_TO_RED_MS.
+            # the legacy pixel-margin floor. Direction must be KNOWN
+            # (see MIN_VX_FOR_FIRE), and the projected speed is floored
+            # at a fraction of the recent max so an edge-region vx
+            # sample can't understate the eased mid-bar speed.
             red_ahead = None
             time_to_red_ms = None
-            if leaf_vx is not None and abs(leaf_vx) > 1e-6:
+            direction_known = leaf_vx is not None and abs(leaf_vx) >= MIN_VX_FOR_FIRE
+            if direction_known:
                 red_ahead = red_distance_ahead(bar_frame, pointer_x, leaf_vx)
                 if red_ahead is not None:
-                    time_to_red_ms = int(red_ahead / abs(leaf_vx) * 1000)
+                    recent_max = max((v for _, v in speed_track), default=0.0)
+                    eff_speed = max(abs(leaf_vx), EASING_SPEED_FLOOR_FRAC * recent_max)
+                    time_to_red_ms = int(red_ahead / eff_speed * 1000)
             unsafe = (
-                (red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX)
+                not direction_known
+                or (red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX)
                 or (time_to_red_ms is not None and time_to_red_ms < MIN_TIME_TO_RED_MS)
             )
             if unsafe:
@@ -247,7 +285,7 @@ def _run_inner():
             # BEFORE any red, ride to it instead of taking the green —
             # +2 beats +1, gold also slows the leaf, and the same sweep
             # reaches it with no extra bounce (docs/chopping_notes.md).
-            if zone == "green" and leaf_vx is not None and abs(leaf_vx) > 1e-6:
+            if zone == "green":  # direction is known here — unsafe gate filtered
                 gold_ahead = gold_distance_ahead(bar_frame, pointer_x, leaf_vx)
                 gold_ride_ms = (
                     int(gold_ahead / abs(leaf_vx) * 1000)
@@ -332,11 +370,10 @@ def _run_inner():
             pending = (row_id, click_time)
 
             # Random delay goes AFTER the click (no fire-time latency).
-            # No blind cooldown sleep: arm the layout-settle fire hold
-            # instead, so the loop keeps sampling while the chop
-            # registers and re-arms the moment the layout re-rolls.
+            # No blind cooldown sleep: arm the fire hold instead, so the
+            # loop keeps sampling while the chop registers.
             fire_hold_layout = layout
-            fire_hold_until = click_time + COOLDOWN_AFTER_CLICK
+            fire_hold_click_t = click_time
             riding_gold = False
             random_delay(20, 60)
             time.sleep(POLL_INTERVAL)
