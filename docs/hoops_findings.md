@@ -116,10 +116,15 @@ post-bounce landings.
 Schema columns added during the investigation: `platform_vy`,
 `made_source`, `prompt_up`, `target_source`.
 
+## Outcome
+
+The measurement gate passed on 2026-06-10: 132 post-policy attempts
+(exploration excluded), 46 makes — 34.8%, Wilson 95% CI [0.273, 0.433],
+lower bound clear of the 25.5% baseline. #37 closed with that verdict.
+
 ## Open at time of writing
 
-- Measurement gate for closing #37: ~100 shots on the policy stack with
-  the Wilson 95% CI clear of the 25.5% historical baseline.
+- ~~Measurement gate for closing #37~~ — passed (above).
 - Make-probability model: issue #38.
 - Loop tick rate (200–1000ms vs documented 15–30ms) unexplained; faster
   sampling would sharpen both vy and the crossing detector.
