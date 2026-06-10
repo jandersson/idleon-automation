@@ -6,16 +6,28 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from common.templates import match_multiscale_center
+from common.templates import ScaleLockMatcher, match_multiscale_center
 
 ASSETS = Path(__file__).parent / "assets"
 
+# Templates are immutable for the lifetime of a bot process (capture
+# tooling writes them between sessions), and the main loop calls the
+# detectors every tick — re-reading PNGs from disk each call was
+# measurable tick cost (same finding as darts, 0b6d2b1). Missing
+# optional templates are NOT cached so a capture taken mid-session is
+# picked up on the next poll.
+_TEMPLATE_CACHE: dict[str, np.ndarray] = {}
+
 
 def _load(name: str) -> np.ndarray:
+    cached = _TEMPLATE_CACHE.get(name)
+    if cached is not None:
+        return cached
     path = ASSETS / name
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise FileNotFoundError(f"Template not found: {path}")
+    _TEMPLATE_CACHE[name] = img
     return img
 
 
@@ -67,6 +79,26 @@ def find_hoop(
     return center, val
 
 
+# Scale-locked matcher for find_platform, the per-tick sweep (poll-loop
+# work, 2026-06-10, same change as darts find_release_pose): the winning
+# scale tracks window size, not game state, so after a confident match
+# locks it, polls try only the locked scale ±1 step; a full sweep every
+# 20th poll catches window resizes. Confidences stay exact full-res
+# values. No always_scales: no hoops logic keys on sub-threshold
+# confidence levels. Validated on 1207 recorded polls: 1199 bit-identical
+# to the full sweep, the rest cross-window-size simulation artifacts
+# (scripts/validate_hoops_scale_lock.py).
+#
+# find_rim deliberately stays on the FULL sweep: extreme-low-spawn rims
+# are clipped by the window's bottom edge and match at scale 0.6 with
+# conf ~0.45-0.55 while the session-native scales read ~0.25 (e.g.
+# monitor/shot_001_215852/flight_003.png, rim at (691,550)) — the very
+# case the 0.45 threshold exists for. A scale lock would blind 19 of 20
+# polls to those rims, and find_rim doesn't run on the steady-state tick
+# anyway (only between shots and on >=10 drift refresh).
+_PLATFORM_MATCHER = ScaleLockMatcher()
+
+
 def find_rim(
     frame: np.ndarray, threshold: float = 0.45
 ) -> tuple[tuple[int, int] | None, float, float]:
@@ -112,7 +144,7 @@ def find_platform(
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     h, w = bgr.shape[:2]
     template = _load("platform.png")
-    center, val, _scale = match_multiscale_center(bgr, template, region=(0, 0, w // 2, h))
+    center, val, _scale = _PLATFORM_MATCHER.match_center(bgr, template, region=(0, 0, w // 2, h))
     if val < threshold:
         return None, val
     return center, val
@@ -151,13 +183,13 @@ def find_game_prompt(
 
 
 def _find_top_text(frame: np.ndarray, template_name: str, threshold: float) -> tuple[bool, float]:
-    path = ASSETS / template_name
-    if not path.exists():
-        return False, 0.0
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    template = _TEMPLATE_CACHE.get(template_name)
     if template is None:
-        return False, 0.0
+        template = cv2.imread(str(ASSETS / template_name), cv2.IMREAD_COLOR)
+        if template is None:
+            return False, 0.0
+        _TEMPLATE_CACHE[template_name] = template
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     _, val, _scale = match_multiscale_center(bgr, template)
     return val >= threshold, val
 

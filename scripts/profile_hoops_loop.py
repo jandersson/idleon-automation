@@ -12,8 +12,14 @@ import cv2
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from minigames.hoops.detector import (  # noqa: E402
-    find_game_over, find_game_prompt, find_platform, find_rim,
+    find_game_over, find_game_prompt, find_platform, find_rim, _PLATFORM_MATCHER,
 )
+
+# Steady state: the platform matcher locks its scale within the first
+# few ticks of a live session (platform conf ~0.8+), so bench the locked
+# path — the benchmark frame would lock on its own here anyway, but be
+# explicit about what's being measured.
+_PLATFORM_MATCHER.locked_scale = 1.0
 
 root = Path(__file__).parent.parent
 frame_path = root / "minigames/hoops/assets/monitor/shot_001_001657/flight_001.png"
@@ -49,8 +55,13 @@ with mss.mss() as sct:
 
     t_grab = bench("mss grab (live screen)", grab)
 
-# Steady state (target set, waiting to fire): grab + game_over + platform.
-# find_rim runs between shots and on >=10 drift refresh; find_game_prompt
-# only in the pre-game phase.
-print(f"  {'steady-state tick':<28} {t_grab + t_go + t_plat:7.1f} ms")
-print(f"  {'between-shots tick (+rim)':<28} {t_grab + t_go + t_plat + t_rim:7.1f} ms")
+# Steady state (target set, waiting to fire): grab + platform, with
+# game_over amortized over GAME_OVER_CHECK_EVERY ticks. find_rim runs
+# between shots and on >=10 drift refresh; find_game_prompt only in the
+# pre-game phase and post-click.
+from minigames.hoops.main import GAME_OVER_CHECK_EVERY  # noqa: E402
+
+steady = t_grab + t_plat + t_go / GAME_OVER_CHECK_EVERY
+print(f"  {'steady-state tick':<28} {steady:7.1f} ms "
+      f"(game_over /{GAME_OVER_CHECK_EVERY})")
+print(f"  {'between-shots tick (+rim)':<28} {steady + t_rim:7.1f} ms")

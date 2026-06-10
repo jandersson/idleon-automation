@@ -62,6 +62,12 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
                        # Lowered from 0.02 anyway to make sure sleep isn't
                        # the bottleneck on cycles where matching is fast.
 
+# Run find_game_over only every Nth main-loop tick — it's a full-frame
+# multi-scale match (112ms profiled) for a persistent terminal screen.
+# Worst-case added detection latency is (N-1) ticks (~a quarter second);
+# the 5s rim-missing bail is the backstop either way.
+GAME_OVER_CHECK_EVERY = 5
+
 # Offset is learned from past shots in shots.db at session start (see the
 # fit_* factories in common.predictor).
 #
@@ -1332,6 +1338,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     # State of the most recent logged shot, kept so a hoop respawn can
     # retroactively correct a make the OCR failed to confirm.
     last_shot: dict | None = None
+    tick = 0  # for the every-Nth-tick game-over check
 
     while True:
         check_failsafe()
@@ -1344,11 +1351,18 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
 
         frame = grab_region(left, top, width, height)
 
-        # Stop cleanly when the trial ends.
-        is_over, go_conf = find_game_over(frame)
-        if is_over:
-            print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
-            return
+        # Stop cleanly when the trial ends. Checked every Nth tick only:
+        # the full-frame match is the single largest per-tick cost
+        # (112ms, profiled 2026-06-10), the game-over screen is a
+        # persistent terminal state so detection latency of a few hundred
+        # ms is harmless, and the 5s rim-missing bail below is the
+        # backstop that has actually ended most sessions anyway.
+        tick += 1
+        if tick % GAME_OVER_CHECK_EVERY == 1:
+            is_over, go_conf = find_game_over(frame)
+            if is_over:
+                print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
+                return
 
         if target is not None and time.time() - target_set_at > STALE_TARGET_TIMEOUT_S:
             print(

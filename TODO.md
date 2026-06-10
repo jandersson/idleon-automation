@@ -55,10 +55,20 @@ recent-changes snapshot that don't fit a single issue.
   - (4) only if game stutter is actually observed, a launcher "target
     tick ms" knob becomes meaningful as a CPU-budget control (cheaper
     ticks + a target cadence REDUCE load, not raise it).
-  Hoops' unexplained 200-1000ms tick (docs/hoops_findings.md open
-  item) is almost certainly the same per-tick template-match stack
-  and the same fix order applies — faster sampling there sharpens vy
-  and the crossing detector, the named miss mechanisms from #37.
+  ~~Hoops' unexplained 200-1000ms tick~~ — explained and fixed
+  2026-06-10 (`scripts/profile_hoops_loop.py`): same compute-bound
+  template stack. Steady tick 179ms → 67ms via template caching,
+  find_game_over every 5th tick (persistent terminal screen; no
+  hoops game-over ground-truth frame exists on disk, so the darts
+  coarse-gate trick can't be calibrated — the Nth-tick skip needs no
+  calibration), and ScaleLockMatcher on find_platform (1199/1207
+  bit-identical on the corpus). find_rim deliberately kept on the
+  full sweep: clipped extreme-low-spawn rims match at scale 0.6 conf
+  ~0.45 (the documented threshold case) and a lock would blind most
+  polls to them. Side discovery, fixed same day: the pre-game prompt
+  check had been running BETWEEN the fire decision and the click
+  since 2026-05-09 (~104ms full-frame match) — see
+  docs/hoops_findings.md fire-latency addendum.
 
 - **Catching minigame** — scaffold only; detectors return None. Need
   fly + hoop-gap detectors before this runs.
