@@ -446,11 +446,22 @@ Y_TOLERANCE = 6
 #                       handle interactions naturally and are robust
 #                       on noisy small data; complementary to GP
 #                       (smooth) and KNN (local).
+#   "make_prob"       — GP classifier P(make | hoop pos, platform_y,
+#                       platform_vy); ranks live (platform_y, vy, dir)
+#                       candidates and fires the argmax. Falls back to
+#                       the per-direction regressors until the labeled-
+#                       vy data floor is met. See GitHub issue #38.
 #
 # The launcher's Bots tab exposes a Predictor dropdown that sets the
 # HOOPS_PREDICTOR_KIND env var; this constant is the default when the
 # env var is unset (e.g. running `uv run hoops` directly).
-PREDICTOR_KIND = os.environ.get("HOOPS_PREDICTOR_KIND", "gp")
+#
+# Default promoted "gp" → "make_prob" 2026-06-10 (#38): 55/83 = 66.3%
+# post-policy non-explore makes, Wilson 95% CI [0.556, 0.755] — lower
+# bound clear of the #37 policy stack's entire CI [0.273, 0.433]
+# (n=132). Per-session rates 57-77% with no decay. Measured by
+# scripts/check_38_promotion.py.
+PREDICTOR_KIND = os.environ.get("HOOPS_PREDICTOR_KIND", "make_prob")
 
 # Required direction of platform motion to fire. "up", "down", or "any".
 # Back to "up" after dir=down sweep on hoop_y=448: offsets 60->10 all hit

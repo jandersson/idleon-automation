@@ -57,8 +57,8 @@ MINIGAMES = [
             {
                 "label": "Predictor",
                 "env": "HOOPS_PREDICTOR_KIND",
-                "values": ["gp", "make_prob", "knn", "bivariate", "trajectory_knn", "trajectory_gp", "trajectory_rf"],
-                "default": "gp",
+                "values": ["make_prob", "gp", "knn", "bivariate", "trajectory_knn", "trajectory_gp", "trajectory_rf"],
+                "default": "make_prob",
             },
         ],
     },
