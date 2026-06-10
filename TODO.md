@@ -17,14 +17,13 @@ recent-changes snapshot that don't fit a single issue.
 
 ## Open
 
-- **Hoops scoring 10+** — at score ≥10 the HOOP starts drifting
-  horizontally between shots (wiki had this wrong; corrected from live
-  observation 2026-05-23). Bot reads hoop position once per shot when
-  `target_y` is None, so by fire time it's stale. Fix: re-detect hoop
-  right before the platform crosses target_y, recompute target_y off
-  the fresh position. Same fix likely covers score-20 and score-30
-  escalations since they're just more-aggressive versions of the
-  same motion.
+- ~~**Hoops scoring 10+**~~ — done 2026-06-10: drift measured from
+  flight frames (~15-35 px/s horizontal sweep), `_should_refresh_hoop`
+  re-detects the rim while the platform closes on the target and
+  carries the offset to the fresh position; lost makes at 10+ (respawn
+  signal is disabled there) recovered via the score-anchored retro-make
+  (`made_source='score'`). Watch the 20+/30+ escalations for faster
+  sweeps.
 - **Catching minigame** — scaffold only; detectors return None. Need
   fly + hoop-gap detectors before this runs.
 - **Chopping** — last verified state was "button click is suspect".
