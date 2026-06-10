@@ -17,6 +17,55 @@ recent-changes snapshot that don't fit a single issue.
 
 ## Open
 
+- **PRIORITY — hoops/darts performance trending down since the
+  2026-06-10 poll-loop sprint (user report, 2026-06-11).** Debrief
+  recent sessions of both bots before any further perf work. Leading
+  hypotheses, in order: (1) hoops — the fire-latency fix (e62a234)
+  removed a ~104ms constant decision→click delay that EVERY training
+  row since 2026-05-09 embeds; the predictors (incl. make_prob) are
+  fitted on the latency-era mapping and will aim systematically off
+  until post-fix sessions accumulate or platform_y is latency-adjusted
+  at fit time (platform_vy * 0.104 shift for pre-fix rows is feasible
+  — both columns exist). (2) darts — the cadence doubled (248 →
+  ~119ms): the vy estimate now samples a different part of the swing;
+  the static band [-32,-20] px/s and the E[stripe] model were both
+  calibrated on ~250ms-cadence vy values — even though the UNITS are
+  cadence-invariant, the SAMPLING POINT isn't (vy is the mean over the
+  trailing window, and a shorter window sits closer to the
+  instantaneous release-pass velocity). (3) scale-lock conf drift on
+  marginal spawns. Check per-session hit/make rates around the commit
+  boundaries (64adbcd..cc529bf) in shots.db/darts.db.
+- **Hoops game-over detection failed in a recent session (user
+  report, 2026-06-11):** after an in-game game over the bot kept
+  running and blocked a darts launch until manually stopped. Suspects:
+  the every-5th-tick game-over check (cc529bf) — unlikely as sole
+  cause (it still checks ~every 0.3s) — or the known stale/low-conf
+  game-over template (no true-positive frame on disk matches above
+  0.574, threshold 0.7), which the 5s rim-missing bail normally
+  covers; find out why the rim bail didn't end the session either.
+  Check the session log + diagnostics frames from the user's hoops
+  session on 2026-06-11.
+- **macOS support + data shipping (user request, 2026-06-11).** Repo
+  already cloned on the MacBook Air, never run. Two parts:
+  (1) Mac compatibility — `pygetwindow` is Windows-only in practice
+  (CLAUDE.md header): `common/window.get_bounds` needs a macOS backend
+  (Quartz via pyobjc, `CGWindowListCopyWindowInfo` title match); mss +
+  pyautogui work on macOS but need Accessibility + Screen Recording
+  permissions; Retina scaling means mss pixels ≠ pyautogui points (2x)
+  so capture and click coords need converting; all templates were
+  captured at 1x on Windows, so expect per-resolution template
+  recaptures (the multi-scale matching helps but color/scale pipelines
+  differ). The launcher's tries-counter (plyvel + local save) may not
+  port — bots first, launcher later. Mark supported in README once one
+  bot runs end-to-end. (2) Data shipping — do NOT commit the .db files
+  (binary churn + guaranteed conflicts); hoops' committed
+  shots_snapshot.json is the precedent: extend the snapshot-JSON
+  pattern to darts (and chopping) so training data travels through git
+  as diffable text while session-history DBs stay per-machine.
+  Alternative for a one-off: scp the .db files once; they merge fine
+  as long as only one machine plays at a time (sessions are keyed by
+  session_started).
+
 - ~~**Hoops scoring 10+**~~ — done 2026-06-10: drift measured from
   flight frames (~15-35 px/s horizontal sweep), `_should_refresh_hoop`
   re-detects the rim while the platform closes on the target and
