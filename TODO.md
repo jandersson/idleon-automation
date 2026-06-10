@@ -17,36 +17,46 @@ recent-changes snapshot that don't fit a single issue.
 
 ## Open
 
-- **PRIORITY — hoops/darts performance trending down since the
-  2026-06-10 poll-loop sprint (user report, 2026-06-11).** Debrief
-  recent sessions of both bots before any further perf work. Leading
-  hypotheses, in order: (1) hoops — the fire-latency fix (e62a234)
-  removed a ~104ms constant decision→click delay that EVERY training
-  row since 2026-05-09 embeds; the predictors (incl. make_prob) are
-  fitted on the latency-era mapping and will aim systematically off
-  until post-fix sessions accumulate or platform_y is latency-adjusted
-  at fit time (platform_vy * 0.104 shift for pre-fix rows is feasible
-  — both columns exist). (2) darts — the cadence doubled (248 →
-  ~119ms): the vy estimate now samples a different part of the swing;
-  the static band [-32,-20] px/s and the E[stripe] model were both
-  calibrated on ~250ms-cadence vy values — even though the UNITS are
-  cadence-invariant, the SAMPLING POINT isn't (vy is the mean over the
-  trailing window, and a shorter window sits closer to the
-  instantaneous release-pass velocity). (3) scale-lock conf drift on
-  marginal spawns. Check per-session hit/make rates around the commit
-  boundaries (64adbcd..cc529bf) in shots.db/darts.db.
-- **Hoops game-over detection failed in a recent session (user
-  report, 2026-06-11):** after an in-game game over the bot kept
-  running and blocked a darts launch until manually stopped. Suspects:
-  the every-5th-tick game-over check (cc529bf) — unlikely as sole
-  cause (it still checks ~every 0.3s) — or the known stale/low-conf
-  game-over template (no true-positive frame on disk matches above
-  0.574, threshold 0.7), which the 5s rim-missing bail normally
-  covers; find out why the rim bail didn't end the session either.
-  Check the session log + diagnostics frames from the user's hoops
-  session on 2026-06-11.
-- **macOS support + data shipping (user request, 2026-06-11).** Repo
-  already cloned on the MacBook Air, never run. Two parts:
+- ~~**PRIORITY — hoops/darts performance trending down since the
+  2026-06-10 poll-loop sprint**~~ — investigated 2026-06-11 (subagent
+  debrief, read-only over shots.db/darts.db/logs). **No statistically
+  supported downtrend**: hoops make_prob 58.9% pre vs 57.1% post
+  (CIs overlap); darts 82.4% → 84.0% with bullseyes UP (10.1% →
+  18.7%); model-band fires improved 87% → 96%. The scary 1/12 hoops
+  session (21:37) was PRE-sprint and partly an OCR-drop recording
+  artifact. H2 (vy sampling shift) and H3 (scale-lock conf) refuted
+  with data. Two real issues found and FIXED same night: darts
+  vy=None blind fires (3/10 hits post-sprint) now consume the skip
+  budget instead of firing instantly, and the motion-diff ref frame
+  is picked closest-to-250ms (the old newest-≥250ms rule silently
+  widened the window to ~357ms at the faster cadence — dropout had
+  tripled). STILL OPEN (weak signal, watch it): hoops H1 latency
+  train/serve skew — post-fix high-|vy| makes 8/18=44% vs pre 33/56=
+  59% (CIs overlap; only 42 post-fix non-explore rows). If it
+  persists at ~n=100, latency-adjust pre-fix rows at fit time
+  (platform_y + 0.104*platform_vy for rows before e62a234) rather
+  than excluding them (~526 pre-fix rows carry platform_vy).
+- ~~**Hoops game-over detection failed (00:40 runaway)**~~ — root
+  cause found 2026-06-11 and FIXED. Not a stale template: the
+  game-over BANNER matches at conf 0.92 but is a ~3-4s timed window,
+  and the bot spends most of it blind inside _record_shot_outcome;
+  detection was a 1-in-5 tick lottery on the banner's last second.
+  After the banner, rim (0.98!) and platform still render — the rim
+  match set a fresh target which disabled the rim bail, and the
+  platform-None path had no bail at all (silent infinite loop until
+  the 60s stale watchdog). Fixes: tick reset after every shot outcome
+  (first post-shot iteration always checks game over, inside the
+  banner) + a 5s no-platform bail that clears the target. Bonus:
+  true-positive banner frames now exist on disk
+  (monitor/shot_007_004117/, conf 0.905-0.921) — the hoops game-over
+  check could now adopt the darts coarse-cascade with real
+  calibration data if its 22ms amortized cost ever matters.
+- **macOS support + data shipping (user request, 2026-06-11).** Full
+  surveyed plan now in `docs/macos_port.md` (Windows-only inventory,
+  Quartz window backend, normalize-Retina-at-capture decision,
+  snapshot-as-training-input data shipping, 13-step checklist —
+  chopping first as the least template-sensitive bot). Summary of the
+  original ask:
   (1) Mac compatibility — `pygetwindow` is Windows-only in practice
   (CLAUDE.md header): `common/window.get_bounds` needs a macOS backend
   (Quartz via pyobjc, `CGWindowListCopyWindowInfo` title match); mss +
