@@ -20,24 +20,35 @@ confidence noted since none of this is from the game's code.
   character or the attempt pays nothing.** (wiki summary; medium
   confidence on the 5% number)
 
-## Speed model
+## Speed model (settled 2026-06-11, 01:08 session — 97s, 19 chops)
 
-- **Leaf motion is EASED, not constant-speed** (measured, 00:46
-  full-rate session): mid-bar ~630 px/s vs ~290–350 near the edges,
-  with sample density to match — sinusoidal-ish, like the hoops
-  platform bob. Gate consequence: an instantaneous vx sampled in the
-  slow edge region understates the speed the leaf reaches crossing
-  toward mid-bar red; the gate floors its projected speed at half the
-  recent-max |vx| (EASING_SPEED_FLOOR_FRAC).
-- **No measurable per-chop or per-bounce ramp at low scores**
-  (measured, same session): peak speed per sweep 786/580/791/724 px/s
-  across 0→5 chops and 3 bounces — flat. The maintainer's per-chop
-  intuition and the Steam per-bounce claim both remain possible at
-  higher scores (the "hyperspeed" reports come from much longer
-  rounds); a longer round's polls will tell.
+- **Chops ramp the speed; bounces do NOT.** Mean speed doubled during
+  the 9-chop opening burst (308 → ~480 px/s in 10s), then stayed flat
+  ~475–590 from t=10s to t=90s across ~a hundred chop-free bounces
+  (the gate-starve droughts froze the chop count — a natural
+  controlled experiment). The maintainer's per-chop intuition was
+  right; the Steam "edges speed it up" claim is refuted at this score
+  range. Ramp ≈ +2–5% per chop, apparently saturating-ish.
+- **Therefore waiting is FREE.** A skipped fire window costs
+  wall-clock, not points or difficulty. Deaths are the only real cost
+  in this game. The front-loading doctrine ("time not scoring is
+  actively harmful") is WRONG and is hereby retracted.
+- **No inactivity timeout** at least up to 45s (the longest drought —
+  the round did not end). The 97s round ended only by the bot's own
+  marginal fire.
+- **Leaf motion is EASED**: mid-bar median ~550–750 px/s vs ~280–420
+  near the edges (profile is trapezoid-ish — broad fast middle, slow
+  edges). Gate consequence: instantaneous vx near the edges flatters
+  time-to-red; the gate floors projected speed at
+  EASING_SPEED_FLOOR_FRAC of the recent max (0.75 since the 01:08
+  death — chop 20 fired at nominal ttr=150ms on vx=425 while the true
+  crossing speed was ~630-750, real ttr ~100ms).
+- **True-speed kill boundary ≈ 100–115ms**: all three deaths to date
+  had true ttr ≤ ~110ms; survivals observed at 115–123ms.
 - **Yellow chops slow the leaf down** ("Hitting yellow slows down the
-  speed the mark moves") — yellow is doubly valuable: +2 AND a brake.
-  (Community claim, not yet observed — no yellow chopped yet.)
+  speed the mark moves") — community claim, still unconfirmed: 7 gold
+  chops in the 01:08 session produced no visible dip (any brake may be
+  cancelled by the chop's own ramp).
 
 ## Chop registration (measured, 00:46 session)
 
@@ -111,15 +122,24 @@ confidence noted since none of this is from the game's code.
    "avoid the sides" translates for a bot into: score as much as
    possible per unit time early, and bank yellow slowdowns.
 
-## Open unknowns (answerable from our own data / next sessions)
+## Open unknowns
 
-- Chop-vs-bounce speed attribution (polls have everything needed).
-- Minimum inter-chop delay that still registers (probe by lowering
-  COOLDOWN_AFTER_CLICK stepwise across attempts and checking score
-  increments per chop in the session log vs in-game score).
-- Does inactivity end a round? Does a voluntary exit keep the score?
-  (User observation needed once, during a dead-end round.)
-- What spawns gold zones.
+- ~~Chop-vs-bounce speed attribution~~ — settled: per-chop (above).
+- ~~Does inactivity end a round?~~ — no, at least ≤45s.
+- **Does a voluntary exit keep the score?** Now the TOP question: the
+  late round degenerates into long safe-fire droughts (11s/18s/45s
+  between chops at 19 chops in the 01:08 session) — if exiting keeps
+  the score, the optimal endgame is "stop firing and exit after a
+  long starve" instead of eventually taking a marginal fire and
+  dying. One manual observation settles it.
+- Minimum inter-chop delay: all 560ms+ gaps registered; the (225,
+  560)ms range is untested but moot while the fire cadence is
+  crossing-limited anyway.
+- What spawns gold zones (first gold appeared at chop 7-8 in the
+  01:08 session and persisted; gold width shrank o41 → o33 over the
+  round).
+- Whether the per-chop ramp keeps compounding at higher scores
+  ("hyperspeed" reports) or truly saturates.
 
 ## Sources
 

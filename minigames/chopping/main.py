@@ -110,14 +110,20 @@ MIN_TIME_TO_RED_MS = 150
 # poll for a clean read instead of firing blind.
 MIN_VX_FOR_FIRE = 30.0
 
-# Leaf motion is EASED, not constant-speed (00:46 session: mid-bar
-# ~630 px/s vs ~290-350 near the edges — sinusoidal like the hoops
-# platform bob). An instantaneous vx sampled in the slow edge region
-# understates the speed the leaf will reach crossing toward a mid-bar
-# red, so time-to-red uses an effective speed of at least
-# EASING_SPEED_FLOOR_FRAC of the fastest |vx| seen in the recent
-# window (the window tracks the round's ramp, if any).
-EASING_SPEED_FLOOR_FRAC = 0.5
+# Leaf motion is EASED, not constant-speed (measured both sessions:
+# mid-bar ~550-750 px/s vs ~280-420 near the edges). An instantaneous
+# vx sampled in the slow region understates the speed the leaf reaches
+# crossing toward red, so time-to-red uses an effective speed of at
+# least EASING_SPEED_FLOOR_FRAC of the fastest |vx| in the recent
+# window. Raised 0.5 -> 0.75 after the 01:08 session's death: chop 20
+# fired at ttr=150ms on vx=425 while the true late-round crossing
+# speed was ~630-750 (real ttr ~100ms). Across all three deaths the
+# TRUE-speed kill boundary is ~100-115ms (survivals at 115-123ms), so
+# the projected speed must not flatter the true one. Skipping marginal
+# fires is cheap: chops are the only thing that ramps the speed and
+# bounces are free (per-chop ramp confirmed, per-bounce refuted,
+# 01:08 session), so a skipped window costs wall-clock, not points.
+EASING_SPEED_FLOOR_FRAC = 0.75
 SPEED_WINDOW_S = 3.0
 
 # Per-poll DB write rate cap. 0 = log every loop iteration (~40-80Hz).
