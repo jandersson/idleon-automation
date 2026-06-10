@@ -126,12 +126,13 @@ confidence noted since none of this is from the game's code.
 
 - ~~Chop-vs-bounce speed attribution~~ — settled: per-chop (above).
 - ~~Does inactivity end a round?~~ — no, at least ≤45s.
-- **Does a voluntary exit keep the score?** Now the TOP question: the
-  late round degenerates into long safe-fire droughts (11s/18s/45s
-  between chops at 19 chops in the 01:08 session) — if exiting keeps
-  the score, the optimal endgame is "stop firing and exit after a
-  long starve" instead of eventually taking a marginal fire and
-  dying. One manual observation settles it.
+- ~~Does a voluntary exit keep the score?~~ — YES (maintainer,
+  2026-06-11): points bank as in-game tokens on exit; each game
+  starts fresh. Exit-on-starve implemented (STARVE_EXIT_S=60): after
+  60s without a safe fire the bot ends the session with the score
+  summary and the user exits in-game to bank. Every bot death so far
+  came from finally taking a marginal window during a starve — this
+  removes that failure mode entirely.
 - Minimum inter-chop delay: all 560ms+ gaps registered; the (225,
   560)ms range is untested but moot while the fire cadence is
   crossing-limited anyway.
@@ -140,6 +141,18 @@ confidence noted since none of this is from the game's code.
   round).
 - Whether the per-chop ramp keeps compounding at higher scores
   ("hyperspeed" reports) or truly saturates.
+- **Next gate lever (designed, not built): position-aware eased
+  time-to-red.** The 0.75×recent-max speed floor over-penalizes fires
+  launched from the slow edge regions (the leaf genuinely takes
+  longer to reach a far red than d/eff_speed says, because it
+  accelerates gradually). Model the sweep as x(θ)=(W/2)(1−cosθ),
+  v=V_max·sinθ: time-to-red = Δθ/ω with θ=arccos(1−2x/W) and
+  ω=2·V_max/W, V_max estimated robustly from the recent window
+  (guard the arccos near edges; validate against all recorded fires —
+  the three deaths must compute under threshold, the survivals
+  over). Opens late-round edge-launched fires without loosening
+  mid-bar safety. Lower priority now that exit-on-starve banks
+  tokens instead of risking marginal fires.
 
 ## Sources
 

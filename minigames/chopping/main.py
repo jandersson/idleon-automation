@@ -54,6 +54,15 @@ COOLDOWN_AFTER_CLICK = 0.70
 # registered-flag bookkeeping, not the fire hold's release.
 REROLL_ACK_MAX_S = 0.40
 
+# Exit-on-starve (2026-06-11): points bank as in-game tokens on a
+# voluntary exit and each game starts fresh (maintainer ground truth),
+# so once the speed ramp makes safe fire windows this rare the round
+# has hit its natural ceiling — end the session and bank rather than
+# wait out a marginal window (that's how every bot death so far
+# happened). Late-round gaps of 26-45s between chops are normal;
+# 60s of no safe fire means truly starved.
+STARVE_EXIT_S = 60.0
+
 # Cap on the same-sweep gold upgrade: defer a safe green fire only when
 # the gold ahead is reachable within this long. Keeps a crawling leaf
 # from stalling the chop rate; in practice a full bar sweep at the
@@ -254,6 +263,23 @@ def _run_inner():
                 return
         else:
             bar_dead_since = None
+
+        # Exit-on-starve: see STARVE_EXIT_S. The last chop's outcome is
+        # 'survived' — nothing died; the round just priced the bot out.
+        if chop_idx > 0 and now - fire_hold_click_t > STARVE_EXIT_S:
+            if pending is not None:
+                row_id, click_time, _ = pending
+                set_outcome(conn, row_id, "survived",
+                            int((now - click_time) * 1000))
+                pending = None
+            print(f"No safe fire window for {STARVE_EXIT_S:.0f}s — round has hit "
+                  f"its ceiling, stopping to bank the tokens.")
+            print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
+                  f"by the game, ~{estimated_points} points expected. "
+                  f"EXIT the minigame in-game to bank them (each game starts fresh).")
+            conn.commit()
+            conn.close()
+            return
 
         red_dist = None
         if pointer_x is None:
