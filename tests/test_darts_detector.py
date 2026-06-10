@@ -234,3 +234,48 @@ def test_parse_wind_handles_garbage():
     blank = np.zeros((50, 136, 3), dtype=np.uint8)
     s, a, wx, wy = parse_wind(blank)
     assert s == 0 and wx == 0.0  # no arrow pixels reads as calm
+
+
+def test_parse_wind_pink_high_speed_tier():
+    """At 10+ mph the game colors the wind UI pink instead of blue
+    (first seen 2026-06-10). A blue-only mask read the panel as calm
+    and a 21-streak died to an unlogged 10 mph headwind. The sample
+    also carries the first wind string with a '0'/'1' digit, which
+    exposed the mislabeled 0.png template (see distinctness test)."""
+    from pathlib import Path
+    import cv2
+    from minigames.darts.wind import parse_wind
+    sample = (Path(__file__).parent.parent
+              / "minigames/darts/assets/wind_samples/sample_205107_012.png")
+    if not sample.exists():
+        return
+    s, a, wx, wy = parse_wind(cv2.imread(str(sample)))
+    assert s == 10
+    assert 120 < a < 145  # flow down-left: headwind, pressing down
+    assert wx < -5 and wy > 5
+
+
+def test_darts_digit_templates_pairwise_distinct():
+    """Bootstrap regression guard: a 2026-06-10 re-bootstrap wrote the
+    '1' glyph into 0.png, making every '1' read as '0' (score 15 -> 05).
+    match_digit is exact-match over the library, so duplicate templates
+    silently shadow each other — the library must be pairwise distinct."""
+    from pathlib import Path
+    import numpy as np
+    from common.score_template_ocr import load_templates
+    root = Path(__file__).parent.parent / "minigames"
+    darts_templates = load_templates(root / "darts/assets/digit_templates")
+    assert sorted(darts_templates) == list(range(10))
+    # hoops keeps a partial library (digits collected opportunistically) —
+    # hold it to the same distinctness bar without requiring completeness.
+    for game in ("darts", "hoops"):
+        tpl_dir = root / game / "assets/digit_templates"
+        if not tpl_dir.exists():
+            continue
+        templates = load_templates(tpl_dir)
+        digits = sorted(templates)
+        for i, a in enumerate(digits):
+            for b in digits[i + 1:]:
+                ta, tb = templates[a], templates[b]
+                assert not (ta.shape == tb.shape and np.array_equal(ta, tb)), \
+                    f"{game} templates {a}.png and {b}.png are identical"
