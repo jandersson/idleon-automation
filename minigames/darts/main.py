@@ -129,6 +129,14 @@ CELEBRATION_CLICK_EVERY_S = 4.0
 UNKNOWN_OVERLAY_PROBE_AFTER_S = 10.0
 MAX_OVERLAY_PROBE_CLICKS = 3
 OVERLAY_PROBE_GO_CONF_MAX = 0.5  # only probe when clearly not game over
+# Probe only when the player's swing is NOT visible in the arm-motion
+# mask. Session 2026-06-10 12:08: a sub-threshold spawn looked like a
+# stall, the probes threw two blind darts into live play and burned two
+# lives (the diagnostic frames show hearts going 3 -> 1). Live swings
+# show arm_pixel_count ~150-330 every poll; a scene-covering or
+# scene-freezing popup collapses it. Visible-but-unmatched swings are
+# the adaptive threshold's job, not the probes'.
+OVERLAY_PROBE_MAX_ARM_MOTION = 80
 DIAGNOSTICS_DIR = Path(__file__).parent / "assets" / "diagnostics"
 
 # Per-spawn adaptive threshold (#26, the original complaint): the player
@@ -481,6 +489,7 @@ def _run_inner(session_started: str, throw_db, code_commit: str | None):
                     and go_conf < OVERLAY_PROBE_GO_CONF_MAX
                     and overlay_probe_clicks < MAX_OVERLAY_PROBE_CLICKS
                     and time.time() - last_celebration_click > CELEBRATION_CLICK_EVERY_S
+                    and (arm_pixel_count is None or arm_pixel_count < OVERLAY_PROBE_MAX_ARM_MOTION)
                 ):
                     # Unknown overlay: not the celebration, clearly not the
                     # game-over screen, and the pose is long gone. Save
