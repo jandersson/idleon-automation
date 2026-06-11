@@ -80,6 +80,22 @@ def _read_pts(win_left: int, win_top: int, win_w: int, win_h: int) -> int | None
     return read_score(gray)
 
 
+# Bounce-vs-chop speed experiment (2026-06-11, maintainer-designed):
+# pause firing for a fixed window after every Nth REGISTERED chop and
+# just record. The 01:08 analysis attributed the speed ramp to chops,
+# but it had a confound: the early ramp happened while chops AND
+# bounces accumulated together, and the chop-free droughts that looked
+# flat were all at already-high speed where a saturated ramp would
+# mask either cause. Pausing after every 5th success samples chop-free
+# bounces across the WHOLE speed range — if V_max rises during a
+# low-speed pause, bounces ramp it after all. The pause start/resume
+# prints include the V_max estimate, so the session log itself shows
+# the result; the full-rate polls record everything for
+# scripts/analyze_chop_speed.py. Set EVERY_N to 0 to disable once the
+# question is settled.
+BOUNCE_EXPERIMENT_EVERY_N = 5
+BOUNCE_EXPERIMENT_PAUSE_S = 12.0
+
 # Exit-on-starve (2026-06-11): points bank as in-game tokens on a
 # voluntary exit and each game starts fresh (maintainer ground truth),
 # so once the speed ramp makes safe fire windows this rare the round
@@ -207,6 +223,10 @@ def _run_inner():
     hold_pts_read = False  # PTS OCR done for the current hold?
     last_pts: int | None = None  # latest OCR'd on-screen PTS value
     riding_gold = False  # print-once flag for the gold-upgrade hold
+    # Bounce-vs-chop experiment state: fire pause deadline + the V_max
+    # snapshot taken at pause start (also serves as the resume flag).
+    experiment_pause_until = 0.0
+    experiment_v_before: float | None = None
     # (wall_time, leaf_x, |vx|) over the recent window — feeds infer_vmax.
     speed_track: list[tuple[float, int, float]] = []
 
@@ -267,6 +287,19 @@ def _run_inner():
                 set_registered(conn, pending[0], 1)
                 registered_chops += 1
                 estimated_points += 2 if pending[2] == "gold" else 1
+                if (
+                    BOUNCE_EXPERIMENT_EVERY_N
+                    and registered_chops % BOUNCE_EXPERIMENT_EVERY_N == 0
+                ):
+                    experiment_pause_until = now + BOUNCE_EXPERIMENT_PAUSE_S
+                    experiment_v_before = infer_vmax(
+                        [(x, v) for _, x, v in speed_track], bar_frame.shape[1]
+                    )
+                    v_desc = (f"{experiment_v_before:.0f}"
+                              if experiment_v_before is not None else "?")
+                    print(f"  [experiment] {registered_chops} registered chops — "
+                          f"pausing {BOUNCE_EXPERIMENT_PAUSE_S:.0f}s to record "
+                          f"chop-free bounces (V_max now {v_desc} px/s)")
         if bar_px < BAR_DEAD_PIXEL_THRESHOLD:
             if bar_dead_since is None:
                 bar_dead_since = now
@@ -353,6 +386,31 @@ def _run_inner():
                         last_poll_log = now
                     time.sleep(POLL_INTERVAL)
                     continue
+
+            # Bounce-vs-chop experiment: deliberate fire pause (see
+            # BOUNCE_EXPERIMENT_EVERY_N). Polls keep recording at full
+            # rate throughout — that's the experiment.
+            if now < experiment_pause_until:
+                if now - last_poll_log >= POLL_LOG_INTERVAL:
+                    log_poll(conn, session_started,
+                             int((now - session_start_t) * 1000),
+                             pointer_x, zone, red_dist, bar_px, 0,
+                             zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                    last_poll_log = now
+                time.sleep(POLL_INTERVAL)
+                continue
+            if experiment_pause_until and now >= experiment_pause_until:
+                v_after = infer_vmax(
+                    [(x, v) for _, x, v in speed_track], bar_frame.shape[1]
+                )
+                before = (f"{experiment_v_before:.0f}"
+                          if experiment_v_before is not None else "?")
+                after = f"{v_after:.0f}" if v_after is not None else "?"
+                print(f"  [experiment] resuming after the chop-free pause: "
+                      f"V_max {before} -> {after} px/s "
+                      f"(rise = bounces ramp it; flat = chops do)")
+                experiment_pause_until = 0.0
+                experiment_v_before = None
 
             # Time-to-red gate (directional, the load-bearing one) plus
             # the legacy pixel-margin floor. Direction must be KNOWN
