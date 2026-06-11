@@ -141,18 +141,28 @@ confidence noted since none of this is from the game's code.
   round).
 - Whether the per-chop ramp keeps compounding at higher scores
   ("hyperspeed" reports) or truly saturates.
-- **Next gate lever (designed, not built): position-aware eased
-  time-to-red.** The 0.75×recent-max speed floor over-penalizes fires
-  launched from the slow edge regions (the leaf genuinely takes
-  longer to reach a far red than d/eff_speed says, because it
-  accelerates gradually). Model the sweep as x(θ)=(W/2)(1−cosθ),
-  v=V_max·sinθ: time-to-red = Δθ/ω with θ=arccos(1−2x/W) and
-  ω=2·V_max/W, V_max estimated robustly from the recent window
-  (guard the arccos near edges; validate against all recorded fires —
-  the three deaths must compute under threshold, the survivals
-  over). Opens late-round edge-launched fires without loosening
-  mid-bar safety. Lower priority now that exit-on-starve banks
-  tokens instead of risking marginal fires.
+- ~~Position-aware eased time-to-red~~ — BUILT 2026-06-11, after the
+  01:39 starve-at-23-points proved the flat 0.75×recent-max floor was
+  a bug, not the game's ceiling (maintainer's human best is 66 by
+  just clicking greens). Root cause: detection-jitter spikes of
+  1600–1800 px/s (physically impossible 45px inter-poll jumps)
+  poisoned the recent-MAX for 3s at a time, pricing windows at ~190px
+  of needed runway when greens are 70–110px. The eased model
+  (detector.eased_time_to_red_ms, V_max = median of sin-corrected
+  samples via detector.infer_vmax) is jitter-immune and
+  position-aware. Back-test over all 45 recorded fires
+  (scripts/validate_chop_gate.py): both computable deaths price at
+  28ms and 110ms (skip), 40/41 survivals price ≥116ms (fire) — the
+  kill boundary is bracketed at 110–116ms and the budget sits at
+  120ms. The late-round fires the old floor starved out price at
+  135–159ms and now fire.
+- **PTS ground truth (2026-06-11):** the overlay renders a live
+  "N PTS" counter (left of the bar) and the account best ("66 BEST",
+  right). The bot OCRs PTS once per fire hold (~0.35s post-click,
+  zero throughput cost) into `chops.pts_after_ocr` — per-chop
+  increments verify the +1/+2 mapping — and reports the in-game
+  score at session end. Requires a one-time
+  `chopping-pick-score-region` around the PTS digits.
 
 ## Sources
 

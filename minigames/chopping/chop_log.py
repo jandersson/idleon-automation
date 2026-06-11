@@ -99,6 +99,12 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # 1 click = 1 point, so unregistered clicks mean the bot outpaced
     # the game's cooldown.
     ("registered", "INTEGER"),
+    # The on-screen "N PTS" counter, OCR'd ~0.35s after this chop's
+    # click (during the fire hold, so it costs no throughput). Ground
+    # truth for the score — per-chop increments of this column verify
+    # the +1 green / +2 gold assumption. NULL when the score region
+    # isn't picked or OCR failed.
+    ("pts_after_ocr", "INTEGER"),
 ]
 
 
@@ -167,6 +173,11 @@ def set_registered(conn: sqlite3.Connection, row_id: int, registered: int) -> No
     """Mark whether the game accepted this click as a chop (see the
     `registered` column comment)."""
     update_row(conn, "chops", row_id, {"registered": int(registered)})
+
+
+def set_pts(conn: sqlite3.Connection, row_id: int, pts: int) -> None:
+    """Record the OCR'd on-screen PTS counter after this chop."""
+    update_row(conn, "chops", row_id, {"pts_after_ocr": int(pts)})
 
 
 def outcome_rate_by_red_distance(

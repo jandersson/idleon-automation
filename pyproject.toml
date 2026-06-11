@@ -17,7 +17,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
-    # Used by tests/test_lint.py — narrow correctness checks (undefined
+    # Used by tests/test_lint.py â€” narrow correctness checks (undefined
     # name, unused variable). NOT a full style linter; we only enable
     # the F-codes that catch real bugs without being opinionated.
     "pyflakes>=3.0",
@@ -41,6 +41,7 @@ chopping-pick-bar-region = "minigames.chopping.pick_bar_region:run"
 chopping-pick-button-region = "minigames.chopping.pick_button_region:run"
 chopping-pick-leaf-region = "minigames.chopping.pick_leaf_region:run"
 chopping-pick-game-over = "minigames.chopping.pick_game_over:run"
+chopping-pick-score-region = "minigames.chopping.pick_score_region:run"
 darts = "minigames.darts.main:run"
 darts-observe = "minigames.darts.observe:run"
 darts-capture = "minigames.darts.capture:run"

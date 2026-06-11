@@ -5,7 +5,9 @@ from minigames.chopping.detector import (
     _leftmost_column,
     analyze_bar,
     bar_pixel_count,
+    eased_time_to_red_ms,
     gold_distance_ahead,
+    infer_vmax,
     leaf_vx_px_s,
     red_distance_ahead,
     zone_layout,
@@ -142,6 +144,59 @@ def test_leaf_vx_zero_dx_samples_do_not_break_the_run():
     # A flat pair mid-run (sub-pixel motion) keeps the run intact.
     track = [(0.0, 10), (0.05, 10), (0.1, 40)]
     assert abs(leaf_vx_px_s(track, min_span_s=0.02, max_span_s=0.2) - 300.0) < 1e-9
+
+
+def test_infer_vmax_is_jitter_robust():
+    # Mid-bar samples at ~true speed 500 (sin(theta)=1 at x=W/2), plus
+    # one absurd 1800 px/s jitter spike — the median must ignore it.
+    w = 222
+    samples = [(111, 500.0), (111, 510.0), (111, 490.0), (111, 505.0), (111, 1800.0)]
+    v = infer_vmax(samples, w)
+    assert 490 <= v <= 510
+
+
+def test_infer_vmax_corrects_edge_samples_upward():
+    # An edge-region sample moves slower than V_max; the sin correction
+    # recovers the peak. x=31 on a 222 bar: 1-2x/W=0.72, sin=0.69.
+    w = 222
+    samples = [(31, 345.0)] * 5
+    v = infer_vmax(samples, w)
+    assert 480 <= v <= 520  # 345 / 0.69 ~= 500
+
+
+def test_infer_vmax_needs_five_samples():
+    assert infer_vmax([(111, 500.0)] * 4, 222) is None
+
+
+def test_eased_time_to_red_position_awareness():
+    # Same 60px to red, same V_max: launched from the slow edge region
+    # takes LONGER than the linear estimate; launched mid-bar toward a
+    # nearby red is FASTER than naive distance/instantaneous-vx says.
+    w, v_max = 222, 600
+    edge = eased_time_to_red_ms(20, +1, 60, v_max, w)
+    mid = eased_time_to_red_ms(111, +1, 60, v_max, w)
+    assert edge > mid
+    # Mid-bar at peak speed: time ~= d / v_max as the lower bound.
+    assert mid >= int(60 / v_max * 1000) - 1
+
+
+def test_eased_time_to_red_mirrors_direction():
+    w, v_max = 222, 600
+    rightward = eased_time_to_red_ms(60, +1, 50, v_max, w)
+    leftward = eased_time_to_red_ms(222 - 60, -1, 50, v_max, w)
+    assert rightward == leftward
+
+
+def test_eased_time_to_red_validated_death_cases():
+    # The two computable recorded deaths must price under the 120ms
+    # budget (scripts/validate_chop_gate.py is the full back-test):
+    # 00:13 chop 3 (x=152 rightward, 19px ahead, V_max ~750) and
+    # 01:08 chop 20 (x=115 rightward, 64px ahead, V_max ~626).
+    assert eased_time_to_red_ms(152, +1, 19, 750, 222) < 120
+    assert eased_time_to_red_ms(115, +1, 64, 626, 222) < 120
+    # A green-entry survival from the same data prices comfortably over:
+    # 01:39 chop 2 (x=161 leftward, 106px ahead, V_max ~430).
+    assert eased_time_to_red_ms(161, -1, 106, 430, 222) > 200
 
 
 def test_analyze_bar_returns_gold_for_leaf_over_gold_zone():

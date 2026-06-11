@@ -3,19 +3,24 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import cv2
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
+from common.score_ocr import read_score
 from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.window import get_bounds, WindowNotFoundError
-from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered
+from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered, set_pts
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
+    eased_time_to_red_ms,
     gold_distance_ahead,
+    infer_vmax,
     leaf_vx_px_s,
     nearest_red_distance,
     red_distance_ahead,
@@ -53,6 +58,27 @@ COOLDOWN_AFTER_CLICK = 0.70
 # round-end dissolve or an unrelated change). Only bounds the
 # registered-flag bookkeeping, not the fire hold's release.
 REROLL_ACK_MAX_S = 0.40
+
+# Read the on-screen "N PTS" counter this long after each chop's click
+# — inside the fire hold (which lasts >= MIN_INTERCHOP_S), so the
+# ~100ms OCR costs no throughput, and late enough for the counter's
+# increment animation to settle.
+PTS_READ_AFTER_S = 0.35
+
+
+def _read_pts(win_left: int, win_top: int, win_w: int, win_h: int) -> int | None:
+    """OCR the live PTS counter (region "score" in regions.json, picked
+    via chopping-pick-score-region). None when unpicked or unreadable."""
+    region = get_region(_HERE, "score", win_w, win_h)
+    if region is None:
+        return None
+    frame = grab_region(
+        win_left + region["left"], win_top + region["top"],
+        region["width"], region["height"],
+    )
+    gray = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR), cv2.COLOR_BGR2GRAY)
+    return read_score(gray)
+
 
 # Exit-on-starve (2026-06-11): points bank as in-game tokens on a
 # voluntary exit and each game starts fresh (maintainer ground truth),
@@ -99,16 +125,22 @@ RED_SAFETY_MARGIN_PX = 8
 # measured leaf speed. Calibrated from the 2026-06-11 00:13 session:
 # chop #3 died with red 19px ahead at ~257-386 px/s (~50-75ms), while
 # chop #2 survived 8px of red BEHIND a rightward leaf — the pixel
-# margin can't represent that asymmetry. 150ms = ~2x the observed kill
-# latency; tighten once outcome data accumulates.
+# margin can't represent that asymmetry.
 #
-# The leaf ACCELERATES as the round progresses (game fact, 2026-06-11).
-# The gate self-adapts — vx is measured live, so a faster leaf needs
-# proportionally more red-free runway — but that also means fewer
-# gate-open windows late-round as green shrinks and speed rises. If
-# validation sessions show fire starvation late-round, lower this
-# toward the measured kill latency rather than bypassing the gate.
-MIN_TIME_TO_RED_MS = 150
+# Since 2026-06-11 the time estimate is the position-aware eased model
+# (detector.eased_time_to_red_ms with V_max from detector.infer_vmax)
+# — the previous flat eff-speed floor (0.75 × recent-max |vx|) starved
+# the bot at ~20 points: detection-jitter spikes of 1600-1800 px/s
+# poisoned the recent-max for 3s at a time, pricing every window at
+# ~190px of needed runway when greens are 70-110px wide. A human
+# clicking greens reaches 66 points (maintainer's best), so windows
+# clearly exist; the model just has to price them honestly. Budget
+# 120ms: the two computable deaths come out at 47ms and 81ms under
+# the eased model (validated in scripts/validate_chop_gate.py), while
+# green-entry fires price at ~130-180ms — so 120 separates them with
+# margin on both sides. The real decision→register latency is the
+# ~40-80ms floor.
+MIN_TIME_TO_RED_MS = 120
 
 # Direction-unknown fires are banned (2026-06-11, the 00:46 death):
 # the leaf read the same x twice 127ms apart (stale/frozen render),
@@ -119,20 +151,8 @@ MIN_TIME_TO_RED_MS = 150
 # poll for a clean read instead of firing blind.
 MIN_VX_FOR_FIRE = 30.0
 
-# Leaf motion is EASED, not constant-speed (measured both sessions:
-# mid-bar ~550-750 px/s vs ~280-420 near the edges). An instantaneous
-# vx sampled in the slow region understates the speed the leaf reaches
-# crossing toward red, so time-to-red uses an effective speed of at
-# least EASING_SPEED_FLOOR_FRAC of the fastest |vx| in the recent
-# window. Raised 0.5 -> 0.75 after the 01:08 session's death: chop 20
-# fired at ttr=150ms on vx=425 while the true late-round crossing
-# speed was ~630-750 (real ttr ~100ms). Across all three deaths the
-# TRUE-speed kill boundary is ~100-115ms (survivals at 115-123ms), so
-# the projected speed must not flatter the true one. Skipping marginal
-# fires is cheap: chops are the only thing that ramps the speed and
-# bounces are free (per-chop ramp confirmed, per-bounce refuted,
-# 01:08 session), so a skipped window costs wall-clock, not points.
-EASING_SPEED_FLOOR_FRAC = 0.75
+# Window of recent (x, |vx|) samples feeding detector.infer_vmax — the
+# robust per-sweep peak-speed estimate for the eased time-to-red model.
 SPEED_WINDOW_S = 3.0
 
 # Per-poll DB write rate cap. 0 = log every loop iteration (~40-80Hz).
@@ -184,9 +204,11 @@ def _run_inner():
     fire_hold_layout: str | None = None
     fire_hold_click_t = 0.0
     fire_hold_rerolled = False  # layout re-roll (the in-game chop ack) seen?
+    hold_pts_read = False  # PTS OCR done for the current hold?
+    last_pts: int | None = None  # latest OCR'd on-screen PTS value
     riding_gold = False  # print-once flag for the gold-upgrade hold
-    # (wall_time, |vx|) over the recent window — the easing speed floor.
-    speed_track: list[tuple[float, float]] = []
+    # (wall_time, leaf_x, |vx|) over the recent window — feeds infer_vmax.
+    speed_track: list[tuple[float, int, float]] = []
 
     while True:
         check_failsafe()
@@ -256,8 +278,8 @@ def _run_inner():
                     pending = None
                 print(f"Bar gone for {now - bar_dead_since:.1f}s (bar_px={bar_px}) — round ended, stopping.")
                 print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
-                      f"by the game, ~{estimated_points} points expected — compare with "
-                      f"the in-game score (1 registered green = 1, gold = 2).")
+                      f"by the game, ~{estimated_points} points expected, last in-game "
+                      f"PTS read: {last_pts if last_pts is not None else 'unread'}.")
                 conn.commit()
                 conn.close()
                 return
@@ -274,8 +296,10 @@ def _run_inner():
                 pending = None
             print(f"No safe fire window for {STARVE_EXIT_S:.0f}s — round has hit "
                   f"its ceiling, stopping to bank the tokens.")
+            final_pts = _read_pts(win_left, win_top, win_w, win_h) or last_pts
             print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
-                  f"by the game, ~{estimated_points} points expected. "
+                  f"by the game, ~{estimated_points} points expected, "
+                  f"in-game PTS: {final_pts if final_pts is not None else 'unread'}. "
                   f"EXIT the minigame in-game to bank them (each game starts fresh).")
             conn.commit()
             conn.close()
@@ -290,8 +314,8 @@ def _run_inner():
             while leaf_track and now - leaf_track[0][0] > 0.3:
                 leaf_track.pop(0)
         leaf_vx = leaf_vx_px_s(leaf_track)
-        if leaf_vx is not None:
-            speed_track.append((now, abs(leaf_vx)))
+        if leaf_vx is not None and pointer_x is not None:
+            speed_track.append((now, pointer_x, abs(leaf_vx)))
         while speed_track and now - speed_track[0][0] > SPEED_WINDOW_S:
             speed_track.pop(0)
 
@@ -311,6 +335,16 @@ def _run_inner():
                         set_registered(conn, pending[0], 0)
                     fire_hold_layout = None
                 else:
+                    # PTS ground truth: one OCR per hold, after the
+                    # counter's increment settles. Sits inside the
+                    # mandatory inter-chop wait — zero throughput cost.
+                    if not hold_pts_read and now - fire_hold_click_t >= PTS_READ_AFTER_S:
+                        hold_pts_read = True
+                        pts = _read_pts(win_left, win_top, win_w, win_h)
+                        if pts is not None:
+                            last_pts = pts
+                            if pending is not None:
+                                set_pts(conn, pending[0], pts)
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
                         log_poll(conn, session_started,
                                  int((now - session_start_t) * 1000),
@@ -322,21 +356,28 @@ def _run_inner():
 
             # Time-to-red gate (directional, the load-bearing one) plus
             # the legacy pixel-margin floor. Direction must be KNOWN
-            # (see MIN_VX_FOR_FIRE), and the projected speed is floored
-            # at a fraction of the recent max so an edge-region vx
-            # sample can't understate the eased mid-bar speed.
+            # (see MIN_VX_FOR_FIRE); the time estimate is the
+            # position-aware eased model (see MIN_TIME_TO_RED_MS).
             red_ahead = None
             time_to_red_ms = None
             direction_known = leaf_vx is not None and abs(leaf_vx) >= MIN_VX_FOR_FIRE
             if direction_known:
                 red_ahead = red_distance_ahead(bar_frame, pointer_x, leaf_vx)
                 if red_ahead is not None:
-                    recent_max = max((v for _, v in speed_track), default=0.0)
-                    eff_speed = max(abs(leaf_vx), EASING_SPEED_FLOOR_FRAC * recent_max)
-                    time_to_red_ms = int(red_ahead / eff_speed * 1000)
+                    v_max = infer_vmax(
+                        [(x, v) for _, x, v in speed_track], bar_frame.shape[1]
+                    )
+                    if v_max is not None:
+                        time_to_red_ms = eased_time_to_red_ms(
+                            pointer_x, leaf_vx, red_ahead,
+                            max(v_max, abs(leaf_vx)), bar_frame.shape[1],
+                        )
             unsafe = (
                 not direction_known
                 or (red_dist is not None and red_dist < RED_SAFETY_MARGIN_PX)
+                # Red ahead but V_max not yet estimable (first ~150ms of
+                # a round): wait for the estimate rather than fire blind.
+                or (red_ahead is not None and time_to_red_ms is None)
                 or (time_to_red_ms is not None and time_to_red_ms < MIN_TIME_TO_RED_MS)
             )
             if unsafe:
@@ -446,6 +487,7 @@ def _run_inner():
             fire_hold_layout = layout
             fire_hold_click_t = click_time
             fire_hold_rerolled = False
+            hold_pts_read = False
             riding_gold = False
             random_delay(20, 60)
             time.sleep(POLL_INTERVAL)

@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 
 import cv2
@@ -99,6 +100,61 @@ def gold_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int 
     bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
     gold_cols = np.where((_mask(bar_hsv, *GOLD_HSV) > 0).any(axis=0))[0]
     return _distance_ahead(gold_cols, x, direction)
+
+
+# sin(theta) floor for infer_vmax: near the bar edges sin(theta) -> 0 and
+# the per-sample V_max estimate explodes on jitter; samples there carry
+# little information anyway.
+MIN_SIN_FOR_VMAX = 0.35
+
+
+def infer_vmax(
+    samples: list[tuple[int, float]], bar_w: int
+) -> float | None:
+    """Robust sweep peak speed from recent (x, |vx|) samples.
+
+    Under the eased sweep model (x(θ) = (W/2)(1−cosθ), v = V_max·sinθ),
+    each sample implies V_max = |vx| / sin(θ(x)). The MEDIAN across the
+    window resists the 1600+ px/s detection-jitter spikes that poisoned
+    the raw-max estimate and starved the gate (01:39 session: median
+    speed ~460-500 px/s while single-sample maxima hit 1811). None with
+    fewer than 5 samples.
+    """
+    if bar_w <= 0 or len(samples) < 5:
+        return None
+    ests = []
+    for x, v in samples:
+        c = 1.0 - 2.0 * x / bar_w
+        s = math.sqrt(max(0.0, 1.0 - c * c))
+        ests.append(v / max(s, MIN_SIN_FOR_VMAX))
+    ests.sort()
+    return ests[len(ests) // 2]
+
+
+def eased_time_to_red_ms(
+    x: int, direction: float, red_ahead: int, v_max: float, bar_w: int
+) -> int | None:
+    """Time (ms) for the leaf to cover red_ahead px in `direction`,
+    under the eased sweep model — position-aware, unlike
+    distance/instantaneous-speed: a leaf in the slow edge region takes
+    longer to reach a far red than the linear estimate says (it has to
+    accelerate first), and a mid-bar leaf reaches nearby red sooner
+    (it's already near peak speed). x(θ) = (W/2)(1−cosθ) gives
+    θ(p) = arccos(1 − 2p/W) and time = Δθ / ω with ω = 2·V_max/W.
+
+    Mirrors x for leftward motion so the math is direction-free.
+    Returns None when v_max/bar_w are unusable.
+    """
+    if v_max <= 0 or bar_w <= 0:
+        return None
+
+    def theta(p: float) -> float:
+        return math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * p / bar_w)))
+
+    xn = float(x) if direction > 0 else float(bar_w - x)
+    target = min(float(bar_w), xn + red_ahead)
+    omega = 2.0 * v_max / bar_w
+    return int(max(0.0, theta(target) - theta(xn)) / omega * 1000)
 
 
 def leaf_vx_px_s(
