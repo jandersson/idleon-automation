@@ -93,9 +93,10 @@ for r in rows:
         continue
     ttr = eased_time_to_red_ms(r["x"], r["vx"], r["ahead"],
                                max(v_max, abs(r["vx"])), BAR_W)
-    # Deaths: the only recorded red-click death with vx logged is the
-    # 01:08 chop 20 (outcome round_ended ~1s later, dissolve signature).
-    death = r["outcome"] == "round_ended" and r["s"].startswith("2026-06-11T01:08")
+    # Every outcome='round_ended' chop on record is a red-click death
+    # (the dissolve follows the fatal click within ~1-3s; clean exits
+    # write 'survived' on the pending chop instead).
+    death = r["outcome"] == "round_ended"
     classify(f"{r['s'][11:16]} chop{r['chop_idx']}", r["zone"], r["x"], r["vx"],
              r["ahead"], v_max, ttr, death,
              "DEATH" if death else (r["outcome"] or "?"))

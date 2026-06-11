@@ -102,33 +102,53 @@ def gold_distance_ahead(bar_frame: np.ndarray, x: int, direction: float) -> int 
     return _distance_ahead(gold_cols, x, direction)
 
 
-# sin(theta) floor for infer_vmax: near the bar edges sin(theta) -> 0 and
-# the per-sample V_max estimate explodes on jitter; samples there carry
-# little information anyway.
-MIN_SIN_FOR_VMAX = 0.35
+# Minimum sin(theta) for a sample to count in infer_vmax. Near the bar
+# edges sin(theta) -> 0: the per-sample V_max estimate explodes on
+# jitter, and the leaf also spends MOST of its time there (eased motion
+# lingers at the turnarounds) — including edge samples with a floored
+# correction biased the median ~25% low and let chop 14 (10:51 session)
+# fire at a priced 138ms when honest sweep peaks of 600-840 px/s made
+# it ~103ms. Mid-region samples are direct V_max evidence; use only
+# those.
+MIN_SIN_FOR_VMAX = 0.5
+
+
+VMAX_PERCENTILE = 0.75
 
 
 def infer_vmax(
-    samples: list[tuple[int, float]], bar_w: int
+    samples: list[tuple[int, float]], bar_w: int,
+    percentile: float = VMAX_PERCENTILE,
 ) -> float | None:
     """Robust sweep peak speed from recent (x, |vx|) samples.
 
     Under the eased sweep model (x(θ) = (W/2)(1−cosθ), v = V_max·sinθ),
-    each sample implies V_max = |vx| / sin(θ(x)). The MEDIAN across the
-    window resists the 1600+ px/s detection-jitter spikes that poisoned
-    the raw-max estimate and starved the gate (01:39 session: median
-    speed ~460-500 px/s while single-sample maxima hit 1811). None with
-    fewer than 5 samples.
+    each sample in the mid region (sin(θ) ≥ MIN_SIN_FOR_VMAX) implies
+    V_max = |vx| / sin(θ(x)); edge samples are EXCLUDED (see the
+    constant's comment — flooring them dragged the estimate low).
+
+    The estimate is the 75th percentile of the corrected samples, not
+    the median: the kill-relevant speed is what the leaf CAN do, and
+    with the per-chop ramp the trailing window mixes slower old sweeps
+    with faster new ones — the median lags that ramp (chop 14, 10:51
+    session: median priced the fatal window at 141ms; honest sweep
+    peaks of 600-840 px/s made it ~104ms). p75 over ≥5 samples still
+    can't be moved by the 1600+ px/s jitter spikes that poisoned the
+    raw-max estimator (the 01:39 starve) — spikes are a few samples
+    out of dozens. None with fewer than 5 usable samples.
     """
-    if bar_w <= 0 or len(samples) < 5:
+    if bar_w <= 0:
         return None
     ests = []
     for x, v in samples:
         c = 1.0 - 2.0 * x / bar_w
         s = math.sqrt(max(0.0, 1.0 - c * c))
-        ests.append(v / max(s, MIN_SIN_FOR_VMAX))
+        if s >= MIN_SIN_FOR_VMAX:
+            ests.append(v / s)
+    if len(ests) < 5:
+        return None
     ests.sort()
-    return ests[len(ests) // 2]
+    return ests[min(len(ests) - 1, int(len(ests) * percentile))]
 
 
 def eased_time_to_red_ms(
