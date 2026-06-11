@@ -93,7 +93,13 @@ def _read_pts(win_left: int, win_top: int, win_w: int, win_h: int) -> int | None
 # the result; the full-rate polls record everything for
 # scripts/analyze_chop_speed.py. Set EVERY_N to 0 to disable once the
 # question is settled.
-BOUNCE_EXPERIMENT_EVERY_N = 5
+#
+# SETTLED 2026-06-11 (10:51 session, pauses after chops 5 and 10):
+# per-sweep peaks inside both chop-free pauses were FLAT at low and
+# mid speed — bounces don't ramp it, chops do, now unconfounded.
+# Disabled; re-enable for a high-speed (15-20 chop) confirmation run
+# if ever needed.
+BOUNCE_EXPERIMENT_EVERY_N = 0
 BOUNCE_EXPERIMENT_PAUSE_S = 12.0
 
 # Exit-on-starve (2026-06-11): points bank as in-game tokens on a

@@ -22,19 +22,17 @@ confidence noted since none of this is from the game's code.
 
 ## Speed model (settled 2026-06-11, 01:08 session — 97s, 19 chops)
 
-- **Chops ramp the speed; bounces appeared not to — but the evidence
-  has a confound (caveat added 2026-06-11).** Mean speed doubled
-  during the 9-chop opening burst (308 → ~480 px/s in 10s), then
-  stayed flat ~475–590 across ~a hundred chop-free bounces during the
-  gate droughts. HOWEVER: the opening ramp had chops and bounces
-  accumulating together, and the chop-free droughts were all at
-  already-high speed where a saturating ramp would mask either cause.
-  A designed experiment now runs in the bot
-  (BOUNCE_EXPERIMENT_EVERY_N): after every 5th registered chop it
-  pauses firing for 12s and records chop-free bounces across the
-  whole speed range — V_max before/after each pause is printed live
-  and recoverable from polls. Rise during a low-speed pause = bounces
-  ramp it; flat = chops do.
+- **Chops ramp the speed; bounces do NOT — confirmed unconfounded by
+  the pause experiment (10:51 session, 2026-06-11).** The bot paused
+  firing 12s after the 5th and 10th registered chops; per-sweep peaks
+  INSIDE the chop-free pauses were flat at both low and mid speed
+  (pause 1: first-half mean ~455 → second-half ~433 px/s over ~20
+  bounces; pause 2: ~576 → ~560 over ~25). This closes the original
+  confound (the opening ramp had chops+bounces together; the 01:08
+  droughts were at high speed where saturation could mask). The
+  experiment stays available via BOUNCE_EXPERIMENT_EVERY_N (set 0 to
+  disable now that it's answered). Corollary intact: waiting is free,
+  deaths are the only cost.
 - **Therefore waiting is FREE.** A skipped fire window costs
   wall-clock, not points or difficulty. Deaths are the only real cost
   in this game. The front-loading doctrine ("time not scoring is
