@@ -1,10 +1,11 @@
 # macOS port plan + cross-machine data shipping
 
-Status: plan (nothing implemented yet; survey by subagent 2026-06-11).
+Status: plan (port not implemented; survey by subagent 2026-06-11).
 Target: the repo cloned on a MacBook Air (Apple Silicon); goal (1) bots
 runnable on macOS, README platform table flipped to supported once one
-bot runs end-to-end; goal (2) the Windows-collected training data usable
-on the Mac WITHOUT committing raw `.db` files.
+bot runs end-to-end. Goal (2) — Windows-collected training data usable
+on the Mac — was resolved 2026-06-11 by committing the raw `.db` files
+(see section 3); a fresh clone has the full training data.
 
 ## 1. Windows-only inventory
 
@@ -77,58 +78,24 @@ during a `check_failsafe()` loop → must abort.
 Restart the terminal fully after granting. The smoke script in the
 checklist triggers all prompts deliberately.
 
-## 3. Cross-machine data shipping (no raw .db commits)
+## 3. Cross-machine data shipping — SUPERSEDED 2026-06-11
 
-### 3.1 What exists
+The snapshot-as-training-input design originally planned here (darts
+`throws_snapshot.json`, hoops `clean_make` in the dump, combined
+DB+snapshot fetches) is unnecessary: the raw `.db` files are now
+tracked in git and auto-committed at each bot's session end (27d3857).
+Every predictor trains from the local DB as before, and a `git pull`
+on the Mac brings the full data — including the miss rows and polls
+context a makes-only snapshot would have dropped.
 
-`.db` files are gitignored. Hoops already ships
-`minigames/hoops/assets/shots_snapshot.json` (written by
-`scripts/dump_shots.py`, auto-committed at session end via
-`common/auto_commit.py`). **The gap: snapshots are reviewer-facing
-only** — every predictor trains directly from the local DB (hoops
-`fetch_makes`/`fetch_vy_labeled`; darts `fetch_stripe_rows` at session
-start), so a fresh clone starts from zero. The design move: make
-snapshots a training input.
-
-### 3.2 Darts (priority — E[stripe] is the active model)
-
-- `scripts/dump_darts.py` → `minigames/darts/assets/throws_snapshot.json`
-  (tracked). Per record: `session_started`, `throw_idx` (dedupe key),
-  `wind_x`, `wind_y`, `vy_px_s` (legacy px/poll rows converted at
-  export using the session's poll gaps — the snapshot ships fit-ready
-  rows so the bulky polls table stays local), `pose_y`, `hit`,
-  `score_increment`, `code_commit`, `aim_mode`. Header with totals +
-  per-session counts (doubles as the review view).
-- Split `fetch_stripe_rows` into `rows_from_db(conn)` +
-  `rows_from_snapshot(path)` + a combined fetch that unions them,
-  DB winning on `(session_started, throw_idx)` collisions. `main.py`
-  fits from the combined fetch: no behavior change on Windows
-  (snapshot ⊆ DB), Mac fits from shipped rows on day one.
-- Session-end auto-commit of the snapshot, copying the hoops pattern —
-  runs on both machines, so Mac data ships back the same way.
-- Tests mirror `tests/test_dump_shots.py`: dump→read round-trip equals
-  DB fetch; dedupe; legacy unit conversion preserved.
-
-### 3.3 Hoops (second)
-
-The existing snapshot's `makes` records already carry what
-`fetch_makes` needs, except `clean_make` (the dump selects `made=1`
-but training uses `clean_make=1` — rattle-ins must not train). Add the
-flag to the dump + a combined fetch. Accepted limitation:
-`fetch_clean_trajectories`/`fetch_vy_labeled` need miss rows the
-makes-only snapshot lacks — snapshot-trained `gp` is sufficient for a
-Mac port; extend only if the #38 model needs cross-machine data.
-
-### 3.4 Chopping
-
-No fitted model consumes chopping.db — nothing to ship. Skip.
-
-### 3.5 Rejected alternatives
-
-git-lfs .db commits (binary churn, conflicts — the stated non-goal),
-`sqlite3 .dump` SQL text (AUTOINCREMENT diff noise + ships the polls
-table), out-of-band sync (invisible to review). The snapshot pattern is
-proven in-repo, diffable, auto-committed, and reviewable.
+This section had rejected raw `.db` commits over binary churn and
+conflicts. Both concerns dissolved on inspection: the DBs total
+~2.2 MB, and the data flow is one-way (bots only run on the Windows
+box; the Mac is a read-only consumer), so merge conflicts can't occur.
+If bots ever run on a second machine, revisit — concurrent writers
+would resurrect the conflict problem, and the snapshot/union design
+above is the fallback. `shots_snapshot.json` stays as a
+reviewer-facing aggregate, not a training input.
 
 ## 4. Ordered checklist
 
@@ -146,9 +113,8 @@ the MacBook.
 2. [code] Retina normalization in `common/capture.py` + unit test with
    a synthetic 2x array.
 3. [code] Optional darwin tesseract fallbacks in `score_ocr.py`.
-4. [code] Darts data shipping (section 3.2); dump once on Windows and
-   commit the first `throws_snapshot.json`.
-5. [code] Hoops `clean_make` in the dump + combined fetch (3.3).
+4. ~~Darts data shipping~~ — obsolete, DBs are tracked (section 3).
+5. ~~Hoops `clean_make` dump~~ — obsolete, same.
 6. [mac] Clone, install uv, `uv sync`; run a smoke probe (get_bounds →
    bounds sane; grab_fullscreen → PNG looks right and comes back at
    logical size; pyautogui.position) to trigger the permission prompts
@@ -163,8 +129,7 @@ the MacBook.
     launcher untested); document the capture normalization.
 11. [mac] Darts second: existing templates first; recapture
     release.png / re-pick wind+score regions only if confidences are
-    weak; verify the stripe model fits from the shipped snapshot with
-    an empty local DB.
+    weak; verify the stripe model fits from the pulled `darts.db`.
 12. [mac] Hoops last (most templates + OCR).
 13. Deferred launcher items: tkinter under uv CPython, POSIX
     process-tree kill, plyvel darwin marker + Application Support save
