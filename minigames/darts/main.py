@@ -18,6 +18,7 @@ from common.score_ocr import read_score as _read_score_tesseract
 from common.score_template_ocr import make_score_reader
 from common.dart_trajectory import analyse_throw_dir
 from common.git_info import current_code_commit
+from common.auto_commit import commit_file_if_changed
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.wind import parse_wind
 from minigames.darts.shot_log import open_db, log_throw, log_poll
@@ -469,6 +470,13 @@ def run():
             _run_inner(session_started, throw_db, code_commit, ev_model)
         finally:
             throw_db.close()
+            # The DB is tracked so other machines get session data via
+            # `git pull`. Safe to commit here: the connection is closed.
+            commit_file_if_changed(
+                REPO_ROOT,
+                "minigames/darts/assets/darts.db",
+                "chore(darts): refresh darts.db (auto)",
+            )
 
 
 def _run_inner(

@@ -13,6 +13,7 @@ from common.regions import get_region
 from common.score_ocr import read_score
 from common.session_log import session_log
 from common.git_info import current_code_commit
+from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered, set_pts
 from minigames.chopping.detector import (
@@ -189,7 +190,18 @@ POLL_LOG_INTERVAL = 0.0
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
-        _run_inner()
+        try:
+            _run_inner()
+        finally:
+            # The DB is tracked so other machines get session data via
+            # `git pull`. Rollback-journal mode keeps the on-disk file
+            # consistent between transactions, so this is safe even if
+            # _run_inner bailed before conn.close().
+            commit_file_if_changed(
+                _HERE.parent.parent,
+                "minigames/chopping/assets/chopping.db",
+                "chore(chopping): refresh chopping.db (auto)",
+            )
 
 
 def _run_inner():

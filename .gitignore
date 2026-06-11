@@ -12,7 +12,6 @@ minigames/*/assets/ball_calibration/
 minigames/*/assets/debug_match.png
 minigames/*/assets/monitor/
 minigames/*/assets/logs/
-minigames/*/assets/shots.db
 minigames/*/assets/diagnostics/
 minigames/*/assets/observations/
 minigames/*/assets/analysis/
@@ -27,9 +26,6 @@ data/
 Thumbs.db
 
 # Per-user / debug artifacts that have been hanging around untracked
-minigames/darts/assets/darts.db
-minigames/mining/assets/mining.db
-minigames/chopping/assets/chopping.db
 minigames/darts/assets/wind_samples/
 minigames/hoops/assets/score_calibration.png
 minigames/hoops/assets/score_post_dump.png

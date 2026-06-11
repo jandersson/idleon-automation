@@ -1214,6 +1214,7 @@ def _record_shot_outcome(
 
 REPO_ROOT = _HERE.parent.parent
 SNAPSHOT_REL = "minigames/hoops/assets/shots_snapshot.json"
+SHOT_DB_REL = "minigames/hoops/assets/shots.db"
 
 
 def run():
@@ -1291,8 +1292,10 @@ def _fit_predictor(shot_db, direction: str):
 
 
 def _refresh_and_commit_snapshot() -> None:
-    """Regenerate shots_snapshot.json from the DB, then commit + push (if in
-    window). Best-effort — failures are reported but don't propagate."""
+    """Regenerate shots_snapshot.json from the DB, then commit the DB +
+    snapshot together and push (if in window). The DB is tracked so other
+    machines get session data via `git pull`. Best-effort — failures are
+    reported but don't propagate."""
     try:
         from scripts import dump_shots
         dump_shots.main()
@@ -1301,8 +1304,8 @@ def _refresh_and_commit_snapshot() -> None:
         return
     commit_file_if_changed(
         REPO_ROOT,
-        SNAPSHOT_REL,
-        "Hoops: refresh shots_snapshot.json (auto)",
+        [SHOT_DB_REL, SNAPSHOT_REL],
+        "chore(hoops): refresh shots.db + snapshot (auto)",
     )
     # Surface a nudge if many sessions have been played since the last
     # code-level review — keeps human-in-the-loop without external comms.

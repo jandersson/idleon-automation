@@ -78,3 +78,48 @@ def test_does_not_touch_other_changes(tmp_path):
         cwd=tmp_path, capture_output=True, text=True,
     ).stdout
     assert "user is mid-edit" in diff
+
+
+def test_commits_multiple_files_in_one_commit(tmp_path):
+    """A list of paths lands as a single commit carrying every changed file."""
+    _init_repo(tmp_path)
+    db = tmp_path / "bot.db"
+    snapshot = tmp_path / "snapshot.json"
+    db.write_bytes(b"v1")
+    snapshot.write_text('{"a": 1}')
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=tmp_path, check=True)
+
+    db.write_bytes(b"v2")
+    snapshot.write_text('{"a": 2}')
+
+    commit_file_if_changed(tmp_path, ["bot.db", "snapshot.json"], "auto: both", push=False)
+
+    files = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    assert sorted(files) == ["bot.db", "snapshot.json"]
+    msg = subprocess.run(
+        ["git", "log", "-1", "--format=%s"], cwd=tmp_path, capture_output=True, text=True
+    ).stdout.strip()
+    assert msg == "auto: both"
+
+
+def test_commits_untracked_file(tmp_path):
+    """A brand-new (untracked) DB must still be picked up — `git diff HEAD`
+    alone doesn't see untracked files."""
+    _init_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("x")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-qm", "init"], cwd=tmp_path, check=True)
+
+    (tmp_path / "bot.db").write_bytes(b"first session")
+
+    commit_file_if_changed(tmp_path, "bot.db", "auto: new db", push=False)
+
+    files = subprocess.run(
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=tmp_path, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    assert files == ["bot.db"]

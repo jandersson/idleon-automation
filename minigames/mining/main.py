@@ -37,6 +37,7 @@ from common.input import check_failsafe, click as bot_click
 from common.regions import get_region
 from common.session_log import session_log
 from common.git_info import current_code_commit
+from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, _find_plank_top_y, _find_plank_x_range
 from minigames.mining.jump_log import open_db, log_jump, set_outcome
@@ -79,7 +80,18 @@ DIAG_DIR = _HERE / "assets" / "diagnostics"
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
-        _run_inner()
+        try:
+            _run_inner()
+        finally:
+            # The DB is tracked so other machines get session data via
+            # `git pull`. Rollback-journal mode keeps the on-disk file
+            # consistent between transactions, so this is safe even if
+            # _run_inner bailed before conn.close().
+            commit_file_if_changed(
+                _HERE.parent.parent,
+                "minigames/mining/assets/mining.db",
+                "chore(mining): refresh mining.db (auto)",
+            )
 
 
 def _run_inner():

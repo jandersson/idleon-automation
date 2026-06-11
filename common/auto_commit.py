@@ -31,32 +31,44 @@ def _within_push_window() -> bool:
 
 
 def _git_has_changes(repo_root: Path, path: str) -> bool:
-    """Returns True iff `path` differs from the index/HEAD."""
+    """Returns True iff `path` differs from the index/HEAD (including
+    untracked files, which `git diff HEAD` alone doesn't see)."""
     res = subprocess.run(
         ["git", "diff", "--quiet", "HEAD", "--", path],
         cwd=repo_root,
         capture_output=True,
     )
-    return res.returncode != 0  # non-zero = differences
+    if res.returncode != 0:  # non-zero = differences
+        return True
+    res = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "--", path],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    return bool(res.stdout.strip())
 
 
 def commit_file_if_changed(
     repo_root: Path,
-    relative_path: str,
+    relative_path: str | list[str],
     commit_message: str,
     push: bool = True,
 ) -> None:
-    """Stage + commit `relative_path` (only that file) if it has changed,
-    then optionally push. Best-effort, never raises."""
+    """Stage + commit `relative_path` (one path or a list — only those
+    files) if any has changed, then optionally push. Best-effort, never
+    raises."""
+    paths = [relative_path] if isinstance(relative_path, str) else list(relative_path)
     try:
-        if not _git_has_changes(repo_root, relative_path):
+        changed = [p for p in paths if _git_has_changes(repo_root, p)]
+        if not changed:
             return
-        subprocess.run(["git", "add", relative_path], cwd=repo_root, check=True, capture_output=True)
+        subprocess.run(["git", "add", *changed], cwd=repo_root, check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", commit_message],
             cwd=repo_root, check=True, capture_output=True,
         )
-        print(f"  [auto-commit] committed {relative_path}")
+        print(f"  [auto-commit] committed {', '.join(changed)}")
         if push and _within_push_window():
             res = subprocess.run(
                 ["git", "push"], cwd=repo_root, capture_output=True, text=True,

@@ -1,9 +1,9 @@
 """Export an aggregated snapshot of shots.db to a tracked JSON file.
 
-The DB itself is gitignored (binary, grows, churn), but a periodically
-committed snapshot lets reviewers — including remote agents that don't
-have access to the local DB — see what data the predictor was fit on
-and how make rates evolve.
+The DB is tracked in git too (since 2026-06-11, for cross-machine
+work), but the snapshot remains useful as a human-readable aggregate:
+reviewers see what data the predictor was fit on and how make rates
+evolve without opening the binary DB.
 
 Run: `uv run python scripts/dump_shots.py`
 Writes: minigames/hoops/assets/shots_snapshot.json

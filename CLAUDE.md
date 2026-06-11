@@ -79,6 +79,14 @@ When adding a new minigame, mirror this structure and register entry points in `
 
 - **Log every decision to a per-bot SQLite DB at `assets/<bot>.db`.** One row per click / shot / throw / jump captures the detector state at fire time + the outcome (measured a beat later). The shape is bot-specific — hoops logs `hoop_x, platform_y, offset, made` etc; darts logs `release_pose_x, launch_angle, hit`; mining logs `cart_x, next_distance_px, outcome`. Don't try to share a schema across bots, but DO follow the same data-tracking pattern: every fired action goes in the DB, with code_commit / session_started / source columns common across bots. Querying answers questions like "at what trigger distance does the bot actually survive?" that grepping log files can't. See `common/shot_log.py` (hoops), `minigames/darts/shot_log.py`, `minigames/mining/jump_log.py` for examples. New bots should mirror this layout: schema module next to `main.py`, `open_db()` + `log_*()` + outcome-update helpers, ALTER TABLE migration list for late-added columns.
 
+  **The DBs are tracked in git and auto-committed at session end** (via
+  `common.auto_commit.commit_file_if_changed` in each bot's `run()` exit
+  path) so other machines get the data with `git pull` — the bots only run
+  on the Windows box, so the flow is one-way and merge conflicts can't
+  happen. Debug captures (`monitor/`, `captures/`, `logs/`) stay
+  gitignored — they're regenerable and tens of GB. Wire the same hook into
+  new bots.
+
   **Name the DB by the game, not the action being logged.** Darts logs to `darts.db`, mining logs to `mining.db`. The DB is a per-bot artifact and naming it after the game keeps it discoverable when scrolling `assets/` and survives the bot growing additional tables (multiple action types in one DB). Hoops' `shots.db` is a legacy exception — don't follow it for new bots. Table names within the DB should describe the action (`shots`, `throws`, `jumps`).
 
 ### Coordinate convention
