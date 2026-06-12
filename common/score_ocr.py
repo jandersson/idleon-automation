@@ -53,6 +53,15 @@ def _find_tesseract_binary() -> str | None:
         ):
             if os.path.isfile(path):
                 return path
+    # Homebrew locations (Apple Silicon, then Intel) when the shell that
+    # launched us doesn't have brew's bin on PATH.
+    if sys.platform == "darwin":
+        for path in (
+            "/opt/homebrew/bin/tesseract",
+            "/usr/local/bin/tesseract",
+        ):
+            if os.path.isfile(path):
+                return path
     return None
 
 
@@ -73,8 +82,10 @@ def _ocr_one(binary: np.ndarray, psm: int) -> int | None:
         )
     except TesseractNotFoundError:
         if not _BINARY_WARNED:
+            hint = ("brew install tesseract" if sys.platform == "darwin"
+                    else "winget install --id=UB-Mannheim.TesseractOCR")
             print("[score_ocr] tesseract binary not found on PATH; scores not OCR'd. "
-                  "Install: winget install --id=UB-Mannheim.TesseractOCR")
+                  f"Install: {hint}")
             _BINARY_WARNED = True
         return None
     except Exception as e:

@@ -107,12 +107,18 @@ predictor) are far more sensitive to a new capture pipeline.
 [code] = doable on Windows and pushed; [mac] = needs the maintainer at
 the MacBook.
 
-1. [code] Platform-dispatch `common/window.py` (guard pygetwindow
-   import, add `_get_bounds_quartz`); add
-   `pyobjc-framework-Quartz; sys_platform == 'darwin'`; `uv lock`.
-2. [code] Retina normalization in `common/capture.py` + unit test with
-   a synthetic 2x array.
-3. [code] Optional darwin tesseract fallbacks in `score_ocr.py`.
+1. [x] Platform-dispatch `common/window.py` (pygetwindow import moved
+   into the Windows branch, `_get_bounds_quartz` added — matches
+   kCGWindowName, falls back to space-stripped kCGWindowOwnerName,
+   layer-0 windows only); `pyobjc-framework-Quartz` darwin marker +
+   `uv lock`. Done 2026-06-13.
+2. [x] HiDPI normalization in `common/capture.py` (`_normalize_size`
+   chokepoint, per-grab scale) + synthetic 2x/1.5x unit tests +
+   AST guard that the pygetwindow import stays out of module scope
+   (`tests/test_capture_normalize.py`). Done 2026-06-13.
+3. [x] Darwin tesseract fallbacks (`/opt/homebrew/bin`,
+   `/usr/local/bin`) + brew install hint in `score_ocr.py`. Done
+   2026-06-13.
 4. ~~Darts data shipping~~ — obsolete, DBs are tracked (section 3).
 5. ~~Hoops `clean_make` dump~~ — obsolete, same.
 6. [mac] Clone, install uv, `uv sync`; run a smoke probe (get_bounds →

@@ -37,6 +37,7 @@ dependencies = [
     { name = "plyvel-ci", marker = "sys_platform == 'win32'" },
     { name = "pyautogui" },
     { name = "pynput" },
+    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
     { name = "pytesseract" },
     { name = "scikit-learn" },
 ]
@@ -56,6 +57,7 @@ requires-dist = [
     { name = "plyvel-ci", marker = "sys_platform == 'win32'", specifier = ">=1.5.1" },
     { name = "pyautogui", specifier = "==0.9.54" },
     { name = "pynput", specifier = ">=1.7" },
+    { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=10.0" },
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "scikit-learn", specifier = ">=1.4" },
 ]
