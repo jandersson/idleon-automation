@@ -127,6 +127,13 @@ _LATE_COLUMNS = [
     # "sweep" (miss-driven perturbation), or "explore" (free-shot
     # bob-range sampling while the start prompt is up).
     ("target_source", "TEXT"),
+    # Non-gameplay experiment marker (#8). NULL on real shots. Set by a
+    # future controlled run at log time, or backfilled for historical
+    # rigs (scripts/backfill_experiment_label.py tagged the 2026-05-03
+    # click-position sessions "click_position"). Predictor fetches below
+    # exclude these so a synthetic shot can never train a model, belt-
+    # and-suspenders on top of the clean_make filter.
+    ("experiment_label", "TEXT"),
 ]
 
 
@@ -247,7 +254,8 @@ def fetch_makes(
             'SELECT hoop_y, hoop_x, platform_y FROM shots '
             'WHERE clean_make = 1 AND required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
-            'AND platform_y IS NOT NULL',
+            'AND platform_y IS NOT NULL '
+            'AND experiment_label IS NULL',
             (required_direction,),
         )
     ]
@@ -275,7 +283,8 @@ def fetch_shots(
             'SELECT hoop_y, hoop_x, platform_y, ball_landing_x FROM shots '
             'WHERE required_direction = ? '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
-            'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL',
+            'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
+            'AND experiment_label IS NULL',
             (required_direction,),
         )
     ]
@@ -322,7 +331,7 @@ _TRAJECTORY_BASE_SQL = (
     'FROM shots WHERE required_direction = ? '
     'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
     'AND platform_y IS NOT NULL AND ball_landing_x IS NOT NULL '
-    'AND platform_x IS NOT NULL {extra_filter}'
+    'AND platform_x IS NOT NULL AND experiment_label IS NULL {extra_filter}'
 )
 
 
@@ -389,6 +398,7 @@ def fetch_vy_labeled(
             'SELECT hoop_y, hoop_x, platform_y, platform_vy, made FROM shots '
             'WHERE platform_vy IS NOT NULL AND made IS NOT NULL '
             'AND hoop_y IS NOT NULL AND hoop_x IS NOT NULL '
-            'AND platform_y IS NOT NULL'
+            'AND platform_y IS NOT NULL '
+            'AND experiment_label IS NULL'
         )
     ]

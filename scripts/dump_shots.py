@@ -27,10 +27,19 @@ def main() -> None:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
 
-    total_shots = conn.execute("SELECT COUNT(*) FROM shots").fetchone()[0]
-    total_makes = conn.execute("SELECT COUNT(*) FROM shots WHERE made = 1").fetchone()[0]
-
     cols_now = {r[1] for r in conn.execute("PRAGMA table_info(shots)")}
+
+    # Non-gameplay experiment rows (#8) must not dilute the snapshot's
+    # make-rate or appear in the per-session/bucket views — the snapshot
+    # is a gameplay aggregate. Guarded: older DBs may predate the column.
+    _exp = "experiment_label" in cols_now
+    exp_where = " WHERE experiment_label IS NULL" if _exp else ""
+    exp_and = " AND experiment_label IS NULL" if _exp else ""
+
+    total_shots = conn.execute(f"SELECT COUNT(*) FROM shots{exp_where}").fetchone()[0]
+    total_makes = conn.execute(
+        f"SELECT COUNT(*) FROM shots WHERE made = 1{exp_and}"
+    ).fetchone()[0]
     # Explore shots (free-shot bob-range sampling while the start prompt
     # is up, #37) are deliberately wild — exclude-able counts let
     # reviewers compute an honest make rate that isn't diluted by
@@ -48,7 +57,7 @@ def main() -> None:
     for row in conn.execute(
         "SELECT session_started, COUNT(*) AS n, SUM(made) AS makes, "
         f"{explore_expr} AS explore_shots, {explore_makes_expr} AS explore_makes "
-        "FROM shots GROUP BY session_started ORDER BY session_started"
+        f"FROM shots{exp_where} GROUP BY session_started ORDER BY session_started"
     ):
         sessions.append({
             "started": row["session_started"],
@@ -92,7 +101,7 @@ def main() -> None:
         "SELECT hoop_x, hoop_y, platform_y, \"offset\", target_y, "
         "       clamped, direction, required_direction"
         + extra_cols + " "
-        "FROM shots WHERE made = 1 "
+        f"FROM shots WHERE made = 1{exp_and} "
         "ORDER BY hoop_x, hoop_y, platform_y"
     ):
         rec = {
@@ -132,7 +141,7 @@ def main() -> None:
     # positions without iterating raw rows. Buckets are ±5px.
     buckets = {}
     for row in conn.execute(
-        "SELECT hoop_x, hoop_y, made FROM shots WHERE hoop_x IS NOT NULL"
+        f"SELECT hoop_x, hoop_y, made FROM shots WHERE hoop_x IS NOT NULL{exp_and}"
     ):
         bx = (row["hoop_x"] // 10) * 10
         by = (row["hoop_y"] // 10) * 10
@@ -160,7 +169,7 @@ def main() -> None:
             "     WHEN hoop_x <= 640 THEN 'band' "
             "     ELSE 'mid_far' END AS region, "
             "COUNT(*) AS n, SUM(made) AS makes "
-            "FROM shots WHERE platform_vy IS NOT NULL "
+            f"FROM shots WHERE platform_vy IS NOT NULL{exp_and} "
             "GROUP BY required_direction, region"
         ):
             vy_coverage.append({

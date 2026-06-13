@@ -442,6 +442,30 @@ def test_fetch_clean_trajectories_peak_aware_keeps_true_short_mislaunch(tmp_path
     assert rows[0][3] == 306.0  # the mislaunch stays, the clank goes
 
 
+def test_predictor_fetches_exclude_experiment_rows(tmp_path):
+    """A row flagged experiment_label is non-gameplay (#8) and must never
+    train a predictor, even if it would otherwise pass clean_make / the
+    trajectory filter. Belt-and-suspenders on top of clean_make."""
+    from minigames.hoops.shot_log import (
+        fetch_makes, fetch_shots, fetch_clean_trajectories, fetch_vy_labeled,
+    )
+    conn = open_db(tmp_path / "shots.db")
+    # Real gameplay make.
+    log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, platform_x=136,
+             platform_vy=12.0, ball_landing_x=590, ball_peak_x=595,
+             made=1, clean_make=1, clamped=0, required_direction="up")
+    # Identical-looking row but from a controlled experiment rig — excluded.
+    log_shot(conn, hoop_y=300, hoop_x=600, platform_y=320, platform_x=136,
+             platform_vy=12.0, ball_landing_x=590, ball_peak_x=595,
+             made=1, clean_make=1, clamped=0, required_direction="up",
+             experiment_label="click_position")
+    assert fetch_makes(conn, "up") == [(300.0, 600.0, 320.0)]
+    assert fetch_shots(conn, "up") == [(300.0, 600.0, 320.0, 590.0)]
+    assert len(fetch_clean_trajectories(conn, "up")) == 1
+    assert fetch_vy_labeled(conn) == [(300.0, 600.0, 320.0, 12.0, 1)]
+    conn.close()
+
+
 def test_fetch_clean_trajectories_vy_returns_velocity_rows(tmp_path):
     from minigames.hoops.shot_log import fetch_clean_trajectories_vy
     conn = open_db(tmp_path / "shots.db")
