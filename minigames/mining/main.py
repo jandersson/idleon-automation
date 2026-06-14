@@ -46,7 +46,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import (
-    find_cart, find_next_terrain, find_play_button,
+    find_cart_detailed, find_next_terrain, find_play_button,
     read_score_from_crop, score_crop,
     _find_plank_top_y, _find_plank_x_range,
 )
@@ -58,7 +58,11 @@ LOGS_DIR = _HERE / "assets" / "logs"
 MINING_DB = _HERE / "assets" / "mining.db"
 
 WINDOW_TITLE = "Legends Of Idleon"
-POLL_INTERVAL = 0.03
+# Detection (~35-40ms/frame after the loop-speed fix) now paces the loop,
+# so keep the explicit sleep small — a big sleep would throw away the FPS
+# the tracking optimization bought. A tiny yield keeps CPU sane and lets
+# the human-click listener thread run.
+POLL_INTERVAL = 0.005
 
 # Click policy. Trigger when a pit is detected at distance in this range.
 # Picked from the trace data: scroll speed is ~80-93 px/s leftward, so
@@ -155,9 +159,15 @@ def _run_inner(watch: bool = False):
     last_click_time = 0.0
     last_plank_seen = time.time()
     last_telemetry_at = 0.0
+    last_loop_at = 0.0  # for live FPS in telemetry
     last_frame: cv2.Mat | None = None  # for diagnostic dump on exit
     plank_ever_seen = False
     last_score: int | None = None  # most recent in-play PTS read (#6)
+    # Last cart detection, fed back as `prior` so find_cart_detailed tracks
+    # the cart in a narrow column instead of full-frame searching (issue #1:
+    # cart x is fixed). None when the cart is lost → next detection is a
+    # clean full search.
+    cart_track: dict | None = None
 
     # State the human-click listener needs to read. Captured in a closure;
     # mutated in the main loop each tick. The listener thread reads the
@@ -190,21 +200,47 @@ def _run_inner(watch: bool = False):
         last_frame = frame
         frame_i += 1
 
+        # --- Detection: ONE plank/cart/terrain pass per frame, reused
+        # everywhere below. find_cart_detailed tracks the cart in a narrow
+        # column via the prior, and passing plank_y + cart_right into
+        # find_next_terrain skips the redundant full cart search it used to
+        # do. This took the loop from ~2 FPS to ~25-30 FPS (validated on
+        # trace_20260515) — the resolution #5's click policy needs.
         plank_y = _find_plank_top_y(frame)
-        cart = find_cart(frame)
+        cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track)
+        cart_track = cart_det
+        cart = cart_det["center"] if cart_det else None
+        cart_right = (cart_det["center"][0] + cart_det["half_width"]) if cart_det else None
         now = time.time()
+        plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
+        terrain = (find_next_terrain(frame, cart, plank_y=plank_y, cart_right=cart_right)
+                   if cart is not None else None)
+
+        # --- FIRE FIRST: decide + click immediately after detection, before
+        # any bookkeeping (state publish, settle, score read, digit capture,
+        # telemetry). The sampled world state ages ~94 px/s, so a DB insert
+        # or disk write between sample and click biases the jump late —
+        # issue #5 / CLAUDE.md "Click timing". Click position is decorative:
+        # Idleon reads a click as a button press, not a pointer (CLAUDE.md
+        # "Idleon clicks are buttons"), so the cart coords are just a sane
+        # in-play-area default. Bookkeeping for the fired jump happens below.
+        jump_to_log = None
+        if (not watch and cart is not None and plank_y is not None
+                and terrain is not None and terrain["kind"] == "pit"
+                and JUMP_TRIGGER_MIN <= terrain["distance_px"] <= JUMP_TRIGGER_MAX
+                and now - last_click_time >= JUMP_COOLDOWN_S):
+            bot_click(win_left + cart[0], win_top + cart[1])
+            last_click_time = now
+            jump_idx += 1
+            jump_to_log = jump_idx
 
         # Publish detector state for the human-click listener thread to
         # consume on its next click event.
         with state_lock:
             detector_state["plank_y"] = plank_y
             detector_state["cart"] = cart
-            detector_state["plank_range"] = (
-                _find_plank_x_range(frame, plank_y) if plank_y else None
-            )
-            detector_state["terrain"] = (
-                find_next_terrain(frame, cart) if cart else None
-            )
+            detector_state["plank_range"] = plank_range
+            detector_state["terrain"] = terrain
             detector_state["win_left"] = win_left
             detector_state["win_top"] = win_top
             detector_state["win_w"] = win_w
@@ -215,12 +251,40 @@ def _run_inner(watch: bool = False):
             pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
                                                 cart, plank_y)
 
+        # Log the fired bot jump now (after the click — bookkeeping never
+        # delays the fire). plank_range was computed pre-click from the same
+        # in-memory frame, so it's identical to a post-click recompute.
+        if jump_to_log is not None:
+            row_id = log_jump(
+                conn,
+                session_started=session_started,
+                attempt_idx=attempt_idx,
+                jump_idx=jump_to_log,
+                clicked_at=datetime.now().isoformat(timespec="milliseconds"),
+                cart_x=cart[0],
+                cart_y=cart[1],
+                next_kind=terrain["kind"],
+                next_x=terrain["x"],
+                next_distance_px=terrain["distance_px"],
+                plank_y=plank_y,
+                plank_x_left=plank_range[0] if plank_range else None,
+                plank_x_right=plank_range[1] if plank_range else None,
+                window_w=win_w,
+                window_h=win_h,
+                code_commit=code_commit,
+                source="bot",
+            )
+            print(f"JUMP #{jump_to_log} pit_dist={terrain['distance_px']} "
+                  f"cart=({cart[0]},{cart[1]}) row={row_id}")
+            with pending_lock:
+                pending_outcomes.append({"row_id": row_id, "click_time": now})
+
         # Read the live PTS score while the plank is up (the readout sits
         # just below it), and feed the same crop to the digit-template
         # capturer (#6). Tracked so the final value can be logged at
         # run-end — the readout vanishes once the Play Game prompt returns.
         if plank_y is not None:
-            crop = score_crop(frame, plank_y, detector_state["plank_range"])
+            crop = score_crop(frame, plank_y, plank_range)
             if crop is not None:
                 if capturer.maybe_save(crop, frame_idx=frame_i,
                                        t_rel=now - start_time):
@@ -229,13 +293,15 @@ def _run_inner(watch: bool = False):
                 if score is not None:
                     last_score = score
 
-        # Periodic telemetry — see what the detector is doing when no
-        # jump fires.
+        # Periodic telemetry — see what the detector reports (incl. live FPS,
+        # so the loop-speed fix is verifiable at the game).
         if now - last_telemetry_at >= TELEMETRY_INTERVAL_S:
             last_telemetry_at = now
-            terr = find_next_terrain(frame, cart) if cart else None
+            fps = (1.0 / (now - last_loop_at)) if last_loop_at else 0.0
             print(f"  [t+{now - last_plank_seen:5.2f}] "
-                  f"plank_y={plank_y} cart={cart} pts={last_score} next={terr}")
+                  f"plank_y={plank_y} cart={cart} pts={last_score} "
+                  f"next={terrain} (~{fps:.0f}fps)")
+        last_loop_at = now
 
         if cart is None:
             # Run-end detection (#6): once the cart is gone, the run is
@@ -288,54 +354,8 @@ def _run_inner(watch: bool = False):
             continue
         last_plank_seen = time.time()
         plank_ever_seen = True
-
-        terrain = find_next_terrain(frame, cart)
-        if (not watch
-                and terrain is not None
-                and terrain["kind"] == "pit"
-                and JUMP_TRIGGER_MIN <= terrain["distance_px"] <= JUMP_TRIGGER_MAX
-                and now - last_click_time >= JUMP_COOLDOWN_S):
-            # Fire FIRST, bookkeep after. The sampled world state (cart x,
-            # pit distance) ages every ms between sample and click at
-            # ~93 px/s of scroll, so a DB insert in between biases the jump
-            # late — issue #5 calls this out, same gotcha as hoops/darts
-            # (CLAUDE.md "Click timing"). Click position is decorative:
-            # Idleon reads the click as a button press, not a pointer
-            # (CLAUDE.md "Idleon clicks are buttons, not pointers"), so the
-            # cart's coords are just a sane in-play-area default.
-            screen_x = win_left + cart[0]
-            screen_y = win_top + cart[1]
-            bot_click(screen_x, screen_y)
-            last_click_time = now
-            # _find_plank_x_range runs on the already-captured frame, so
-            # computing it post-click yields the identical result (CLAUDE.md:
-            # a pre-click signal from an in-memory frame can be computed
-            # after the click).
-            jump_idx += 1
-            plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
-            row_id = log_jump(
-                conn,
-                session_started=session_started,
-                attempt_idx=attempt_idx,
-                jump_idx=jump_idx,
-                clicked_at=datetime.now().isoformat(timespec="milliseconds"),
-                cart_x=cart[0],
-                cart_y=cart[1],
-                next_kind=terrain["kind"],
-                next_x=terrain["x"],
-                next_distance_px=terrain["distance_px"],
-                plank_y=plank_y,
-                plank_x_left=plank_range[0] if plank_range else None,
-                plank_x_right=plank_range[1] if plank_range else None,
-                window_w=win_w,
-                window_h=win_h,
-                code_commit=code_commit,
-                source="bot",
-            )
-            print(f"JUMP #{jump_idx} pit_dist={terrain['distance_px']} "
-                  f"cart=({cart[0]},{cart[1]}) row={row_id}")
-            with pending_lock:
-                pending_outcomes.append({"row_id": row_id, "click_time": now})
+        # The jump decision + click already happened up top (fire-first),
+        # before the per-frame bookkeeping.
 
         time.sleep(POLL_INTERVAL)
 

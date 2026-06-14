@@ -49,7 +49,13 @@ _HERE = Path(__file__).parent
 # The number is right-anchored against the " PTS" label (its units digit
 # ends ~plank_x0), so the box extends LEFT for multi-digit scores and
 # stops just right of plank_x0 to exclude the "P" glyph.
-PTS_DX = (-24, 2)    # x offset from plank_x0 spanning the score digits
+# Live confirmation (2026-06-15, digit_capture/20260615_002352): at
+# plank_x0=70 the units "0" occupied crop cols [plank_x0-4, plank_x0+1] —
+# a clean 8x6 glyph matching 0.png. Left extent widened -24 -> -32 to give
+# 3-digit headroom (scores reach ~103) without nearing the right-side
+# "PTS" label; right edge kept at +2 (proven to capture the units digit
+# cleanly). Still pending validation on a real 2-3 digit score.
+PTS_DX = (-32, 2)    # x offset from plank_x0 spanning the score digits
 PTS_DY = (20, 42)    # y offset below plank_y
 
 # Per-game digit templates for the PTS reader (bootstrapped from gameplay
@@ -66,6 +72,17 @@ SCAN_BUFFER_PX = 10
 CART_MATCH_THRESHOLD = 0.80
 CART_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
 _cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
+
+# Cart tracking: the cart's screen-x is fixed for a run (only its y moves
+# on jumps/slams — issue #1), so after the first full detection we search
+# only a narrow column around the last x at the last scale +/- one step.
+# This cuts the per-frame template-match cost ~30-50x. Without it the loop
+# ran at ~2 FPS (3 cart templates x 8 scales x up-to-3 calls per frame),
+# far too coarse for a 94 px/s scroll (the world jumped ~40px between
+# observations). A narrow-search miss falls back to a full search, so a
+# stale prior (new attempt / different player position) self-heals.
+CART_TRACK_X_MARGIN = 90       # px half-width of the prior-anchored column
+CART_TRACK_SCALE_STEPS = 1     # search prior scale +/- this many CART_SCALES steps
 
 # Play Game button matching. The button has a per-attempt counter ("5",
 # "4", ...) rendered on a wheel icon at the right edge, so the template
@@ -213,35 +230,69 @@ def read_score_from_crop(crop) -> Optional[int]:
 
 
 def find_cart(frame) -> Optional[Tuple[int, int]]:
-    """Locate the cart sprite. Returns (center_x, center_y) in frame
-    coords, or None if no template matched above CART_MATCH_THRESHOLD.
+    """Locate the cart sprite center, or None if no template matched above
+    CART_MATCH_THRESHOLD. Thin wrapper over find_cart_detailed for callers
+    / tests that only need the (x, y)."""
+    res = find_cart_detailed(frame)
+    return res["center"] if res is not None else None
 
-    Search is restricted to a band around the auto-detected plank-top y;
-    the cart always sits on the plank."""
+
+def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
+    """Locate the cart and return {center, half_width, scale, template,
+    score}, or None if no template scored above CART_MATCH_THRESHOLD.
+
+    half_width comes free from the winning match, so callers get cart_right
+    without the separate 24-match search _estimate_cart_half_width did.
+
+    prior: a previous find_cart_detailed result. The cart's x is fixed for
+    a run (issue #1), so given a prior we first search a narrow column
+    around its x at its scale +/- CART_TRACK_SCALE_STEPS (fast). On a miss
+    we fall back to a full-frame, all-scales search, so a stale prior (new
+    attempt, different player position, or a slam-pose change) self-heals
+    within a frame.
+
+    Search is restricted to a band from the frame top down to the plank
+    (the cart rises into it on a jump and sits on it otherwise)."""
     if frame.shape[2] == 4:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    plank_y = _find_plank_top_y(frame)
+    if plank_y is None:
+        plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None
-    return _find_cart_at_plank(frame, plank_y)
+    if prior is not None and prior.get("center") is not None:
+        res = _match_cart(frame, plank_y,
+                          x_center=prior["center"][0],
+                          scales=_scales_near(prior.get("scale")))
+        if res is not None:
+            return res
+    return _match_cart(frame, plank_y)
 
 
-def find_next_terrain(frame, cart) -> Optional[dict]:
+def find_next_terrain(frame, cart, plank_y=None, cart_right=None) -> Optional[dict]:
     """Return the nearest obstacle (pit or ore) ahead of the cart.
 
     Result: {"kind": "pit"|"ore", "x": int, "distance_px": int} where
     x is the left edge of the obstacle and distance_px is x - cart_right.
+
+    plank_y and cart_right are accepted so the hot path can pass values it
+    already computed this frame. Recomputing them here cost a redundant
+    _find_plank_top_y plus a full 24-match cart search (via
+    _estimate_cart_half_width) — the latter dominated the loop. They fall
+    back to recomputation when omitted, so existing callers/tests are
+    unaffected.
     """
     if cart is None:
         return None
     if frame.shape[2] == 4:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    plank_y = _find_plank_top_y(frame)
+    if plank_y is None:
+        plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None
     # cart[0] is center_x; estimate cart_right from the matched template
-    # width.
-    cart_right = cart[0] + _estimate_cart_half_width(frame, plank_y)
+    # width unless the caller already has it.
+    if cart_right is None:
+        cart_right = cart[0] + _estimate_cart_half_width(frame, plank_y)
     scan_x = cart_right + SCAN_BUFFER_PX
     # Bound the scan to the actual plank x-extent — the minigame overlay
     # is a fixed-pixel-width panel, not full-window-wide, so cave/UI
@@ -284,41 +335,59 @@ def _cart_search_region(frame, plank_y: int) -> Tuple[int, int, int, int]:
     return (0, 0, w, min(h, plank_y + 15))
 
 
-def _find_cart_at_plank(frame, plank_y: int) -> Optional[Tuple[int, int]]:
-    """Multi-template match the cart in a band above the plank. Returns
-    the best match's center, or None if no template scored above
-    CART_MATCH_THRESHOLD."""
+def _scales_near(scale) -> tuple:
+    """CART_SCALES within CART_TRACK_SCALE_STEPS of `scale` (inclusive).
+    Returns all scales if `scale` isn't a known step (so a missing/garbage
+    prior scale degrades to a full sweep, not an empty search)."""
+    if scale not in CART_SCALES:
+        return CART_SCALES
+    i = CART_SCALES.index(scale)
+    lo = max(0, i - CART_TRACK_SCALE_STEPS)
+    hi = min(len(CART_SCALES), i + CART_TRACK_SCALE_STEPS + 1)
+    return CART_SCALES[lo:hi]
+
+
+def _match_cart(frame, plank_y: int, *, x_center: Optional[int] = None,
+                scales: tuple = CART_SCALES) -> Optional[dict]:
+    """Multi-template match the cart. Returns {center, half_width, scale,
+    template, score} of the best match >= CART_MATCH_THRESHOLD, else None.
+
+    x_center restricts the search to a CART_TRACK_X_MARGIN-wide column
+    around it (the cart's x is fixed per run); omit for a full-width
+    search. match_multiscale safely skips any scale whose template exceeds
+    the (narrow) region, so the column never has to fit the largest scale."""
     templates = _load_cart_templates()
     if not templates:
         return None
-    region = _cart_search_region(frame, plank_y)
-    best_center = None
-    best_val = -1.0
-    for _name, t in templates:
-        center, val, _ = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
-        if center is not None and val > best_val:
-            best_val = val
-            best_center = center
-    if best_val < CART_MATCH_THRESHOLD:
+    h, w = frame.shape[:2]
+    if x_center is not None:
+        x0 = max(0, x_center - CART_TRACK_X_MARGIN)
+        x1 = min(w, x_center + CART_TRACK_X_MARGIN)
+        region = (x0, 0, x1, min(h, plank_y + 15))
+    else:
+        region = _cart_search_region(frame, plank_y)
+    best = None
+    for name, t in templates:
+        center, val, scale = match_multiscale_center(frame, t, region=region, scales=scales)
+        if center is not None and (best is None or val > best["score"]):
+            best = {
+                "center": center,
+                "score": float(val),
+                "scale": scale,
+                "template": name,
+                "half_width": max(15, int(round(t.shape[1] * scale)) // 2),
+            }
+    if best is None or best["score"] < CART_MATCH_THRESHOLD:
         return None
-    return best_center
+    return best
 
 
 def _estimate_cart_half_width(frame, plank_y: int) -> int:
-    """Approximate cart half-width in pixels — used to compute cart_right
-    from cart_center. Derived from the matched template's scaled width."""
-    templates = _load_cart_templates()
-    if not templates:
-        return 30
-    region = _cart_search_region(frame, plank_y)
-    best_w = 0
-    best_val = -1.0
-    for _name, t in templates:
-        center, val, scale = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
-        if val > best_val:
-            best_val = val
-            best_w = int(round(t.shape[1] * scale))
-    return max(15, best_w // 2)
+    """Cart half-width via a full match. Retained for find_next_terrain's
+    fallback (when callers don't pass cart_right) and any external use;
+    the hot path gets half_width from find_cart_detailed instead."""
+    res = _match_cart(frame, plank_y)
+    return res["half_width"] if res is not None else 30
 
 
 def _find_plank_top_y(frame) -> Optional[int]:

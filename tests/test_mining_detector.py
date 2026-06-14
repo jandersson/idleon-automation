@@ -13,11 +13,16 @@ from minigames.mining.detector import (
     PIT_MIN_WIDTH,
     PLANK_X0_FRAC,
     PLANK_X1_FRAC,
+    CART_SCALES,
+    CART_TRACK_SCALE_STEPS,
     _find_plank_top_y,
     _load_cart_templates,
+    _scales_near,
     _scan_plank_ore,
     _scan_plank_pits,
     find_cart,
+    find_cart_detailed,
+    find_next_terrain,
     pts_score_region,
     read_score,
     read_score_from_crop,
@@ -182,3 +187,64 @@ def test_find_cart_returns_none_when_no_plank():
     """No plank → no cart search even attempted."""
     frame = np.zeros((H, W, 3), dtype=np.uint8)
     assert find_cart(frame) is None
+
+
+def _frame_with_pasted_cart(paste_x=400):
+    """A plank frame with cart template 0 pasted on it; returns (frame, template)."""
+    templates = _load_cart_templates()
+    _name, template = templates[0]
+    th, tw = template.shape[:2]
+    frame = _frame_with_plank()
+    paste_y = PLANK_Y - th
+    frame[paste_y:paste_y + th, paste_x:paste_x + tw] = template
+    return frame, template
+
+
+def test_find_cart_detailed_returns_match_fields():
+    frame, template = _frame_with_pasted_cart()
+    det = find_cart_detailed(frame)
+    assert det is not None
+    assert set(det) >= {"center", "half_width", "scale", "template", "score"}
+    assert det["score"] >= 0.8
+    assert det["half_width"] > 0
+    # center x lands within the pasted template span
+    assert 400 <= det["center"][0] <= 400 + template.shape[1]
+
+
+def test_find_cart_detailed_prior_agrees_with_full():
+    """The narrow prior-anchored search returns the same center as the
+    full search (the loop's whole correctness premise)."""
+    frame, _ = _frame_with_pasted_cart()
+    full = find_cart_detailed(frame)
+    tracked = find_cart_detailed(frame, prior=full)
+    assert tracked is not None
+    assert abs(tracked["center"][0] - full["center"][0]) <= 6
+    assert abs(tracked["center"][1] - full["center"][1]) <= 8
+
+
+def test_find_cart_detailed_stale_prior_falls_back_to_full():
+    """A prior pointing far from the cart must not blind the detector —
+    the narrow miss falls back to a full-frame search."""
+    frame, _ = _frame_with_pasted_cart(paste_x=400)
+    stale = {"center": (50, PLANK_Y), "scale": 1.0}
+    det = find_cart_detailed(frame, prior=stale)
+    assert det is not None
+    assert 400 <= det["center"][0] <= 500
+
+
+def test_find_next_terrain_uses_passed_cart_right_and_plank_y():
+    """When the hot path passes plank_y + cart_right, distance is measured
+    from that cart_right and no recomputation changes the result."""
+    frame = _frame_with_plank()
+    frame[PLANK_Y:PLANK_Y + 12, 500:560] = 0  # 60px pit
+    res = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350)
+    assert res == {"kind": "pit", "x": 500, "distance_px": 150}
+
+
+def test_scales_near_window():
+    assert _scales_near(None) == CART_SCALES          # unknown → full sweep
+    assert _scales_near(0.123) == CART_SCALES          # not a known step → full sweep
+    near_one = _scales_near(1.0)
+    assert 1.0 in near_one and len(near_one) == 2 * CART_TRACK_SCALE_STEPS + 1
+    # endpoints clamp instead of wrapping
+    assert _scales_near(CART_SCALES[0])[0] == CART_SCALES[0]

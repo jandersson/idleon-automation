@@ -18,18 +18,14 @@ import cv2
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from minigames.mining.detector import (
-    _cart_search_region,
-    _find_cart_at_plank,
     _find_plank_top_y,
     _find_plank_x_range,
-    _load_cart_templates,
     _scan_plank_ore,
     _scan_plank_pits,
-    CART_SCALES,
     SCAN_BUFFER_PX,
+    find_cart_detailed,
     find_next_terrain,
 )
-from common.templates import match_multiscale_center
 
 _HERE = Path(__file__).parent
 CAPTURES_DIR = _HERE / "assets" / "captures"
@@ -98,27 +94,19 @@ def _process_frame(frame):
     plank_y = _find_plank_top_y(frame)
     if plank_y is None:
         return None, None, 0, [], [], None, None
-    cart = _find_cart_at_plank(frame, plank_y)
-    cart_w = 0
-    if cart is not None:
-        region = _cart_search_region(frame, plank_y)
-        best_w = 0
-        best_val = -1.0
-        for _name, t in _load_cart_templates():
-            _c, val, scale = match_multiscale_center(frame, t, region=region, scales=CART_SCALES)
-            if val > best_val:
-                best_val = val
-                best_w = int(round(t.shape[1] * scale))
-        cart_w = best_w
+    det = find_cart_detailed(frame, plank_y=plank_y)
+    cart = det["center"] if det else None
+    cart_w = det["half_width"] * 2 if det else 0
+    cart_right = (cart[0] + det["half_width"]) if det else None
     pits = []
     ores = []
     plank_range = _find_plank_x_range(frame, plank_y)
     if cart is not None:
-        scan_x = cart[0] + cart_w // 2 + SCAN_BUFFER_PX
+        scan_x = cart_right + SCAN_BUFFER_PX
         x_end = plank_range[1] if plank_range else None
         pits = _scan_plank_pits(frame, plank_y, x_start=scan_x, x_end=x_end)
         ores = _scan_plank_ore(frame, plank_y, x_start=scan_x, x_end=x_end)
-    nxt = find_next_terrain(frame, cart)
+    nxt = find_next_terrain(frame, cart, plank_y=plank_y, cart_right=cart_right)
     return plank_y, cart, cart_w, pits, ores, nxt, plank_range
 
 
