@@ -338,3 +338,31 @@ def read_hoops_plays_today(save_dir: str = SAVE_DIR) -> int | None:
     if not isinstance(n, (int, float)):
         return None
     return int(n)
+
+
+def read_talents(save_dir: str = SAVE_DIR) -> dict[str, dict] | None:
+    """Per-character talent state for the book recommender (#44).
+
+    Returns {character_name: {
+        "character_class": int | None,   # raw class id (e.g. 32)
+        "skill_levels": list[int],       # current talent levels (SkillLevels)
+        "skill_levels_max": list[int],   # talent caps (SkillLevelsMAX; -1 inactive)
+    }} or None if the save can't be read. Books raise entries of
+    skill_levels_max; a talent AT cap (level >= max) is a book candidate.
+    """
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    out: dict[str, dict] = {}
+    for name, info in (data.get("PlayerDATABASE") or {}).items():
+        sl = info.get("SkillLevels")
+        slm = info.get("SkillLevelsMAX")
+        if not isinstance(sl, list) or not isinstance(slm, list):
+            continue
+        cls = info.get("CharacterClass")
+        out[name] = {
+            "character_class": int(cls) if isinstance(cls, (int, float)) else None,
+            "skill_levels": sl,
+            "skill_levels_max": slm,
+        }
+    return out
