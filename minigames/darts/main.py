@@ -832,7 +832,20 @@ def _run_inner(
             time.sleep(POST_THROW_COOLDOWN)
             time.sleep(POST_LAND_DELAY)
         post_frame = grab_region(left, top, width, height)
-        score_after = _capture_score(left, top, width, height)
+        # Read the post-throw score from THIS frame (the one saved as
+        # post_throw.png) rather than a fresh grab. A separate grab can
+        # catch the score one render-frame before the leading digit lands,
+        # dropping it (13 -> 3) and faking a negative increment — the #40
+        # "busts" were all this artifact, while the saved post_throw.png
+        # always read correctly (verified across 545 throws).
+        score_after = (
+            score_region(
+                post_frame,
+                score_region_meta["left"], score_region_meta["top"],
+                score_region_meta["width"], score_region_meta["height"],
+            )
+            if score_region_meta is not None else None
+        )
         # Compute the diff once so we can log AND save it to meta.
         diff_val = None
         diff_changed = None
