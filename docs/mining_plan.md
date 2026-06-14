@@ -161,15 +161,51 @@ informative:
   detection needs several jump-pose templates or a background-masked /
   color-based cart finder.
 
+### Run 5 (offline, no attempt spent) — airborne detection fixed
+
+Task 1 below was the blocker; it's resolved **without spending an
+attempt**, against the existing `botrun_20260615_012340` frames.
+
+- **Cart matching is now background-masked.** Root cause of the mid-jump
+  blindness: the unmasked `TM_CCOEFF_NORMED` includes the background baked
+  into the template, and during a jump that background scrolls from plank
+  to cave-wall+ore, dropping the score to ~0.75-0.79 (below 0.80) for the
+  launch/peak/pre-land poses. Fix: `common.templates.match_multiscale_masked`
+  (`TM_CCORR_NORMED` over a cart-silhouette mask = plank-tan pixels
+  excluded), wired into `detector._match_cart`. A **single grounded
+  `cart_small` template now generalizes to the entire arc** — no
+  pose-specific templates needed. Validated on all 61 frames: grounded
+  0.99, airborne arc (frames 34-42) **0.86-1.00, every frame detected**
+  (was NONE at 34/36/37/41/42). Threshold raised 0.80 → **0.85** (masked
+  CCORR scores higher; 0.85 clears the worst real airborne frame at 0.86
+  and rejects the ~0.81 game-over-screen floor — which is anyway gated
+  out because `_find_plank_top_y` returns None on the game-over screen).
+- **Methodology note:** extracting per-frame jump templates from this one
+  capture and testing on it would be circular (memorizing one arc). The
+  masked approach is non-circular — the template comes from the *grounded*
+  frames and generalizes to *airborne* poses purely because the mask
+  removes the only thing that differs (background).
+- **Scale 0.5 dropped + tracking column tightened 90 → 50px.** Small-scale
+  masked templates score ~0.89 on off-column background; no real pose needs
+  0.5 (slam=0.75, peak=1.0). Mid-arc frames (35-41) track at the true
+  x≈150; only the launch (34) and dying pre-pit (42) frames are ~30px
+  approximate, and the bot can't re-fire mid-jump so those don't reach a
+  decision.
+- **`cart_jump.png` is now redundant** (masked `cart_small` covers the peak
+  too) but harmless — left in place; the masked match still picks it when
+  it scores highest (frame 35: 1.00).
+- Tests: `test_templates.py` gains masked-match + background-independence
+  guards; `test_mining_detector.py` cart frames now textured (masked CCORR
+  is degenerate on perfectly-flat synthetic frames, an artifact real cave
+  frames never hit). 408 green.
+
 ### Next session
 
-1. **Robust airborne cart detection** (prereq for everything downstream —
-   the bot is blind mid-jump and can't react to spaced obstacles or, later,
-   time a slam). Re-run `uv run mining --save-frames` (fresh daily attempt)
-   to capture the jump arc, extract several jump-pose templates across the
-   arc (launch / peak / descent) at the live resolution, or switch the cart
-   finder to a background-independent method (tight/masked template or
-   color+shape). Validate detection is continuous through a jump.
+1. ~~**Robust airborne cart detection**~~ — **DONE (Run 5, above).** The
+   cart is detected continuously through a jump via background-masked
+   matching. The next live `--save-frames` run can spend its attempt on
+   capturing a *longer* run (multiple jumps / spaced obstacles) to validate
+   the policy, not on detection.
 2. **Identify the orange obstacle** from the frames — is it a trap that
    must be jumped, or passable? It's currently miscounted as "ore".
    Separate "slam-to-score ore" (silver-blue, above plank) from

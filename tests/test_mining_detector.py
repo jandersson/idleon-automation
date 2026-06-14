@@ -36,9 +36,21 @@ PLANK_X0 = int(PLANK_X0_FRAC * W)
 PLANK_X1 = int(PLANK_X1_FRAC * W)
 
 
-def _frame_with_plank() -> np.ndarray:
-    """A black frame with a bright tan plank band at y=PLANK_Y..PLANK_Y+12."""
+def _frame_with_plank(textured: bool = False) -> np.ndarray:
+    """A black frame with a bright tan plank band at y=PLANK_Y..PLANK_Y+12.
+
+    textured=True fills the cave (non-plank) area with deterministic dark
+    noise. The cart finder matches the cart silhouette via masked
+    TM_CCORR_NORMED, which (unlike TM_CCOEFF_NORMED) doesn't subtract the
+    patch mean and so correlates spuriously against perfectly-flat regions —
+    a synthetic-frame artifact that never occurs on real cave frames (always
+    textured). Cart-matching tests pass textured=True so the search sees
+    realistic, non-degenerate background; the pit/ore/plank tests keep the
+    flat frame since their thresholds are calibrated against exact values."""
     frame = np.zeros((H, W, 3), dtype=np.uint8)
+    if textured:
+        rng = np.random.default_rng(0)
+        frame[:] = rng.integers(0, 70, size=(H, W, 3), dtype=np.uint8)
     # BGR for tan/wood — converts to HSV roughly (H=12, S=140, V=200) which
     # satisfies the plank-signature thresholds.
     frame[PLANK_Y:PLANK_Y + 12, PLANK_X0:PLANK_X1] = (40, 120, 200)
@@ -154,8 +166,13 @@ def test_scan_plank_ore_respects_x_start():
 def test_load_cart_templates_finds_assets():
     templates = _load_cart_templates()
     assert len(templates) >= 1, "expected at least one cart template in assets/cart_*.png"
-    for _name, t in templates:
+    for _name, t, mask in templates:
         assert t.ndim == 3 and t.shape[2] == 3
+        # mask is the cart silhouette: same HxW as the template, single
+        # channel, and not all-zero (the cart isn't entirely plank-tan).
+        assert mask.shape[:2] == t.shape[:2]
+        assert mask.dtype == np.uint8
+        assert int((mask > 0).sum()) > 0
 
 
 def test_find_cart_locates_pasted_template():
@@ -165,10 +182,10 @@ def test_find_cart_locates_pasted_template():
     match a sub-region of the pasted larger one with even higher
     confidence, which is fine.)"""
     templates = _load_cart_templates()
-    name, template = templates[0]
+    name, template, _mask = templates[0]
     th, tw = template.shape[:2]
 
-    frame = _frame_with_plank()
+    frame = _frame_with_plank(textured=True)
     paste_x = 400
     paste_y = PLANK_Y - th
     frame[paste_y:paste_y + th, paste_x:paste_x + tw] = template
@@ -189,9 +206,9 @@ def test_find_cart_returns_none_when_no_plank():
 def _frame_with_pasted_cart(paste_x=400):
     """A plank frame with cart template 0 pasted on it; returns (frame, template)."""
     templates = _load_cart_templates()
-    _name, template = templates[0]
+    _name, template, _mask = templates[0]
     th, tw = template.shape[:2]
-    frame = _frame_with_plank()
+    frame = _frame_with_plank(textured=True)
     paste_y = PLANK_Y - th
     frame[paste_y:paste_y + th, paste_x:paste_x + tw] = template
     return frame, template

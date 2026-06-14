@@ -79,6 +79,65 @@ def match_multiscale_center(
     return (top_left[0] + tw // 2, top_left[1] + th // 2), val, scale
 
 
+def match_multiscale_masked(
+    image: np.ndarray,
+    template: np.ndarray,
+    mask: np.ndarray,
+    region: tuple[int, int, int, int] | None = None,
+    scales: tuple[float, ...] = DEFAULT_SCALES,
+) -> tuple[tuple[int, int] | None, float, float]:
+    """Like match_multiscale but matches only the masked (non-zero) template
+    pixels via TM_CCORR_NORMED, so background pixels under the template don't
+    affect the score.
+
+    Use this when the sprite is rigid but its background changes between
+    frames (e.g. the mining cart mid-jump: the cave wall and ore scroll
+    behind it, which collapses an unmasked TM_CCOEFF_NORMED match below
+    threshold even though the cart sprite itself is unchanged). The mask
+    must be the template's size; it's resized alongside the template at each
+    scale.
+
+    Returns (top_left, max_val, best_scale) in image coords, same contract as
+    match_multiscale. Non-finite correlation cells (TM_CCORR_NORMED divides
+    by the masked-patch norm, which is 0 over a flat region) are treated as
+    no-match so they never win.
+    """
+    if region is not None:
+        x0, y0, x1, y1 = region
+        x0 = max(0, x0)
+        y0 = max(0, y0)
+        x1 = min(image.shape[1], x1)
+        y1 = min(image.shape[0], y1)
+        if x1 <= x0 or y1 <= y0:
+            return None, 0.0, 1.0
+        crop = image[y0:y1, x0:x1]
+    else:
+        x0, y0 = 0, 0
+        crop = image
+
+    best_val = -1.0
+    best_loc: tuple[int, int] | None = None
+    best_scale = 1.0
+
+    for scale in scales:
+        new_w = max(1, int(round(template.shape[1] * scale)))
+        new_h = max(1, int(round(template.shape[0] * scale)))
+        if new_w > crop.shape[1] or new_h > crop.shape[0]:
+            continue
+        interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+        scaled = cv2.resize(template, (new_w, new_h), interpolation=interp)
+        scaled_mask = cv2.resize(mask, (new_w, new_h), interpolation=interp)
+        result = cv2.matchTemplate(crop, scaled, cv2.TM_CCORR_NORMED, mask=scaled_mask)
+        result[~np.isfinite(result)] = -1.0
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val > best_val:
+            best_val = max_val
+            best_loc = (x0 + max_loc[0], y0 + max_loc[1])
+            best_scale = scale
+
+    return best_loc, max(best_val, 0.0), best_scale
+
+
 class ScaleLockMatcher:
     """Stateful multi-scale matcher for per-poll hot paths.
 

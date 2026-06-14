@@ -3,7 +3,12 @@ import cv2
 import numpy as np
 import pytest
 
-from common.templates import ScaleLockMatcher, match_multiscale, match_multiscale_center
+from common.templates import (
+    ScaleLockMatcher,
+    match_multiscale,
+    match_multiscale_center,
+    match_multiscale_masked,
+)
 
 
 def _make_marker(size: tuple[int, int]) -> np.ndarray:
@@ -149,3 +154,58 @@ def test_scale_lock_always_scales_searched_when_locked():
 def test_scale_lock_rejects_always_scales_outside_scales():
     with pytest.raises(ValueError):
         ScaleLockMatcher(scales=(0.5, 1.0), always_scales=(0.6,))
+
+
+def _sprite_with_border():
+    """A foreground marker surrounded by a border ring, plus a mask that
+    covers only the foreground. The border stands in for the background
+    baked into a real sprite crop (e.g. the plank/cave around the mining
+    cart)."""
+    rng = np.random.default_rng(seed=7)
+    fg = rng.integers(0, 256, size=(24, 24, 3), dtype=np.uint8)
+    template = np.zeros((40, 40, 3), dtype=np.uint8)
+    template[8:32, 8:32] = fg
+    mask = np.zeros((40, 40), dtype=np.uint8)
+    mask[8:32, 8:32] = 255  # foreground only
+    return template, mask, fg
+
+
+def test_masked_match_is_background_independent():
+    """The whole point of the masked cart finder: the same sprite is found
+    at a high score on two DIFFERENT backgrounds, where an unmasked match
+    collapses when the background changes (the mining cart mid-jump:
+    plank → cave+ore behind it). Masked TM_CCORR_NORMED scores only the
+    masked foreground, so the background swap doesn't move the score."""
+    template, mask, fg = _sprite_with_border()
+
+    def scene(bg_value):
+        img = np.full((300, 400, 3), bg_value, dtype=np.uint8)
+        # paste the foreground (not the border) at a known spot
+        img[100:124, 200:224] = fg
+        return img
+
+    bg_a = scene(30)
+    bg_b = scene(200)
+
+    _, val_a, _ = match_multiscale_masked(bg_a, template, mask, scales=(1.0,))
+    _, val_b, _ = match_multiscale_masked(bg_b, template, mask, scales=(1.0,))
+    assert val_a > 0.95
+    assert val_b > 0.95
+    # The unmasked match, by contrast, is pulled off by the border pixels
+    # landing on a different background — it should not stay this confident
+    # on both. (Sanity check that the mask is doing the work.)
+    _, unmasked_b, _ = match_multiscale(bg_b, template, scales=(1.0,))
+    assert unmasked_b < val_b
+
+
+def test_masked_match_locates_center():
+    template, mask, fg = _sprite_with_border()
+    img = np.full((300, 400, 3), 40, dtype=np.uint8)
+    img[100:124, 200:224] = fg
+    top_left, val, scale = match_multiscale_masked(img, template, mask, scales=(1.0,))
+    assert top_left is not None
+    # foreground sits 8px inside the 40px template, so the template's
+    # top-left is 8px up/left of the pasted foreground.
+    assert abs(top_left[0] - (200 - 8)) <= 1
+    assert abs(top_left[1] - (100 - 8)) <= 1
+    assert val > 0.95

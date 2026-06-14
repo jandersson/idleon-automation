@@ -21,10 +21,17 @@ by scanning for the brightest tan-hued horizontal band. Pit, ore, and
 cart scans are all anchored to that y. This keeps the detector
 window-size-independent.
 
-Cart detection uses multi-template matching against a small set of
-cart sprites captured at different window resolutions. The template
-that scores highest above CART_MATCH_THRESHOLD wins. Add new templates
-to assets/cart_*.png if matching fails at a new resolution.
+Cart detection uses BACKGROUND-MASKED multi-template matching against a
+small set of cart sprites (assets/cart_*.png) captured at different
+window resolutions. Each template carries a silhouette mask (plank-tan
+background excluded) and is matched via TM_CCORR_NORMED over the mask
+only, so the cave/ore that scrolls behind the cart during a jump
+doesn't move the score — the cart stays detected through the whole
+arc, which an unmasked TM_CCOEFF_NORMED match did not (it dropped below
+threshold for the launch/peak/pre-land poses). The template that scores
+highest above CART_MATCH_THRESHOLD wins. A single grounded template
+generalizes across jump poses; add new templates only if matching fails
+at a new resolution.
 """
 from pathlib import Path
 from typing import Optional, Tuple
@@ -32,7 +39,7 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 
-from common.templates import match_multiscale_center
+from common.templates import match_multiscale_center, match_multiscale_masked
 from common.score_template_ocr import make_score_reader
 
 _HERE = Path(__file__).parent
@@ -68,10 +75,32 @@ _score_reader = make_score_reader(_HERE / "assets" / "digit_templates")
 SCAN_BUFFER_PX = 10
 
 # Cart matching: try every template in assets/cart_*.png at multi-scale,
-# pick the best match above CART_MATCH_THRESHOLD.
-CART_MATCH_THRESHOLD = 0.80
-CART_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
-_cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
+# pick the best masked match above CART_MATCH_THRESHOLD.
+#
+# Matching is BACKGROUND-MASKED (TM_CCORR_NORMED over the cart silhouette
+# only, plank-tan pixels excluded). The cart sprite is rigid, but during a
+# jump the background scrolling behind it changes from plank to cave-wall +
+# ore — which dropped an unmasked TM_CCOEFF_NORMED match to ~0.75-0.79
+# (below threshold) for the launch/peak/pre-land poses, leaving the bot
+# blind for ~half the arc (validated on botrun_20260615_012340: cart=None
+# at frames 34/36/37/41/42). Masking the background out closes that gap: a
+# single grounded cart_small template generalizes to every airborne pose
+# (grounded 0.99, airborne arc 0.86-1.00, see /tmp probes 2026-06-15). The
+# old 0.80 threshold was for CCOEFF; masked CCORR scores higher, so the
+# threshold is 0.85 — above the game-over-screen noise floor (~0.81) and
+# below the worst real airborne frame (0.86). Game-over frames are anyway
+# gated out upstream: _find_plank_top_y returns None there, so find_cart
+# returns None before matching.
+CART_MATCH_THRESHOLD = 0.85
+# Scale 0.5 dropped: no real cart pose needs it (slam matches at 0.75, peak
+# at 1.0), and a half-size masked template scores ~0.89 on off-column
+# background noise — the launch/pre-land "ghost" at the wrong x
+# (botrun_20260615_012340 frames 34/41/42 jumped to cart_x=216 at scale
+# 0.5 before this; 0.6+ tracks them at the cart's true x~150).
+CART_SCALES = (0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
+# (name, template_bgr, mask) triples; mask is the cart silhouette (255) vs
+# plank-tan background (0). Lazy-loaded.
+_cart_templates: Optional[list[Tuple[str, np.ndarray, np.ndarray]]] = None
 
 # Cart tracking: the cart's screen-x is fixed for a run (only its y moves
 # on jumps/slams — issue #1), so after the first full detection we search
@@ -88,7 +117,16 @@ _cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
 # trace it was validated on had no jumps). Searching all scales in the
 # (small) column trades a little steady-state FPS for staying fast through
 # the jump — which is exactly when the policy needs to see the cart.
-CART_TRACK_X_MARGIN = 90       # px half-width of the prior-anchored column
+#
+# Half-width 50 (was 90): the cart's x is fixed per run, so the column only
+# has to absorb the ~3px click jitter + detection noise, not real motion. A
+# wider column let small-scale masked matches win on off-column background
+# (botrun_20260615_012340 frame 34: launch pose tracked at x=80 with M=90 vs
+# ~150 with M=50). Mid-arc frames (35-41) track at the true x either way;
+# the launch (34) and the dying pre-pit frame (42) are the only ones whose
+# x is approximate (~30px), and the bot can't re-fire mid-jump anyway, so a
+# slightly-off cart_right on those two edge frames doesn't reach a decision.
+CART_TRACK_X_MARGIN = 50       # px half-width of the prior-anchored column
 
 # Play Game button matching. The button has a per-attempt counter ("5",
 # "4", ...) rendered on a wheel icon at the right edge, so the template
@@ -315,15 +353,31 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None) -> Optional[di
     return {"kind": nearest[0], "x": nearest[1], "distance_px": nearest[1] - cart_right}
 
 
-def _load_cart_templates() -> list[Tuple[str, np.ndarray]]:
-    """Lazy-load all assets/cart_*.png templates."""
+def _build_cart_mask(template: np.ndarray) -> np.ndarray:
+    """Cart-silhouette mask (255 = cart, 0 = background) for masked matching.
+
+    The cart templates are cropped against the plank, so the background is
+    plank-tan (the same HSV signature the plank detector keys on). We mask
+    OUT those pixels, leaving the cart body/rim/wheels — so the match scores
+    only the sprite and ignores whatever scrolls behind it mid-jump. A
+    morphological open drops isolated tan-edge specks that survive the hue
+    test."""
+    hsv = cv2.cvtColor(template, cv2.COLOR_BGR2HSV)
+    is_plank = ((hsv[:, :, 0] >= PLANK_H_LO) & (hsv[:, :, 0] <= PLANK_H_HI) &
+                (hsv[:, :, 1] >= PLANK_S_MIN) & (hsv[:, :, 2] >= PLANK_V_MIN))
+    mask = (~is_plank).astype(np.uint8) * 255
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+
+
+def _load_cart_templates() -> list[Tuple[str, np.ndarray, np.ndarray]]:
+    """Lazy-load all assets/cart_*.png templates with their silhouette masks."""
     global _cart_templates
     if _cart_templates is None:
         templates = []
         for p in sorted((_HERE / "assets").glob("cart_*.png")):
             t = cv2.imread(str(p))
             if t is not None:
-                templates.append((p.stem, t))
+                templates.append((p.stem, t, _build_cart_mask(t)))
         _cart_templates = templates
     return _cart_templates
 
@@ -359,9 +413,15 @@ def _match_cart(frame, plank_y: int, *, x_center: Optional[int] = None,
     else:
         region = _cart_search_region(frame, plank_y)
     best = None
-    for name, t in templates:
-        center, val, scale = match_multiscale_center(frame, t, region=region, scales=scales)
-        if center is not None and (best is None or val > best["score"]):
+    for name, t, mask in templates:
+        top_left, val, scale = match_multiscale_masked(
+            frame, t, mask, region=region, scales=scales)
+        if top_left is None:
+            continue
+        th = int(round(t.shape[0] * scale))
+        tw = int(round(t.shape[1] * scale))
+        center = (top_left[0] + tw // 2, top_left[1] + th // 2)
+        if best is None or val > best["score"]:
             best = {
                 "center": center,
                 "score": float(val),
