@@ -10,6 +10,11 @@ fire time. After OUTCOME_DELAY_S the outcome (survived/died/unknown) is
 back-filled. Query the DB to find the distance windows that actually
 work: see jump_log.survival_rate_by_distance.
 
+`mining --watch` runs an observe-only mode (no Play-Game click, no
+auto-jump) that logs human clicks + captures PTS digit crops — the
+data-collection vehicle for tuning the policy and bootstrapping the OCR.
+See docs/mining_plan.md for the full plan (mechanic, phases, #5/#6).
+
 Run flow:
     1. User opens the mining minigame so the "Play Game" prompt is visible
     2. uv run mining
@@ -21,6 +26,7 @@ Run flow:
     5. Loop continues until the minigame ends (plank goes off-screen) or
        the user slam-corners the mouse.
 """
+import argparse
 import sys
 import threading
 import time
@@ -39,8 +45,13 @@ from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
-from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, read_score, _find_plank_top_y, _find_plank_x_range
+from minigames.mining.detector import (
+    find_cart, find_next_terrain, find_play_button,
+    read_score_from_crop, score_crop,
+    _find_plank_top_y, _find_plank_x_range,
+)
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
+from minigames.mining.digit_capture import DigitCapturer
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -78,10 +89,20 @@ DIAG_DIR = _HERE / "assets" / "diagnostics"
 
 
 def run():
+    parser = argparse.ArgumentParser(description="Mining minigame bot")
+    parser.add_argument(
+        "--watch", action="store_true",
+        help="Observation mode: the bot does NOT click Play Game or "
+             "auto-jump. It runs the detector, logs every human click with "
+             "the detector state at fire time, and captures PTS digit crops. "
+             "Use for data collection so the untuned bot doesn't burn a "
+             "scarce daily attempt.",
+    )
+    args = parser.parse_args()
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         try:
-            _run_inner()
+            _run_inner(watch=args.watch)
         finally:
             # The DB is tracked so other machines get session data via
             # `git pull`. Rollback-journal mode keeps the on-disk file
@@ -94,8 +115,9 @@ def run():
             )
 
 
-def _run_inner():
-    print(f"Mining bot starting — tracking window {WINDOW_TITLE!r}.")
+def _run_inner(watch: bool = False):
+    mode = "WATCH (observe-only)" if watch else "AUTO (jump policy)"
+    print(f"Mining bot starting — {mode} — tracking window {WINDOW_TITLE!r}.")
     print("Move mouse to any screen corner to abort.")
     time.sleep(2)
 
@@ -113,10 +135,23 @@ def _run_inner():
     pending_outcomes: list[dict] = []
     print(f"Mining DB: {MINING_DB} (session={session_started})")
 
-    # Click Play Game button to start the attempt.
-    if not _click_start_button(win_left, win_top, win_w, win_h):
-        return
+    # Per-run digit-template capture (#6): save each distinct PTS crop so
+    # digits 1-9 can be bootstrapped offline. See docs/mining_plan.md.
+    capture_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    capturer = DigitCapturer(_HERE / "assets" / "digit_capture" / capture_stamp)
 
+    if watch:
+        print("Watch mode: the bot will NOT click Play Game or auto-jump. "
+              "Open the minigame and play yourself — every click is logged "
+              "with the detector state at fire time, and PTS digit crops are "
+              "captured for the OCR bootstrap.")
+    else:
+        # Click Play Game button to start the attempt.
+        if not _click_start_button(win_left, win_top, win_w, win_h):
+            return
+
+    start_time = time.time()
+    frame_i = 0
     last_click_time = 0.0
     last_plank_seen = time.time()
     last_telemetry_at = 0.0
@@ -153,6 +188,7 @@ def _run_inner():
         frame_bgra = grab_region(win_left, win_top, win_w, win_h)
         frame = cv2.cvtColor(frame_bgra, cv2.COLOR_BGRA2BGR)
         last_frame = frame
+        frame_i += 1
 
         plank_y = _find_plank_top_y(frame)
         cart = find_cart(frame)
@@ -180,13 +216,18 @@ def _run_inner():
                                                 cart, plank_y)
 
         # Read the live PTS score while the plank is up (the readout sits
-        # just below it). Tracked so the final value can be logged at
+        # just below it), and feed the same crop to the digit-template
+        # capturer (#6). Tracked so the final value can be logged at
         # run-end — the readout vanishes once the Play Game prompt returns.
         if plank_y is not None:
-            score = read_score(frame, plank_y,
-                               detector_state["plank_range"])
-            if score is not None:
-                last_score = score
+            crop = score_crop(frame, plank_y, detector_state["plank_range"])
+            if crop is not None:
+                if capturer.maybe_save(crop, frame_idx=frame_i,
+                                       t_rel=now - start_time):
+                    print(f"  [digit-capture] new PTS crop #{capturer.count} saved")
+                score = read_score_from_crop(crop)
+                if score is not None:
+                    last_score = score
 
         # Periodic telemetry — see what the detector is doing when no
         # jump fires.
@@ -214,10 +255,17 @@ def _run_inner():
                         code_commit=code_commit)
                 print(f"Run ended — Play Game prompt returned (final PTS={last_score}). Exiting.")
                 _print_summary(conn, session_started, attempt_idx)
+                _finalize_capture(capturer)
                 listener.stop()
                 conn.close()
                 return
-            if time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S:
+            stale = time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S
+            if watch and not plank_ever_seen:
+                # Watch mode hasn't started yet — keep waiting for the user
+                # to open and start the minigame; don't time out before play
+                # begins (they need time to navigate + click Play themselves).
+                last_plank_seen = time.time()
+            elif stale:
                 with pending_lock:
                     for p in pending_outcomes:
                         set_outcome(conn, p["row_id"], "died",
@@ -232,6 +280,7 @@ def _run_inner():
                 if not plank_ever_seen and last_frame is not None:
                     _dump_diagnostics(last_frame, win_w, win_h)
                 _print_summary(conn, session_started, attempt_idx)
+                _finalize_capture(capturer)
                 listener.stop()
                 conn.close()
                 return
@@ -241,10 +290,27 @@ def _run_inner():
         plank_ever_seen = True
 
         terrain = find_next_terrain(frame, cart)
-        if (terrain is not None
+        if (not watch
+                and terrain is not None
                 and terrain["kind"] == "pit"
                 and JUMP_TRIGGER_MIN <= terrain["distance_px"] <= JUMP_TRIGGER_MAX
                 and now - last_click_time >= JUMP_COOLDOWN_S):
+            # Fire FIRST, bookkeep after. The sampled world state (cart x,
+            # pit distance) ages every ms between sample and click at
+            # ~93 px/s of scroll, so a DB insert in between biases the jump
+            # late — issue #5 calls this out, same gotcha as hoops/darts
+            # (CLAUDE.md "Click timing"). Click position is decorative:
+            # Idleon reads the click as a button press, not a pointer
+            # (CLAUDE.md "Idleon clicks are buttons, not pointers"), so the
+            # cart's coords are just a sane in-play-area default.
+            screen_x = win_left + cart[0]
+            screen_y = win_top + cart[1]
+            bot_click(screen_x, screen_y)
+            last_click_time = now
+            # _find_plank_x_range runs on the already-captured frame, so
+            # computing it post-click yields the identical result (CLAUDE.md:
+            # a pre-click signal from an in-memory frame can be computed
+            # after the click).
             jump_idx += 1
             plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
             row_id = log_jump(
@@ -266,19 +332,8 @@ def _run_inner():
                 code_commit=code_commit,
                 source="bot",
             )
-            # Click position is decorative — Idleon treats the click as a
-            # button press, not a pointer event. Aiming at the cart is
-            # just a sane default that's guaranteed to be inside the play
-            # area. See CLAUDE.md ("Idleon clicks are buttons, not
-            # pointers"). The thing that controls jump vs slam is the
-            # click *timing* relative to the cart being grounded vs
-            # airborne, not the click coordinates.
-            screen_x = win_left + cart[0]
-            screen_y = win_top + cart[1]
             print(f"JUMP #{jump_idx} pit_dist={terrain['distance_px']} "
                   f"cart=({cart[0]},{cart[1]}) row={row_id}")
-            bot_click(screen_x, screen_y)
-            last_click_time = now
             with pending_lock:
                 pending_outcomes.append({"row_id": row_id, "click_time": now})
 
@@ -304,6 +359,19 @@ def _settle_outcomes(conn, pending, now, cart, plank_y):
         set_outcome(conn, p["row_id"], outcome, int(elapsed * 1000))
         print(f"  OUTCOME row={p['row_id']}: {outcome} ({int(elapsed*1000)}ms)")
     return still_pending
+
+
+def _finalize_capture(capturer) -> None:
+    """Write the digit-capture manifest and report where the crops landed.
+    Crops are written to disk as they're seen (in maybe_save), so even a
+    failsafe abort keeps them — this just records the manifest + summary."""
+    path = capturer.flush()
+    if path is not None:
+        print(f"Digit capture: {capturer.count} distinct PTS crops -> "
+              f"{path.parent} (label + bootstrap digits 1-9 offline; "
+              f"see docs/mining_plan.md)")
+    else:
+        print("Digit capture: no readable PTS crops this run.")
 
 
 def _print_summary(conn, session_started, attempt_idx):

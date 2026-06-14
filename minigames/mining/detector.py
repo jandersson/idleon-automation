@@ -165,15 +165,18 @@ def pts_score_region(
     return (px0 + PTS_DX[0], plank_y + PTS_DY[0], px0 + PTS_DX[1], plank_y + PTS_DY[1])
 
 
-def read_score(
+def score_crop(
     frame,
     plank_y: Optional[int],
     plank_x_range: Optional[Tuple[int, int]],
-) -> Optional[int]:
-    """OCR the live PTS score from the plank-relative readout. Returns the
-    integer, or None when the plank isn't located, the digit templates
-    aren't bootstrapped yet, or the read fails (graceful — same contract
-    as common.score_ocr.read_score)."""
+):
+    """Return the BGR PTS digit-zone crop computed from the detected
+    plank, or None if the box is undefined or falls outside the frame.
+
+    Split out from read_score so callers can grab the exact crop the OCR
+    sees — the digit-template capture path (digit_capture.DigitCapturer)
+    needs the same pixels, and re-deriving the geometry in two places
+    would let them drift apart."""
     box = pts_score_region(plank_y, plank_x_range)
     if box is None:
         return None
@@ -184,7 +187,29 @@ def read_score(
     x1 = min(w, box[2]); y1 = min(h, box[3])
     if x1 <= x0 or y1 <= y0:
         return None
-    return _score_reader(frame[y0:y1, x0:x1])
+    return frame[y0:y1, x0:x1]
+
+
+def read_score(
+    frame,
+    plank_y: Optional[int],
+    plank_x_range: Optional[Tuple[int, int]],
+) -> Optional[int]:
+    """OCR the live PTS score from the plank-relative readout. Returns the
+    integer, or None when the plank isn't located, the digit templates
+    aren't bootstrapped yet, or the read fails (graceful — same contract
+    as common.score_ocr.read_score)."""
+    return read_score_from_crop(score_crop(frame, plank_y, plank_x_range))
+
+
+def read_score_from_crop(crop) -> Optional[int]:
+    """OCR a score from an already-extracted crop (see score_crop). None
+    on a None crop or an unreadable digit — same graceful contract as
+    read_score. Lets the main loop crop once, feed the same pixels to the
+    digit capturer, and OCR them without a second crop."""
+    if crop is None:
+        return None
+    return _score_reader(crop)
 
 
 def find_cart(frame) -> Optional[Tuple[int, int]]:

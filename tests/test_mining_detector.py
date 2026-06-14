@@ -20,6 +20,8 @@ from minigames.mining.detector import (
     find_cart,
     pts_score_region,
     read_score,
+    read_score_from_crop,
+    score_crop,
 )
 
 ASSETS_DIR = Path(__file__).parent.parent / "minigames" / "mining" / "assets"
@@ -66,6 +68,38 @@ def test_pts_score_region_is_plank_relative_below_left():
 def test_read_score_none_without_plank():
     frame = np.zeros((H, W, 3), dtype=np.uint8)
     assert read_score(frame, None, None) is None
+
+
+def test_score_crop_matches_pts_region_box():
+    # The crop returned for digit capture / OCR must be exactly the
+    # pts_score_region box (when the box is fully inside the frame).
+    frame = _frame_with_plank()
+    plank_range = (100, 400)
+    box = pts_score_region(PLANK_Y, plank_range)
+    x0, y0, x1, y1 = box
+    crop = score_crop(frame, PLANK_Y, plank_range)
+    assert crop is not None
+    assert crop.shape[:2] == (y1 - y0, x1 - x0)
+
+
+def test_score_crop_none_without_plank():
+    frame = _frame_with_plank()
+    assert score_crop(frame, None, (100, 400)) is None
+    assert score_crop(frame, PLANK_Y, None) is None
+
+
+def test_read_score_equals_crop_then_read():
+    # read_score must be exactly read_score_from_crop(score_crop(...)) so
+    # the main loop can crop once and feed the same pixels to both the OCR
+    # and the digit capturer.
+    frame = _frame_with_plank()
+    plank_range = (100, 400)
+    crop = score_crop(frame, PLANK_Y, plank_range)
+    assert read_score(frame, PLANK_Y, plank_range) == read_score_from_crop(crop)
+
+
+def test_read_score_from_crop_none_input():
+    assert read_score_from_crop(None) is None
 
 
 def test_scan_plank_pits_finds_single_pit():
