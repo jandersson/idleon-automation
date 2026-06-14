@@ -131,12 +131,57 @@ informative:
   bot's own clicks (now watch-only); the fatal-jump outcome logged
   'unknown' (now cart-gone → 'died').
 
-**Next:** one bot run at the new `[30,50]` trigger to validate survival.
-The `[traj]` log lines now print the cart's per-frame arc at the live
-resolution, so that run confirms the 0.9s arc and pins the trigger. If the
-cart still lands in the pit, the arc trace says whether to fire earlier or
-later. Then repeat for a survival-by-distance curve. Digits 1-9 (#6) still
-need a scoring run (human, or the bot once slam is built).
+### Run 3-4 (bot, [30,50] trigger, then --save-frames)
+
+- **The `[30,50]` trigger clears the first pit** (reproduced twice). The
+  bot fires at ~50, the cart arcs over the pit and lands on solid plank.
+  Physics-based trigger validated for an isolated pit. Note a ~0.2s
+  click→launch delay (the cart is still grounded at dt+0.16).
+- **It then dies ~1.9s later on a closely-following obstacle**, not on
+  pit 1. From the saved frames (`--save-frames`, botrun_20260615_012340):
+  after clearing pit 1 the cart lands, and a second hazard arrives almost
+  immediately — a second pit and/or the orange obstacle. The single
+  jump-per-pit policy can't sustain the rhythm.
+- **Visual ground truth (finally have full frames):** pits are dark spiked
+  gaps in the plank; **ore is the silver-blue crystal piles sitting ABOVE
+  the plank** (slam those to score — the wiki was right, the backlog's
+  "copper/orange" note was wrong); there's also an **orange-brown obstacle
+  on the plank surface** that the tan-hued ore scanner picks up as "ore"
+  and that the cart appears to die on. Needs classification (trap? must be
+  jumped?).
+- **Airborne cart detection is brittle.** The cart goes undetected during
+  the jump (cart=None, FPS drops): the sprite barely changes but the
+  BACKGROUND does (cave wall + ore behind the airborne cart vs plank
+  behind the grounded one), so TM_CCOEFF_NORMED drops below 0.80
+  (airborne best ~0.75-0.79). Lowering the threshold admits false matches
+  (a cart_large@0.5 ghost at the grounded row) — rejected. Added one
+  live-res jump-pose template (`cart_jump.png`, from frame 35) — it nails
+  that pose (1.0) with no false positives, but the pose+background vary
+  through the arc so one template only covers part of it. Robust airborne
+  detection needs several jump-pose templates or a background-masked /
+  color-based cart finder.
+
+### Next session
+
+1. **Robust airborne cart detection** (prereq for everything downstream —
+   the bot is blind mid-jump and can't react to spaced obstacles or, later,
+   time a slam). Re-run `uv run mining --save-frames` (fresh daily attempt)
+   to capture the jump arc, extract several jump-pose templates across the
+   arc (launch / peak / descent) at the live resolution, or switch the cart
+   finder to a background-independent method (tight/masked template or
+   color+shape). Validate detection is continuous through a jump.
+2. **Identify the orange obstacle** from the frames — is it a trap that
+   must be jumped, or passable? It's currently miscounted as "ore".
+   Separate "slam-to-score ore" (silver-blue, above plank) from
+   "hazard-to-avoid" in the detector.
+3. **Spaced-obstacle / multi-jump policy:** once detection is continuous,
+   handle a second obstacle right after a jump (the current death). May
+   need shorter cooldown + reacting the instant the cart lands.
+4. **Then** the slam-on-ore scoring (Phase D) and digit bootstrap (#6,
+   needs a scoring run).
+
+Trigger `[30,50]` is good for isolated pits — don't re-tune it without
+cause; the deaths are now downstream of it.
 
 ## Open questions
 
