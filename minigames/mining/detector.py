@@ -75,14 +75,20 @@ _cart_templates: Optional[list[Tuple[str, np.ndarray]]] = None  # lazy-loaded
 
 # Cart tracking: the cart's screen-x is fixed for a run (only its y moves
 # on jumps/slams — issue #1), so after the first full detection we search
-# only a narrow column around the last x at the last scale +/- one step.
-# This cuts the per-frame template-match cost ~30-50x. Without it the loop
-# ran at ~2 FPS (3 cart templates x 8 scales x up-to-3 calls per frame),
-# far too coarse for a 94 px/s scroll (the world jumped ~40px between
-# observations). A narrow-search miss falls back to a full search, so a
-# stale prior (new attempt / different player position) self-heals.
+# only a narrow column around the last x (all templates + all scales, so a
+# jump/slam pose change is still found in-column). This cuts the per-frame
+# cost ~5x — the loop ran at ~2 FPS without it (3 templates x 8 scales x
+# up-to-3 calls/frame), far too coarse for a 94 px/s scroll. A narrow miss
+# falls back to a full search, so a stale prior (new attempt / different
+# player position) self-heals.
+#
+# An earlier scale-locked variant hit ~28 FPS grounded but collapsed to
+# ~5 FPS mid-jump: the locked scale missed the jump pose and fell back to
+# a full search every frame (the live 2026-06-15 bot run showed this; the
+# trace it was validated on had no jumps). Searching all scales in the
+# (small) column trades a little steady-state FPS for staying fast through
+# the jump — which is exactly when the policy needs to see the cart.
 CART_TRACK_X_MARGIN = 90       # px half-width of the prior-anchored column
-CART_TRACK_SCALE_STEPS = 1     # search prior scale +/- this many CART_SCALES steps
 
 # Play Game button matching. The button has a per-attempt counter ("5",
 # "4", ...) rendered on a wheel icon at the right edge, so the template
@@ -260,9 +266,7 @@ def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
     if plank_y is None:
         return None
     if prior is not None and prior.get("center") is not None:
-        res = _match_cart(frame, plank_y,
-                          x_center=prior["center"][0],
-                          scales=_scales_near(prior.get("scale")))
+        res = _match_cart(frame, plank_y, x_center=prior["center"][0])
         if res is not None:
             return res
     return _match_cart(frame, plank_y)
@@ -333,18 +337,6 @@ def _cart_search_region(frame, plank_y: int) -> Tuple[int, int, int, int]:
     and lower UI."""
     h, w = frame.shape[:2]
     return (0, 0, w, min(h, plank_y + 15))
-
-
-def _scales_near(scale) -> tuple:
-    """CART_SCALES within CART_TRACK_SCALE_STEPS of `scale` (inclusive).
-    Returns all scales if `scale` isn't a known step (so a missing/garbage
-    prior scale degrades to a full sweep, not an empty search)."""
-    if scale not in CART_SCALES:
-        return CART_SCALES
-    i = CART_SCALES.index(scale)
-    lo = max(0, i - CART_TRACK_SCALE_STEPS)
-    hi = min(len(CART_SCALES), i + CART_TRACK_SCALE_STEPS + 1)
-    return CART_SCALES[lo:hi]
 
 
 def _match_cart(frame, plank_y: int, *, x_center: Optional[int] = None,

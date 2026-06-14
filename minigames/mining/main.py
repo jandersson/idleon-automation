@@ -181,11 +181,18 @@ def _run_inner(watch: bool = False):
     }
     state_lock = threading.Lock()
     pending_lock = threading.Lock()  # pending_outcomes touched from listener too
-    listener = _start_human_click_listener(
-        conn, session_started, attempt_idx,
-        detector_state, state_lock, pending_outcomes, pending_lock,
-        code_commit,
-    )
+    # The human-click listener only runs in watch mode. In auto mode the
+    # bot's own pyautogui clicks trip the listener too, double-logging each
+    # bot jump as a phantom source='human' row (seen in the 2026-06-15 run).
+    # Auto runs log their jumps directly; human interventions aren't a case
+    # we need there.
+    listener = None
+    if watch:
+        listener = _start_human_click_listener(
+            conn, session_started, attempt_idx,
+            detector_state, state_lock, pending_outcomes, pending_lock,
+            code_commit,
+        )
 
     while True:
         check_failsafe()
@@ -248,8 +255,7 @@ def _run_inner(watch: bool = False):
 
         # Settle any pending-outcome jumps whose measurement window expired.
         with pending_lock:
-            pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
-                                                cart, plank_y)
+            pending_outcomes = _settle_outcomes(conn, pending_outcomes, now, cart)
 
         # Log the fired bot jump now (after the click — bookkeeping never
         # delays the fire). plank_range was computed pre-click from the same
@@ -322,7 +328,8 @@ def _run_inner(watch: bool = False):
                 print(f"Run ended — Play Game prompt returned (final PTS={last_score}). Exiting.")
                 _print_summary(conn, session_started, attempt_idx)
                 _finalize_capture(capturer)
-                listener.stop()
+                if listener is not None:
+                    listener.stop()
                 conn.close()
                 return
             stale = time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S
@@ -347,7 +354,8 @@ def _run_inner(watch: bool = False):
                     _dump_diagnostics(last_frame, win_w, win_h)
                 _print_summary(conn, session_started, attempt_idx)
                 _finalize_capture(capturer)
-                listener.stop()
+                if listener is not None:
+                    listener.stop()
                 conn.close()
                 return
             time.sleep(POLL_INTERVAL)
@@ -360,22 +368,24 @@ def _run_inner(watch: bool = False):
         time.sleep(POLL_INTERVAL)
 
 
-def _settle_outcomes(conn, pending, now, cart, plank_y):
+def _settle_outcomes(conn, pending, now, cart):
     """Walk the pending-outcome list; for any past OUTCOME_DELAY_S since
     its click, write its outcome and drop it from the list. Return the
-    new pending list."""
+    new pending list.
+
+    Outcome is just "is the cart still there a beat later?": detected →
+    survived (it cleared the obstacle), gone → died (it fell in). Once the
+    cart is lost the attempt is over — it doesn't reappear mid-run. The old
+    plank_y branch produced "unknown" because a death often leaves the
+    plank briefly visible (seen 2026-06-15: the fatal jump logged
+    'unknown'), which is useless for survival_rate_by_distance."""
     still_pending = []
     for p in pending:
         elapsed = now - p["click_time"]
         if elapsed < OUTCOME_DELAY_S:
             still_pending.append(p)
             continue
-        if plank_y is None:
-            outcome = "died"
-        elif cart is not None:
-            outcome = "survived"
-        else:
-            outcome = "unknown"
+        outcome = "survived" if cart is not None else "died"
         set_outcome(conn, p["row_id"], outcome, int(elapsed * 1000))
         print(f"  OUTCOME row={p['row_id']}: {outcome} ({int(elapsed*1000)}ms)")
     return still_pending

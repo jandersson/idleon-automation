@@ -13,11 +13,8 @@ from minigames.mining.detector import (
     PIT_MIN_WIDTH,
     PLANK_X0_FRAC,
     PLANK_X1_FRAC,
-    CART_SCALES,
-    CART_TRACK_SCALE_STEPS,
     _find_plank_top_y,
     _load_cart_templates,
-    _scales_near,
     _scan_plank_ore,
     _scan_plank_pits,
     find_cart,
@@ -239,12 +236,3 @@ def test_find_next_terrain_uses_passed_cart_right_and_plank_y():
     frame[PLANK_Y:PLANK_Y + 12, 500:560] = 0  # 60px pit
     res = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350)
     assert res == {"kind": "pit", "x": 500, "distance_px": 150}
-
-
-def test_scales_near_window():
-    assert _scales_near(None) == CART_SCALES          # unknown → full sweep
-    assert _scales_near(0.123) == CART_SCALES          # not a known step → full sweep
-    near_one = _scales_near(1.0)
-    assert 1.0 in near_one and len(near_one) == 2 * CART_TRACK_SCALE_STEPS + 1
-    # endpoints clamp instead of wrapping
-    assert _scales_near(CART_SCALES[0])[0] == CART_SCALES[0]
