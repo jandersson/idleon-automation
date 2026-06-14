@@ -260,6 +260,31 @@ investigations:
   motion mask still diffs frames ~250ms apart regardless of cadence
   (`REF_MOTION_DT_S`), so MIN_AREA's dropout behavior stays calibrated.
 
+- **The wind-conditioned E[stripe] GP is the validated default aim**
+  (issue #41, promoted 2026-06-14). It scores live (platform_y, vy)
+  release passes per the parsed wind (`wind_x`/`wind_y`) and fires the
+  highest-EV vy band (`minigames/darts/stripe_model.py`,
+  `model_vy_band`); it's already the operative aim whenever the data
+  floor is met (fits at 390 clean rows ≥ MIN_SAMPLES=150), with the
+  static calm band `[-32,-20]` px/s as the fallback when the GP can't
+  fire (`aim_mode` tags each: `model`/`band`/`fallback`/`explore`).
+  Validation on the OCR-repaired labels: model-aim throws hit **94%
+  (n=137, Wilson [89,97])** vs the **same-era** (2026-06-10) baseline
+  **81% (n=221, [75,86])** — disjoint CIs. The model and baseline were
+  never run concurrently (sequential by session, not a true A/B), and
+  the 94-vs-81 lift is the honest one — an earlier 94-vs-70 framing
+  blended in the abandoned pre-fix May regime (35%), which is a
+  different bot. The wind-conditioning earns its keep where it should:
+  under strong wind (≥6 mph) the model holds **94% / E[stripe] 3.06
+  (n=34, [81,98])** while the un-conditioned baseline collapses to
+  **55% / 1.50 (n=22))** — the cleanest evidence, all same-day.
+  Honest nuance / open refinement: in dead calm the hand-tuned static
+  band still edges the model on stripe value (band E[stripe] ~3.5 at
+  hit 100%, n=16 vs model 2.61, n=62) but can't fire under wind — a
+  calm-air special-case (defer to the band when wind≈0) is a possible
+  follow-up, not a blocker. Don't revert the default without a
+  comparably-powered counter-sample (#23/#38 discipline).
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
