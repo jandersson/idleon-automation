@@ -8,7 +8,7 @@ the game uses to scale cooldown duration with consecutive plays.
 
 Two call sites:
 - `scripts/observe_hoops_cooldown.py` — standalone polling CLI
-- `ui/launcher.py:_refresh_tries` — piggybacks on the launcher's
+- `ui/launcher/bots_tab.py:refresh_tries` — piggybacks on the launcher's
   existing mtime-tick so observations accumulate whenever the launcher
   is open (bot runs, manual plays, character switches all count).
 """
