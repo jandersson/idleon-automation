@@ -166,6 +166,14 @@ def fetch_stripe_rows(
             vy = dy * 1000.0 / dt
         if abs(vy) > VY_OUTLIER_ABS:
             continue
+        # Busts (score decreased) are not score-0 misses — they're a
+        # high-streak zone phenomenon (#40) with no streak feature in
+        # this model, so an EV-0 row here would wrongly blame the
+        # (wind, vy, pose) state. Drop until streak conditioning lands.
+        # (Historically these were dropped incidentally as hit=1 with an
+        # invalid increment; the bust-aware hit fix makes the skip explicit.)
+        if increment is not None and increment < 0:
+            continue
         if hit:
             if increment not in VALID_INCREMENTS:
                 continue
