@@ -111,11 +111,19 @@ def run():
              "Use for data collection so the untuned bot doesn't burn a "
              "scarce daily attempt.",
     )
+    parser.add_argument(
+        "--save-frames", action="store_true",
+        help="Also write every frame to assets/captures/botrun_<stamp>/ "
+             "(gitignored) for offline analysis — extracting a jump-pose "
+             "cart template, render_overlay QA, diagnosing what killed a "
+             "run. Adds a little disk I/O; placed after the click so it "
+             "doesn't delay the fire.",
+    )
     args = parser.parse_args()
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         try:
-            _run_inner(watch=args.watch)
+            _run_inner(watch=args.watch, save_frames=args.save_frames)
         finally:
             # The DB is tracked so other machines get session data via
             # `git pull`. Rollback-journal mode keeps the on-disk file
@@ -128,7 +136,7 @@ def run():
             )
 
 
-def _run_inner(watch: bool = False):
+def _run_inner(watch: bool = False, save_frames: bool = False):
     mode = "WATCH (observe-only)" if watch else "AUTO (jump policy)"
     print(f"Mining bot starting — {mode} — tracking window {WINDOW_TITLE!r}.")
     print("Move mouse to any screen corner to abort.")
@@ -152,6 +160,14 @@ def _run_inner(watch: bool = False):
     # digits 1-9 can be bootstrapped offline. See docs/mining_plan.md.
     capture_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     capturer = DigitCapturer(_HERE / "assets" / "digit_capture" / capture_stamp)
+
+    # Optional full-frame capture (--save-frames) for offline analysis:
+    # jump-pose template extraction, render_overlay QA, death diagnosis.
+    frames_dir = None
+    if save_frames:
+        frames_dir = _HERE / "assets" / "captures" / f"botrun_{capture_stamp}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving frames to {frames_dir} (--save-frames)")
 
     if watch:
         print("Watch mode: the bot will NOT click Play Game or auto-jump. "
@@ -249,6 +265,12 @@ def _run_inner(watch: bool = False):
             last_click_time = now
             jump_idx += 1
             jump_to_log = jump_idx
+
+        # Save the raw frame (post-click so it never delays the fire) when
+        # --save-frames is on. Named frame_NNNN.png so render_overlay can
+        # consume the dir like a trace.
+        if frames_dir is not None:
+            cv2.imwrite(str(frames_dir / f"frame_{frame_i:04d}.png"), frame)
 
         # Publish detector state for the human-click listener thread to
         # consume on its next click event.
