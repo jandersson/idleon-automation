@@ -138,18 +138,28 @@ def main() -> None:
         makes.append(rec)
 
     # Per-(hoop_x, hoop_y) bucket aggregate so reviewers can spot stuck
-    # positions without iterating raw rows. Buckets are ±5px.
+    # positions without iterating raw rows. Buckets are ±5px. last_session
+    # is the most recent session that fired into the bucket — it lets a
+    # reviewer distinguish an actively-failing zone from an old 0-make
+    # bucket that simply hasn't been revisited (the cumulative shots/makes
+    # alone can't: a stale bucket and a stuck one look identical). See the
+    # #43 review false-alarms.
     buckets = {}
     for row in conn.execute(
-        f"SELECT hoop_x, hoop_y, made FROM shots WHERE hoop_x IS NOT NULL{exp_and}"
+        "SELECT hoop_x, hoop_y, made, session_started FROM shots "
+        f"WHERE hoop_x IS NOT NULL{exp_and}"
     ):
         bx = (row["hoop_x"] // 10) * 10
         by = (row["hoop_y"] // 10) * 10
         key = f"{bx},{by}"
-        b = buckets.setdefault(key, {"hoop_x_bucket": bx, "hoop_y_bucket": by, "shots": 0, "makes": 0})
+        b = buckets.setdefault(key, {"hoop_x_bucket": bx, "hoop_y_bucket": by,
+                                     "shots": 0, "makes": 0, "last_session": None})
         b["shots"] += 1
         if row["made"]:
             b["makes"] += 1
+        ss = row["session_started"]
+        if ss and (b["last_session"] is None or ss > b["last_session"]):
+            b["last_session"] = ss
 
     bucket_list = sorted(
         buckets.values(),

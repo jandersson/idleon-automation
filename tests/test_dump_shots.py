@@ -45,5 +45,10 @@ def test_dump_shots_writes_snapshot(tmp_path, monkeypatch):
     assert snap["make_rate"] == 0.5
     assert len(snap["makes"]) == 1
     assert snap["makes"][0]["hoop_x"] == 700
-    # Bucket aggregation
-    assert any(b["hoop_x_bucket"] == 700 and b["hoop_y_bucket"] == 450 for b in snap["buckets"])
+    # Bucket aggregation, with recency (#43): the bucket carries the most
+    # recent session that fired into it, so a reviewer can tell a stale
+    # 0-make bucket from an actively-failing one.
+    bucket = next(b for b in snap["buckets"]
+                  if b["hoop_x_bucket"] == 700 and b["hoop_y_bucket"] == 450)
+    assert bucket["shots"] == 2 and bucket["makes"] == 1
+    assert bucket["last_session"] == "2026-05-02T10:00:00"
