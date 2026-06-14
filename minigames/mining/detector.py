@@ -33,8 +33,29 @@ import cv2
 import numpy as np
 
 from common.templates import match_multiscale_center
+from common.score_template_ocr import make_score_reader
 
 _HERE = Path(__file__).parent
+
+# Score readout: the "N PTS" counter sits just BELOW-LEFT of the plank
+# ("N PTS" on the left, "N BEST" on the right). It's plank-relative
+# because the minigame overlay floats above the player's world position,
+# so there's no fixed regions.json rectangle — the digit zone is computed
+# from the detected plank each frame. Offsets derived from
+# trace_20260515_220235 (plank_y=312, plank_x0=397 → the "0" digit sits
+# at x~388, y~332). The right edge stops before the "PTS" label so the
+# P/T/S glyphs don't get read as digits. Multi-digit scores (10+) may
+# need the box widened — validate at the game.
+# The number is right-anchored against the " PTS" label (its units digit
+# ends ~plank_x0), so the box extends LEFT for multi-digit scores and
+# stops just right of plank_x0 to exclude the "P" glyph.
+PTS_DX = (-24, 2)    # x offset from plank_x0 spanning the score digits
+PTS_DY = (20, 42)    # y offset below plank_y
+
+# Per-game digit templates for the PTS reader (bootstrapped from gameplay
+# frames; missing digits → read_score returns None for scores containing
+# them, same graceful-degradation contract as the other bots).
+_score_reader = make_score_reader(_HERE / "assets" / "digit_templates")
 
 # Scans start a few px past the cart's right edge so its trailing-edge
 # pixels don't read as the start of an obstacle.
@@ -129,6 +150,41 @@ def _load_play_button_template() -> Optional[np.ndarray]:
         if p.exists():
             _play_button_template = cv2.imread(str(p))
     return _play_button_template
+
+
+def pts_score_region(
+    plank_y: Optional[int],
+    plank_x_range: Optional[Tuple[int, int]],
+) -> Optional[Tuple[int, int, int, int]]:
+    """Box (x0, y0, x1, y1) of the PTS digit zone, computed from the
+    detected plank. None if either input is missing. Pure geometry —
+    testable without a frame."""
+    if plank_y is None or plank_x_range is None:
+        return None
+    px0, _px1 = plank_x_range
+    return (px0 + PTS_DX[0], plank_y + PTS_DY[0], px0 + PTS_DX[1], plank_y + PTS_DY[1])
+
+
+def read_score(
+    frame,
+    plank_y: Optional[int],
+    plank_x_range: Optional[Tuple[int, int]],
+) -> Optional[int]:
+    """OCR the live PTS score from the plank-relative readout. Returns the
+    integer, or None when the plank isn't located, the digit templates
+    aren't bootstrapped yet, or the read fails (graceful — same contract
+    as common.score_ocr.read_score)."""
+    box = pts_score_region(plank_y, plank_x_range)
+    if box is None:
+        return None
+    if frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    h, w = frame.shape[:2]
+    x0 = max(0, box[0]); y0 = max(0, box[1])
+    x1 = min(w, box[2]); y1 = min(h, box[3])
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return _score_reader(frame[y0:y1, x0:x1])
 
 
 def find_cart(frame) -> Optional[Tuple[int, int]]:

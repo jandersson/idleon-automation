@@ -5,6 +5,7 @@ from pathlib import Path
 
 from minigames.mining.jump_log import (
     log_jump,
+    log_run,
     open_db,
     set_outcome,
     survival_rate_by_distance,
@@ -40,6 +41,32 @@ def test_log_jump_inserts_and_returns_rowid():
     ).fetchone()
     assert kind == "pit"
     assert dist == 55
+
+
+def test_open_db_creates_runs_table():
+    conn = open_db(_tmpdb())
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
+    )
+    assert cur.fetchone() == ("runs",)
+
+
+def test_log_run_records_final_score_and_reason():
+    conn = open_db(_tmpdb())
+    rid = log_run(
+        conn,
+        session_started="2026-05-16T12:00:00",
+        attempt_idx=2,
+        ended_at="2026-05-16T12:01:30",
+        final_score=9,
+        end_reason="play_button",
+        code_commit="abc123",
+    )
+    row = conn.execute(
+        "SELECT attempt_idx, final_score, end_reason FROM runs WHERE id = ?",
+        (rid,),
+    ).fetchone()
+    assert row == (2, 9, "play_button")
 
 
 def test_set_outcome_updates_existing_row():

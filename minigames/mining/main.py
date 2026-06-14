@@ -39,8 +39,8 @@ from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
-from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, _find_plank_top_y, _find_plank_x_range
-from minigames.mining.jump_log import open_db, log_jump, set_outcome
+from minigames.mining.detector import find_cart, find_next_terrain, find_play_button, read_score, _find_plank_top_y, _find_plank_x_range
+from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -122,6 +122,7 @@ def _run_inner():
     last_telemetry_at = 0.0
     last_frame: cv2.Mat | None = None  # for diagnostic dump on exit
     plank_ever_seen = False
+    last_score: int | None = None  # most recent in-play PTS read (#6)
 
     # State the human-click listener needs to read. Captured in a closure;
     # mutated in the main loop each tick. The listener thread reads the
@@ -178,20 +179,55 @@ def _run_inner():
             pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
                                                 cart, plank_y)
 
+        # Read the live PTS score while the plank is up (the readout sits
+        # just below it). Tracked so the final value can be logged at
+        # run-end — the readout vanishes once the Play Game prompt returns.
+        if plank_y is not None:
+            score = read_score(frame, plank_y,
+                               detector_state["plank_range"])
+            if score is not None:
+                last_score = score
+
         # Periodic telemetry — see what the detector is doing when no
         # jump fires.
         if now - last_telemetry_at >= TELEMETRY_INTERVAL_S:
             last_telemetry_at = now
             terr = find_next_terrain(frame, cart) if cart else None
             print(f"  [t+{now - last_plank_seen:5.2f}] "
-                  f"plank_y={plank_y} cart={cart} next={terr}")
+                  f"plank_y={plank_y} cart={cart} pts={last_score} next={terr}")
 
         if cart is None:
+            # Run-end detection (#6): once the cart is gone, the run is
+            # ending. The positive signal is the "Play Game" prompt
+            # returning — faster and cleaner than waiting out the
+            # plank-lost timeout. (Validated against trace_20260515: the
+            # button reappears ~frame 56, vs an 8s timeout.)
+            if plank_ever_seen and find_play_button(frame) is not None:
+                with pending_lock:
+                    for p in pending_outcomes:
+                        set_outcome(conn, p["row_id"], "died",
+                                    int((time.time() - p["click_time"]) * 1000))
+                log_run(conn, session_started=session_started,
+                        attempt_idx=attempt_idx,
+                        ended_at=datetime.now().isoformat(timespec="seconds"),
+                        final_score=last_score, end_reason="play_button",
+                        code_commit=code_commit)
+                print(f"Run ended — Play Game prompt returned (final PTS={last_score}). Exiting.")
+                _print_summary(conn, session_started, attempt_idx)
+                listener.stop()
+                conn.close()
+                return
             if time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S:
                 with pending_lock:
                     for p in pending_outcomes:
                         set_outcome(conn, p["row_id"], "died",
                                     int((time.time() - p["click_time"]) * 1000))
+                if plank_ever_seen:
+                    log_run(conn, session_started=session_started,
+                            attempt_idx=attempt_idx,
+                            ended_at=datetime.now().isoformat(timespec="seconds"),
+                            final_score=last_score, end_reason="plank_lost",
+                            code_commit=code_commit)
                 print(f"Plank lost for >{PLANK_LOST_TIMEOUT_S}s — exiting.")
                 if not plank_ever_seen and last_frame is not None:
                     _dump_diagnostics(last_frame, win_w, win_h)

@@ -18,6 +18,8 @@ from minigames.mining.detector import (
     _scan_plank_ore,
     _scan_plank_pits,
     find_cart,
+    pts_score_region,
+    read_score,
 )
 
 ASSETS_DIR = Path(__file__).parent.parent / "minigames" / "mining" / "assets"
@@ -47,6 +49,23 @@ def test_find_plank_top_y_locates_synthetic_plank():
 def test_find_plank_top_y_returns_none_on_empty_frame():
     frame = np.zeros((H, W, 3), dtype=np.uint8)
     assert _find_plank_top_y(frame) is None
+
+
+def test_pts_score_region_is_plank_relative_below_left():
+    # The PTS digits sit below-left of the plank, right-anchored near
+    # plank_x0 (#6). Region is None without a located plank.
+    assert pts_score_region(None, (100, 400)) is None
+    assert pts_score_region(160, None) is None
+    box = pts_score_region(160, (100, 400))
+    x0, y0, x1, y1 = box
+    assert y0 > 160 and y1 > y0          # below the plank
+    assert x1 <= 100 + 5 and x0 < 100    # ends at/just past plank_x0, extends left
+    assert x1 > x0
+
+
+def test_read_score_none_without_plank():
+    frame = np.zeros((H, W, 3), dtype=np.uint8)
+    assert read_score(frame, None, None) is None
 
 
 def test_scan_plank_pits_finds_single_pit():

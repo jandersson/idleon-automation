@@ -14,9 +14,27 @@ player's head** in whatever world position the player is standing.
 - Silver-blue ore chunks sit on the track at intervals — landing a slam
   on these scores points.
 - Dark gaps in the track are pits — landing on these ends the run.
-- Score readout shows "X PTS" (left) and "Y BEST" (right) above the
-  track. Player character name floats below the track.
+- Score readout shows "N PTS" (left) and "N BEST" (right) **below** the
+  track (corrected from the scaffold's "above" — verified against
+  trace_20260515_220235). The number is right-anchored against its label.
 - 5 daily attempts, pooled with chopping/catching.
+
+## Game-over + score detection (#6, partial — 2026-06-14)
+
+- **Run-end detection: done + validated.** The minigame has no full-screen
+  game-over banner; the run-end signal is the **"Play Game" prompt
+  returning** (`find_play_button`), which fires ~frame 56 of the trace vs
+  the old 8s plank-lost timeout. `main.py` now exits cleanly on that
+  (timeout kept as backstop) and logs a per-attempt row to the new
+  `runs` table (`final_score`, `end_reason`).
+- **Score reader: plumbed, partial.** `detector.read_score` /
+  `pts_score_region` OCR the PTS digits from a **plank-relative** region
+  (the overlay floats, so the box is computed from the detected plank, not
+  a fixed regions.json rect) via `score_template_ocr`. Validated end-to-end
+  (read_score==0 on 26/28 in-play frames). Only `0.png` is bootstrapped so
+  far — **remaining at-game step:** capture digit templates 1-9 as the bot
+  scores (the readout cycles through them during play), and validate the
+  region's right-edge / left-extent on a multi-digit score.
 
 ## Reference frames
 

@@ -56,8 +56,34 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
 ]
 
 
+# Per-attempt run summary (#6). One row per "Play Game" attempt, written
+# when the run ends — captures the final PTS score and how the run ended.
+_RUNS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_started TEXT,
+    attempt_idx INTEGER,
+    ended_at TEXT,
+    final_score INTEGER,
+    end_reason TEXT,        -- 'play_button' (prompt returned), 'plank_lost' (timeout), 'failsafe'
+    code_commit TEXT
+)
+"""
+
+_RUNS_LATE_COLUMNS: list[tuple[str, str]] = []
+
+
 def open_db(path: Path) -> sqlite3.Connection:
-    return open_log_db(path, [_SCHEMA], {"jumps": _LATE_COLUMNS})
+    return open_log_db(
+        path, [_SCHEMA, _RUNS_SCHEMA],
+        {"jumps": _LATE_COLUMNS, "runs": _RUNS_LATE_COLUMNS},
+    )
+
+
+def log_run(conn: sqlite3.Connection, **fields) -> int:
+    """Insert a per-attempt run-summary row (#6: game-over + final score).
+    Returns the rowid."""
+    return insert_row(conn, "runs", fields)
 
 
 def log_jump(conn: sqlite3.Connection, **fields) -> int:
