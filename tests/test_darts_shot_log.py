@@ -114,31 +114,6 @@ def test_log_throw_handles_bullseye_flag(tmp_path):
     assert rows == [(1, 5, 1), (2, 2, 0), (3, None, None)]
 
 
-def test_classify_throw_outcome_bust_aware():
-    """hit/bust derive from the score_increment sign; the diff is only a
-    fallback when OCR failed (#40)."""
-    from minigames.darts.shot_log import classify_throw_outcome
-    assert classify_throw_outcome(2, True) == (1, 0)    # scoring hit
-    assert classify_throw_outcome(5, True) == (1, 0)    # bullseye
-    assert classify_throw_outcome(-7, True) == (0, 1)   # bust (score dropped)
-    assert classify_throw_outcome(0, True) == (0, 0)    # no change → miss
-    # OCR failed → fall back to the diff, bust unknown.
-    assert classify_throw_outcome(None, True) == (1, None)
-    assert classify_throw_outcome(None, False) == (0, None)
-    assert classify_throw_outcome(None, None) == (None, None)
-
-
-def test_log_throw_round_trips_bust(tmp_path):
-    conn = open_db(tmp_path / "darts.db")
-    log_throw(conn, throw_idx=1, score_increment=-8, hit=0, bust=1)
-    log_throw(conn, throw_idx=2, score_increment=3, hit=1, bust=0)
-    rows = list(conn.execute(
-        "SELECT throw_idx, hit, bust FROM throws ORDER BY throw_idx"
-    ))
-    conn.close()
-    assert rows == [(1, 0, 1), (2, 1, 0)]
-
-
 def test_poll_and_throw_carry_dart_dy(tmp_path):
     """dart_dy (polls) and dart_dy_at_fire (throws) round-trip — the #26
     swing-pass discriminator instrumentation."""

@@ -57,19 +57,6 @@ def test_fetch_rows_filtering(tmp_path: Path):
     assert scores == [0.0, 3.0]
 
 
-def test_fetch_drops_busts(tmp_path: Path):
-    """A bust (negative increment) is not a score-0 miss — it's a
-    high-streak zone effect with no streak feature here (#40), so it must
-    be dropped, not folded in as EV 0."""
-    db = open_db(tmp_path / "t.db")
-    _log(db, 1)                                  # hit → kept (score 3)
-    _log(db, 2, hit=0, score_increment=-8, bust=1)  # bust → dropped
-    rows = fetch_stripe_rows(db)
-    db.close()
-    assert len(rows) == 1
-    assert rows[0][4] == 3.0
-
-
 def test_fetch_converts_legacy_px_per_poll_rows(tmp_path: Path):
     """Pre-2026-06-10 rows logged px/poll in arm_centroid_dy_at_fire.
     They convert to px/s via the fire's actual poll gap from the polls

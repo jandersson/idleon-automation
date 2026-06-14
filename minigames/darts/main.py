@@ -21,7 +21,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.wind import parse_wind
-from minigames.darts.shot_log import open_db, log_throw, log_poll, classify_throw_outcome
+from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.arm_motion import (
     REF_MOTION_DT_S,
     centroid_vy_px_s,
@@ -878,9 +878,6 @@ def _run_inner(
             1 if score_increment == 5 else (0 if score_increment is not None else None)
         )
         stripe_color = STRIPE_COLOR_BY_INCREMENT.get(score_increment) if score_increment else None
-        # A bust drops the score and is not a hit, even though the
-        # score-region diff fired — disambiguate by the increment sign (#40).
-        hit, bust = classify_throw_outcome(score_increment, diff_changed)
         log_throw(
             throw_db,
             session_started=session_started,
@@ -903,8 +900,7 @@ def _run_inner(
             score_before_int=score_before_int,
             score_after_int=score_after_int,
             score_increment=score_increment,
-            hit=hit,
-            bust=bust,
+            hit=int(bool(diff_changed)) if diff_changed is not None else None,
             bullseye=bullseye,
             streak=shot_stats.get("streak", 0),
             throw_dir=str(flight_dir) if flight_dir is not None else None,

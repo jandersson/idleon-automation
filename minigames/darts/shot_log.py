@@ -133,44 +133,7 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # tick-cost optimization. Convert legacy rows via each fire's
     # actual poll gap (see stripe_model.fetch_stripe_rows).
     ("arm_centroid_vy_at_fire", "INTEGER"),
-    # Bust flag (#40): a bust DROPS the score and resets the streak. The
-    # hit detector is score-region-diff based, so a bust changes the
-    # region just like a hit and was logged hit=1 — 15 historical busts
-    # were mislabeled. Set from the OCR'd score_increment sign (see
-    # classify_throw_outcome): bust=1 on a decrease, 0 on an increase,
-    # NULL when OCR couldn't read the increment. Lets #40 map which
-    # landing bands turn into busts at high streak via `WHERE bust=1`.
-    ("bust", "INTEGER"),
 ]
-
-
-def classify_throw_outcome(
-    score_increment: int | None,
-    diff_changed: bool | None,
-) -> tuple[int | None, int | None]:
-    """Derive (hit, bust) for a throw from the post-throw score.
-
-    A real hit INCREASES the score; a bust DECREASES it (and resets the
-    streak). The score-region pixel diff (`diff_changed`) only says the
-    region changed — it can't tell the two apart — so the OCR'd
-    `score_increment` sign is authoritative when available, with the diff
-    as the fallback when OCR failed.
-
-    Returns (hit, bust), each 1/0/None:
-      - increment > 0 → (1, 0)   a scoring hit
-      - increment < 0 → (0, 1)   a bust
-      - increment == 0 → (0, 0)  no change → miss
-      - increment None → (diff-based hit, None)  OCR failed; bust unknown
-    """
-    if score_increment is not None:
-        if score_increment > 0:
-            return 1, 0
-        if score_increment < 0:
-            return 0, 1
-        return 0, 0
-    if diff_changed is None:
-        return None, None
-    return int(bool(diff_changed)), None
 
 
 _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
