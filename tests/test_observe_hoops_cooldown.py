@@ -41,7 +41,7 @@ def test_build_observation_captures_ola_indices():
     assert row["ola_435"] == 106
     assert row["darts_cooldown_ticks"] == -26
     assert row["darts_plays_today"] == 2
-    assert row["darts_cooldown_base"] == 125
+    assert row["darts_high_score"] == 125  # OLA[442] is the darts high score, not a cooldown base (#22)
     assert row["save_age"] == 5.0
     assert row["save_mtime"] == 1000.0
 

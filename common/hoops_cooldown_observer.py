@@ -1,10 +1,16 @@
 """Hoops cooldown observation logging — gathers data for issue #22.
 
-Whenever the Idleon save flushes, we want to append one JSON line
-capturing OLA[423] (hoops cooldown ticks), OLA[424] (hypothesised
-streak counter), and adjacent indices. Across enough save flushes we
-should see (streak, cooldown-at-set) pairs that reveal the formula
-the game uses to scale cooldown duration with consecutive plays.
+Whenever the Idleon save flushes, we append one JSON line capturing
+OLA[423] (hoops cooldown ticks), OLA[424] (hoops plays-today — confirmed
+#22, the cooldown-escalation driver), and adjacent indices. This data
+derived the cooldown formula (#22): cooldown escalates quadratically with
+plays-today, capped at ~900 ticks = 180s (see
+common.idleon_save.minigame_cooldown_ticks_for_plays and
+docs/hoops_cooldown.md). Continued logging validates/refines the
+provisional constants. NOTE the OLA labels below were corrected against
+the community schema: OLA[434] is darts minigame POINTS and OLA[442] is
+darts HIGH SCORE — neither is a cooldown base (the cooldown is computed,
+not stored).
 
 Two call sites:
 - `scripts/observe_hoops_cooldown.py` — standalone polling CLI
@@ -36,7 +42,7 @@ OLA_INDICES_OF_INTEREST: dict[str, int] = {
     "ola_436": 436,
     "darts_cooldown_ticks": 439,
     "darts_plays_today": 440,
-    "darts_cooldown_base": 442,
+    "darts_high_score": 442,
 }
 
 

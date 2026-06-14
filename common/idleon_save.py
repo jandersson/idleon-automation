@@ -166,7 +166,13 @@ def load_save(save_dir: str = SAVE_DIR) -> dict | None:
 # OLA[440] as the darts daily-play counter.
 _OLA_DARTS_COOLDOWN_TICKS = 439  # negative = playable; positive = ticks of cooldown left
 _OLA_DARTS_PLAYS_TODAY = 440     # 0..N, grows with each scored darts session
-_OLA_DARTS_COOLDOWN_BASE = 442   # static; per-play tier cooldown duration in ticks
+# OLA[442] was previously mislabelled here as a darts "cooldown base" (#22).
+# The authoritative community index map (MrJoiny/Idleon-Injector
+# optionsAccountSchema.json) identifies it as the darts minigame HIGH SCORE,
+# and the data confirms it: it sits flat at 125 while the darts cooldown
+# still escalates with plays_today. The minigame cooldown is COMPUTED from
+# plays-today (see minigame_cooldown_ticks_for_plays), not read from any
+# stored base — so OLA[442] is not used for the cooldown.
 _OLA_TICKS_PER_SECOND = 5
 
 
@@ -176,8 +182,6 @@ def read_darts_cooldown(save_dir: str = SAVE_DIR) -> dict[str, float | int] | No
     Returns a dict with:
         cooldown_seconds  : seconds of cooldown remaining (negative = playable)
         plays_today       : darts sessions played since the last daily reset
-        base_cooldown_seconds : cooldown duration that the current play tier
-                                schedules (likely; seems static between dumps)
 
     Returns None if the save can't be read or the OLA array is too short.
     The unit conversion (5 ticks per second) was verified empirically.
@@ -186,17 +190,15 @@ def read_darts_cooldown(save_dir: str = SAVE_DIR) -> dict[str, float | int] | No
     if data is None:
         return None
     ola = data.get("OptionsListAccount")
-    if not isinstance(ola, list) or len(ola) <= _OLA_DARTS_COOLDOWN_BASE:
+    if not isinstance(ola, list) or len(ola) <= _OLA_DARTS_PLAYS_TODAY:
         return None
     cd_ticks = ola[_OLA_DARTS_COOLDOWN_TICKS]
-    base_ticks = ola[_OLA_DARTS_COOLDOWN_BASE]
     plays = ola[_OLA_DARTS_PLAYS_TODAY]
-    if not all(isinstance(v, (int, float)) for v in (cd_ticks, base_ticks, plays)):
+    if not all(isinstance(v, (int, float)) for v in (cd_ticks, plays)):
         return None
     return {
         "cooldown_seconds": float(cd_ticks) / _OLA_TICKS_PER_SECOND,
         "plays_today": int(plays),
-        "base_cooldown_seconds": float(base_ticks) / _OLA_TICKS_PER_SECOND,
     }
 
 
@@ -276,3 +278,63 @@ def read_hoops_cooldown(save_dir: str = SAVE_DIR) -> float | None:
     if not isinstance(ticks, (int, float)):
         return None
     return float(ticks) / _OLA_TICKS_PER_SECOND
+
+
+# Hoops plays-today: OLA[424] ("Hoops Played Today" in the community
+# schema). Resets at the daily reset, increments once per play, and
+# escalates the reset timer — the input to the cooldown formula (#22).
+_OLA_HOOPS_PLAYS_TODAY = 424
+
+# Minigame play-cooldown formula (#22). Hoops and darts run on one shared
+# subsystem (ActorEvents_510) that COMPUTES the reset timer from the
+# number of plays today — it is not stored in any OLA base index (the
+# darts "base" at OLA[442] is actually a high score; see above). The
+# cooldown escalates quadratically with plays-today and caps at ~900
+# ticks = 180s = 3 minutes. (NOT 15 minutes — the save stores ticks at
+# 5/sec, so 900 ticks reads like "900" but is 180s; that 5x is the source
+# of the anecdotal "15 min".)
+#
+# CONFIDENCE: the shape (quadratic), the driver (plays-today), and the cap
+# (~900t/180s) are high-confidence — 530 save observations across 6 days
+# plus a darts cross-check all agree, and the index meanings match the
+# community schema. The exact constants below are PROVISIONAL: the
+# observations are lower bounds (sampled ~1s after each save flush), so
+# this best-fit polynomial can't be pinned to the game's exact expression.
+# To finalise, capture cooldown_ticks at save_age < 0.5s for plays 1-7 in
+# one clean day. Full derivation + alternatives: docs/hoops_cooldown.md.
+_MINIGAME_COOLDOWN_CAP_TICKS = 900
+
+
+def minigame_cooldown_ticks_for_plays(plays_today: int) -> int:
+    """Predicted reset-timer ticks set after the Nth play of the day.
+
+    `plays_today` is 1-indexed: the first play of the day sets the n=1
+    value. n <= 0 returns 0 (no cooldown before the first play). Result
+    is clamped to the cap. Provisional empirical fit (see module note)."""
+    n = int(plays_today)
+    if n <= 0:
+        return 0
+    ticks = round(12 * n * n + 66 * n - 26)
+    return max(0, min(_MINIGAME_COOLDOWN_CAP_TICKS, ticks))
+
+
+def predict_hoops_cooldown_seconds(plays_today: int) -> float:
+    """Predicted hoops reset-timer duration in seconds for a given
+    plays-today count (#22). Convenience wrapper over
+    `minigame_cooldown_ticks_for_plays`."""
+    return minigame_cooldown_ticks_for_plays(plays_today) / _OLA_TICKS_PER_SECOND
+
+
+def read_hoops_plays_today(save_dir: str = SAVE_DIR) -> int | None:
+    """Return hoops plays-today (OLA[424]) — resets daily, escalates the
+    cooldown. None if the save can't be read or the array is too short."""
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    ola = data.get("OptionsListAccount")
+    if not isinstance(ola, list) or len(ola) <= _OLA_HOOPS_PLAYS_TODAY:
+        return None
+    n = ola[_OLA_HOOPS_PLAYS_TODAY]
+    if not isinstance(n, (int, float)):
+        return None
+    return int(n)
