@@ -193,10 +193,24 @@ investigations:
   vs `gp`'s 23%, but after 9 more sessions (n=103, 7 added 2026-05-23/24)
   the combined rate landed at 26.2% — statistically tied with `gp`'s
   25.5% (Wilson 95% CIs overlap heavily: [18.7, 35.5] vs [15.5, 38.9]).
-  The early window was small-N luck. Default stays at `"gp"` in
-  `minigames/hoops/main.py:PREDICTOR_KIND`; `trajectory_gp` remains
-  selectable via the launcher dropdown for further experimentation but
-  shouldn't be promoted without a much larger sample showing separation.
+  The early window was small-N luck. `gp` was the default until
+  `make_prob` superseded it (see next finding); `trajectory_gp` remains
+  selectable via the launcher dropdown but shouldn't be promoted without
+  a much larger sample showing separation.
+
+- **`make_prob` is the validated default predictor** (`PREDICTOR_KIND`
+  in `minigames/hoops/main.py`, promoted per issue #38). It models
+  P(make | hoop_x, hoop_y, platform_y, platform_vy) directly — a GP
+  classifier on every velocity-instrumented shot (label = respawn-
+  corrected `made`, so clank=0; reach-censoring that defeats the
+  trajectory regressors doesn't apply). At fire time it scores candidate
+  (platform_y, vy, direction) states built from the live bob buffer and
+  picks the highest-probability one, subsuming the hand-drawn direction
+  thresholds (it learns where up beats down per hoop). Promotion was
+  earned on the #23 discipline: model picks (`target_source='model'`)
+  reached n=112, 58.9% makes, Wilson 95% [49.7, 67.6] — disjoint from
+  the policy stack's gate verdict [27, 43]. Don't revert the default
+  without a comparably-powered counter-sample.
 
 - **The June 2026 miss investigation (#37) — see
   `docs/hoops_findings.md` for the full write-up.** Headlines, settled
