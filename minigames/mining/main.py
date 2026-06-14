@@ -64,12 +64,21 @@ WINDOW_TITLE = "Legends Of Idleon"
 # the human-click listener thread run.
 POLL_INTERVAL = 0.005
 
-# Click policy. Trigger when a pit is detected at distance in this range.
-# Picked from the trace data: scroll speed is ~80-93 px/s leftward, so
-# a 40-90 px window is roughly 0.5-1.0s of warning — enough time for the
-# click + jump-physics to clear the pit.
-JUMP_TRIGGER_MIN = 40
-JUMP_TRIGGER_MAX = 90
+# Click policy. Trigger when a pit's leading edge is within this distance
+# (px) of the cart's right edge. The bot fires on the first frame the pit
+# enters the window, i.e. at ~JUMP_TRIGGER_MAX.
+#
+# Tuned 2026-06-15 from the measured jump arc (trace_20260516_131332 + the
+# first live bot run): a jump is airborne ~0.9s, peaking ~0.5s after the
+# click; scroll is ~94 px/s. The old [40,90] fired at ~90, so the pit
+# reached the cart at 90/94 ~= 0.95s — exactly as the cart finished its
+# arc and landed (the bot's JUMP #1 jumped, peaked, then came down into
+# the pit and died). Firing at ~50 makes the pit reach the cart at ~0.5s =
+# the arc's peak, so it passes under while the cart is highest. Pit width
+# is still unknown, so this is a first physics-based estimate — validate
+# live (the [traj] log lines below print the live arc to confirm/refine).
+JUMP_TRIGGER_MIN = 30
+JUMP_TRIGGER_MAX = 50
 
 # After a jump click, ignore further triggers for this long so we don't
 # spam clicks while the same pit is still in the trigger window.
@@ -308,6 +317,16 @@ def _run_inner(watch: bool = False):
                   f"plank_y={plank_y} cart={cart} pts={last_score} "
                   f"next={terrain} (~{fps:.0f}fps)")
         last_loop_at = now
+
+        # While a fired jump's outcome is pending, log the cart's arc every
+        # frame (height above the plank + pit distance) so the jump-arc and
+        # clearance timing can be measured at the LIVE resolution — that's
+        # what pins down JUMP_TRIGGER_MIN/MAX (#5). Only active in auto mode
+        # in the ~1.8s after a bot jump.
+        if not watch and pending_outcomes:
+            h = (plank_y - cart[1]) if (plank_y is not None and cart is not None) else None
+            pd = terrain["distance_px"] if (terrain and terrain["kind"] == "pit") else None
+            print(f"  [traj] dt=+{now - last_click_time:4.2f} height={h} pit_dist={pd}")
 
         if cart is None:
             # Run-end detection (#6): once the cart is gone, the run is

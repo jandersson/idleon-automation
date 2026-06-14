@@ -111,6 +111,33 @@ captured crops directly — don't ask for paste-backs.
 - Enrich `find_cart` to surface the matched template name + width (pose),
   needed for `cart_pose` and airborne detection.
 
+## Live-run log (2026-06-15)
+
+Two attempts spent (watch + bot), both ended on pit 1, but both were
+informative:
+
+- **Detection + OCR validated live.** Plank/cart/pit tracked; the captured
+  single-digit `0` matched the template (OCR read 0). Scroll ~94 px/s.
+- **The loop ran at ~2 FPS — the real #5 blocker.** Fixed: cart tracking in
+  a narrow column + dedup'd calls → ~40 FPS grounded, ~48 FPS through jumps
+  (validated on traces; pixel-identical detection). See the
+  `perf(mining)` / `fix(mining)` commits.
+- **Jump arc measured (from the existing trace_20260516, no attempt spent):
+  ~0.9s airborne, peak ~0.5s after the click, ~70px peak height.** This
+  explained the bot's death: it fired at pit_dist=88, and the pit reached
+  the cart at 88/94 ≈ 0.95s — exactly as the cart landed. Trigger lowered
+  `[40,90] → [30,50]` so the pit arrives at the cart near the arc's peak.
+- **Data-quality fixes:** the human-click listener was double-logging the
+  bot's own clicks (now watch-only); the fatal-jump outcome logged
+  'unknown' (now cart-gone → 'died').
+
+**Next:** one bot run at the new `[30,50]` trigger to validate survival.
+The `[traj]` log lines now print the cart's per-frame arc at the live
+resolution, so that run confirms the 0.9s arc and pins the trigger. If the
+cart still lands in the pit, the arc trace says whether to fire earlier or
+later. Then repeat for a survival-by-distance curve. Digits 1-9 (#6) still
+need a scoring run (human, or the bot once slam is built).
+
 ## Open questions
 
 - Does a slam onto an ore reliably rebound enough to clear the *next* pit,
