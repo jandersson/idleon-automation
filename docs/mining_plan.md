@@ -336,6 +336,32 @@ logged, human scored 4). Two outcomes:
   so it's not run-breaking — but firming the x to a stable established lock
   would clean up the terrain-scan origin during jumps.
 
+### Run 9 (live human --watch ×2) — second detection bug fixed; clean data confirmed
+
+Two more human watch runs, both initially broken by detection bugs that the
+saved frames let us find + fix, the second then confirming a clean pipeline:
+
+- **Run 9a (`botrun_20260615_031952`), a different world room.** The minigame
+  overlay floats above the player, so a different room moved the layout:
+  `_find_plank_top_y` picked a competing overworld-floor tan band at y=297
+  over the real plank at y=190 (global argmax takes the brightest band), so
+  terrain + score broke (next=None, score=None everywhere). Fixed (`99b7e34`)
+  by anchoring the plank search to just below the cart's grounded y
+  (`near_y` = `grounded.baseline()`). Re-running the frames: plank 297→190,
+  terrain 197/220 (was 0), score read 0→1→2.
+- **Run 9b (`botrun_20260615_032948`), same room, fixed build — CLEAN.** Cart
+  stable at x=322 (no false-lock), `cart_height` sensible (6/13 grounded, 54
+  airborne), terrain tracked (pit @16/122/25), score 0→1. Click 3 is a real
+  human slam logged with its altitude (54px) + pit distance (25). Short run
+  (scored 1, died at 4 clicks) so the slam sample is small, but every logged
+  column is correct — the instrumentation + detector now produce clean
+  Phase-D data. Both this-session detection bugs (cart false-lock `cfbfa69`,
+  plank mis-detect `99b7e34`) are closed.
+
+Net for the live-data goal: digit templates 0-4 bootstrapped (#6); detection
+hardened across positions/rooms; clean slam-timing capture validated (needs a
+longer run to accumulate enough slams to fit a Phase-D slam trigger).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
