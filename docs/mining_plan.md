@@ -362,31 +362,41 @@ Net for the live-data goal: digit templates 0-4 bootstrapped (#6); detection
 hardened across positions/rooms; clean slam-timing capture validated (needs a
 longer run to accumulate enough slams to fit a Phase-D slam trigger).
 
-### Run 10 (live AUTO bot, last attempt) — fixes held; died on the multi-jump gap
+### Run 10 (live AUTO bot, last attempt) — DIED IN PIT 1 (single jump didn't clear it)
 
-First full auto run on the hardened detector (`botrun`/log
-`session_20260615_033359`, no `--save-frames`). Outcome: 1 jump, died, score 0.
-**Not a regression** — the detection + airborne work all held; it died on the
-known unbuilt multi-jump policy.
+First full auto run on the hardened detector (log `session_20260615_033359`,
+no `--save-frames`). Outcome: 1 jump, **died at the first pit** (user watched
+it directly). **Correction to an earlier misread of this log:** the `[traj]`
+trace was first read as "cleared pit 1, died on a second obstacle" — that was
+WRONG. The tell: after the jump, `pit_dist` froze at ~211 (211→212→210→208)
+instead of decreasing, which means the **scroll had stopped = the run already
+ended**. The cart's arc came back down INTO the first pit (~dt 1.16) and sank;
+the "second pit at 211" was a static feature on the frozen death screen. There
+was no second obstacle.
 
-From the `[traj]` trace:
-- Cold start plank_y=297 (1 frame, baseline cold) then anchored to **185** —
-  the room fix worked live.
-- Jump fired at pit_dist **49** (grounded, h=6). The pit scrolled under at the
-  arc peak (h≈73) → **pit 1 cleared**.
-- The **airborne guard's first live exercise worked**: `airborne=True` across
-  the arc (dt 0.23→1.08), no spurious mid-arc click (no lethal slam).
-- Cart landed (~dt 1.16, h=6), sat ~0.4s, then sank into a following obstacle
-  and died (OUTCOME 2021ms) **without a second jump** — there is no
-  land-and-re-jump reflex. A pit arriving while airborne is (correctly)
-  click-suppressed, and by landing it's on top of the cart, behind the
-  ahead-scan.
+What the trace does show (still valid):
+- Detection held live: cold-start plank_y=297 for 1 frame, then anchored to
+  ~185 (room fix worked); cart stable at x=322; terrain tracked.
+- Airborne guard fired correctly: `airborne=True` across the arc, no spurious
+  mid-arc click.
+- Jump fired at pit_dist 49, cart rose to h≈76 — high enough — but the gap
+  did NOT fully scroll past during the airborne window, so the cart landed
+  back in it.
 
-So survival is gated on the **multi-jump policy** (Phase C+): detect the
-landing (cart_y back to the grounded baseline — `policy.GroundedBaseline`
-already tracks it) and re-fire immediately if another obstacle is close. To
-build it precisely needs a `--save-frames` capture of the spaced-obstacle
-death (this run lacked frames). Daily attempts exhausted.
+So the gating problem is more basic than "multi-jump": **a single jump at the
+current trigger does not clear the first pit in this room.** The "clears pit 1"
+claim in Runs 3–4 (a different room, cart_x=150) is now suspect — it may have
+been the same misread, or genuinely room-dependent.
+
+HYPOTHESIS (unverified — needs frames): the cart is airborne ~0.85s; the gap's
+near edge arrived ~mid-arc (dt 0.53), leaving only ~0.55s ≈ ~52px of gap able
+to pass under before landing. If the pit is wider than ~52px, no single jump
+at this timing clears it — and firing EARLIER (larger trigger distance, gap
+arrives just after launch) would give the gap the full ~0.85s / ~80px to pass.
+This INVERTS the Run-3/4 reasoning that lowered [40,90]→[30,50]. Do NOT act on
+this without a `--save-frames` capture: measure pit width + the airborne span,
+then set the trigger so the whole gap passes while airborne. Daily attempts
+exhausted; next session needs a frames run of the first-pit death.
 
 ### Next session
 
