@@ -52,6 +52,7 @@ from minigames.mining.detector import (
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
+from minigames.mining.policy import GroundedBaseline, should_jump, is_cart_airborne
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -193,6 +194,11 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
     # cart x is fixed). None when the cart is lost → next detection is a
     # clean full search.
     cart_track: dict | None = None
+    # Rolling estimate of the cart's grounded (resting) y, so the fire
+    # predicate can suppress a click while the cart is airborne — an airborne
+    # click is a SLAM, which drives the cart down into an approaching pit
+    # (the spaced-obstacle death). See minigames/mining/policy.py.
+    grounded = GroundedBaseline()
 
     # State the human-click listener needs to read. Captured in a closure;
     # mutated in the main loop each tick. The listener thread reads the
@@ -247,6 +253,10 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
         terrain = (find_next_terrain(frame, cart, plank_y=plank_y, cart_right=cart_right)
                    if cart is not None else None)
+        # Track the cart's resting y for the airborne guard (updated before
+        # the fire decision so it reflects this frame).
+        grounded.update(cart[1] if cart is not None else None)
+        grounded_baseline_y = grounded.baseline()
 
         # --- FIRE FIRST: decide + click immediately after detection, before
         # any bookkeeping (state publish, settle, score read, digit capture,
@@ -257,10 +267,12 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         # "Idleon clicks are buttons"), so the cart coords are just a sane
         # in-play-area default. Bookkeeping for the fired jump happens below.
         jump_to_log = None
-        if (not watch and cart is not None and plank_y is not None
-                and terrain is not None and terrain["kind"] == "pit"
-                and JUMP_TRIGGER_MIN <= terrain["distance_px"] <= JUMP_TRIGGER_MAX
-                and now - last_click_time >= JUMP_COOLDOWN_S):
+        if not watch and should_jump(
+                cart=cart, plank_y=plank_y, terrain=terrain, now=now,
+                last_click_time=last_click_time,
+                grounded_baseline_y=grounded_baseline_y,
+                cooldown_s=JUMP_COOLDOWN_S,
+                trig_min=JUMP_TRIGGER_MIN, trig_max=JUMP_TRIGGER_MAX):
             bot_click(win_left + cart[0], win_top + cart[1])
             last_click_time = now
             jump_idx += 1
@@ -348,7 +360,9 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         if not watch and pending_outcomes:
             h = (plank_y - cart[1]) if (plank_y is not None and cart is not None) else None
             pd = terrain["distance_px"] if (terrain and terrain["kind"] == "pit") else None
-            print(f"  [traj] dt=+{now - last_click_time:4.2f} height={h} pit_dist={pd}")
+            air = is_cart_airborne(cart[1] if cart else None, grounded_baseline_y)
+            print(f"  [traj] dt=+{now - last_click_time:4.2f} height={h} "
+                  f"pit_dist={pd} airborne={air} base={grounded_baseline_y}")
 
         if cart is None:
             # Run-end detection (#6): once the cart is gone, the run is
