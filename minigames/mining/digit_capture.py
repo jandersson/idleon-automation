@@ -32,6 +32,18 @@ import cv2
 from common.score_template_ocr import binarize, extract_digit_components
 
 
+def _signature_from_components(comps) -> Optional[str]:
+    """Build the dedup key from already-extracted components (see
+    crop_signature). Split out so maybe_save can reuse one component
+    extraction for both the signature and the n_components count."""
+    if not comps:
+        return None
+    parts = []
+    for patch, box in comps:
+        parts.append(f"{box[2]}x{box[3]}:{patch.tobytes().hex()}")
+    return "|".join(parts)
+
+
 def crop_signature(crop) -> Optional[str]:
     """Stable key identifying a rendered score: each digit component's
     (w, h) box plus its exact binary pixels. None when the crop has no
@@ -40,13 +52,7 @@ def crop_signature(crop) -> Optional[str]:
     Two crops of the same number share a signature regardless of where
     in the box the digits sit; two different numbers never collide
     because their digit pixels differ."""
-    comps = extract_digit_components(crop)
-    if not comps:
-        return None
-    parts = []
-    for patch, box in comps:
-        parts.append(f"{box[2]}x{box[3]}:{patch.tobytes().hex()}")
-    return "|".join(parts)
+    return _signature_from_components(extract_digit_components(crop))
 
 
 class DigitCapturer:
@@ -69,7 +75,8 @@ class DigitCapturer:
         under the cap). Returns True when a new crop was written."""
         if crop is None or self.count >= self.max_crops:
             return False
-        sig = crop_signature(crop)
+        comps = extract_digit_components(crop)   # extract ONCE, reuse below
+        sig = _signature_from_components(comps)
         if sig is None or sig in self._seen:
             return False
         self._seen.add(sig)
@@ -80,7 +87,7 @@ class DigitCapturer:
         cv2.imwrite(str(self.out_dir / f"crop_{n:03d}_bin.png"), binarize(crop))
         self._manifest.append({
             "crop": raw_path.name,
-            "n_components": len(extract_digit_components(crop)),
+            "n_components": len(comps),
             "frame_idx": frame_idx,
             "t_rel": round(t_rel, 3),
         })
