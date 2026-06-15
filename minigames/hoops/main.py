@@ -68,6 +68,16 @@ POLL_INTERVAL = 0.005  # Tight loop: each find_platform call already takes
 # the 5s rim-missing bail is the backstop either way.
 GAME_OVER_CHECK_EVERY = 5
 
+# Game-over near-miss capture: a banner that scores in [floor, 0.7) almost
+# matched but fell under find_game_over's threshold — the suspected
+# higher-score-variant failure. Save the first such frame per run so the
+# failing banner can be inspected and the template re-picked / the threshold
+# re-set from real data (we currently have no frame of a failing banner — the
+# rim-missing diagnostics are all post-banner overworld views). The floor is
+# above the ~0.59 whole-frame noise seen on the overworld, so overworld noise
+# isn't logged as a candidate banner.
+GAME_OVER_NEARMISS_FLOOR = 0.6
+
 # Offset is learned from past shots in shots.db at session start (see the
 # fit_* factories in common.predictor).
 #
@@ -1355,6 +1365,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     # retroactively correct a make the OCR failed to confirm.
     last_shot: dict | None = None
     tick = 0  # for the every-Nth-tick game-over check
+    go_nearmiss_saved = False  # one game-over near-miss frame saved per run
 
     while True:
         check_failsafe()
@@ -1387,6 +1398,17 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             if is_over:
                 print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
                 return
+            # A near-miss (almost matched but under threshold) is the prime
+            # suspect for an unrecognised game-over variant — capture it once.
+            if (not go_nearmiss_saved
+                    and GAME_OVER_NEARMISS_FLOOR <= go_conf < 0.7):
+                go_nearmiss_saved = True
+                diag_dir = _HERE / "assets" / "diagnostics"
+                diag_dir.mkdir(parents=True, exist_ok=True)
+                p = diag_dir / f"go_nearmiss_{go_conf:.2f}_{datetime.now():%Y%m%d_%H%M%S}.png"
+                save_frame(p, frame)
+                print(f"  [game-over near-miss] conf={go_conf:.2f} (<0.70) — saved "
+                      f"{p.name}; re-pick the template (hoops-pick-game-over) if it's a banner.")
 
         # Catch-all stuck-bail: the game has started (>=1 shot) but nothing has
         # fired for NO_SHOT_BAIL_S — the run is wedged (e.g. an unmatched
