@@ -285,6 +285,30 @@ investigations:
   follow-up, not a blocker. Don't revert the default without a
   comparably-powered counter-sample (#23/#38 discipline).
 
+- **Calm-air A/B is live, data-gated (#48, 2026-06-15).** The calm-air
+  follow-up above is now an experiment rather than a switch: when wind
+  is calm (`wind_speed < CALM_WIND_MAX = 2` mph) and the model band is
+  available, the aim alternates the static band vs the model band by
+  throw-index parity (`_calm_ab_arm`), tagging fires `band_ab` /
+  `model_ab` so band-in-calm accumulates under the same conditions as
+  model-in-calm. Only the calm regime is touched — the windy /
+  no-model paths (validated #41) are byte-for-byte unchanged. Out-of-band
+  passes that exhaust the skip budget still log `fallback`, so only clean
+  in-band fires carry the `_ab` tags. Don't flip the calm default off the
+  thin n=16: accumulate ~50–100+ `band_ab` throws, then compare
+  `band_ab` vs `model_ab` (filter `wind_speed < 2`) on hit / E[stripe] /
+  bullseye with Wilson CIs — disjoint in the band's favour flips the calm
+  default, overlapping closes #48. **Analysis caveat (band-width
+  confound):** the static band is a fixed 12 px/s wide while the model
+  band is wind-conditioned and may be narrower, so a narrower `model_ab`
+  band pushes its edge vys to `fallback` and biases the surviving
+  `model_ab` rows toward the central (easier) vys — confounding aim
+  quality with the vy distribution each arm sampled. Before trusting the
+  comparison, check the two arms' `arm_centroid_vy_at_fire` distributions
+  and `fallback` rates are comparable, and stratify the stripe-value
+  comparison by vy range. All of that is recoverable from the log
+  (`aim_mode`, `wind_speed`, `arm_centroid_vy_at_fire`, `score_increment`).
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.

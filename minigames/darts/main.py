@@ -227,12 +227,40 @@ VY_AIM_HI = -20
 MAX_AIM_SKIPS = 2
 EXPLORE_EVERY_N = 8
 
+# Calm-air A/B (#48): below this wind speed (mph) the static band and the
+# wind-conditioned model are alternated by throw parity (band_ab/model_ab)
+# so a powered band-vs-model-in-calm comparison can accumulate. Matches
+# the wind_speed < 2 cut the n=16 calm analysis used.
+CALM_WIND_MAX = 2.0
+
+
+def _calm_ab_arm(
+    next_throw_idx: int,
+    wind_speed: float | None,
+    model_band: tuple[int, int] | None,
+    explore_throw: bool,
+) -> str | None:
+    """Calm-air A/B selector (#48). When the wind is calm (speed <
+    CALM_WIND_MAX) and the model band is available, return which arm this
+    throw fires — 'band' (static [-32,-20] px/s, tagged band_ab) or
+    'model' (wind-conditioned band, tagged model_ab) — chosen by throw-
+    index parity so the split is ~50/50 and reconstructable from the log
+    (even index -> 'band', odd -> 'model'). Returns None outside the calm
+    A/B (explore throw, no model band, or wind unparsed / >=
+    CALM_WIND_MAX), leaving the normal aim path in place."""
+    if explore_throw or model_band is None or wind_speed is None:
+        return None
+    if wind_speed >= CALM_WIND_MAX:
+        return None
+    return "band" if next_throw_idx % 2 == 0 else "model"
+
 
 def _aim_fire_decision(
     arm_centroid_vy: int | None,
     aim_skips: int,
     explore_throw: bool,
     model_band: tuple[int, int] | None = None,
+    calm_ab_arm: str | None = None,
 ) -> tuple[bool, str | None]:
     """Decide whether a valid (non-up-swing) match should fire, and tag
     the intent. Returns (fire, aim_mode):
@@ -241,6 +269,12 @@ def _aim_fire_decision(
                    fitted and the wind parse succeeded this poll)
       'band'     — vy inside the static calm-air EV band (model
                    unavailable)
+      'model_ab' / 'band_ab' — calm-air A/B arms (#48). When wind is
+                   calm and both aims are available the caller alternates
+                   by throw parity (calm_ab_arm); 'model_ab' fires the
+                   model band, 'band_ab' the static band. Tagged
+                   distinctly so the A/B is separable from organic
+                   model/band fires in darts.db.
       'explore'  — ε-exploration throw, fires on any valid pass
       'fallback' — band (or a vy reading) not seen within the skip
                    budget
@@ -259,7 +293,13 @@ def _aim_fire_decision(
     if explore_throw and arm_centroid_vy is not None:
         return True, "explore"
     if arm_centroid_vy is not None:
-        if model_band is not None:
+        if calm_ab_arm == "band":
+            if VY_AIM_LO <= arm_centroid_vy <= VY_AIM_HI:
+                return True, "band_ab"
+        elif calm_ab_arm == "model":
+            if model_band is not None and model_band[0] <= arm_centroid_vy <= model_band[1]:
+                return True, "model_ab"
+        elif model_band is not None:
             if model_band[0] <= arm_centroid_vy <= model_band[1]:
                 return True, "model"
         elif VY_AIM_LO <= arm_centroid_vy <= VY_AIM_HI:
@@ -466,6 +506,8 @@ def run():
         else:
             print(f"stripe EV model: fitted on {len(ev_rows)} throws — "
                   f"wind-conditioned dy band live (#41 step 3)")
+            print(f"  calm-air A/B (#48): wind < {CALM_WIND_MAX} mph alternates "
+                  f"static band (band_ab) vs model (model_ab) by throw parity")
         try:
             _run_inner(session_started, throw_db, code_commit, ev_model)
         finally:
@@ -712,6 +754,7 @@ def _run_inner(
         model_band: tuple[int, int] | None = None
         model_best_vy: int | None = None
         model_best_ev: float | None = None
+        calm_ab_arm: str | None = None
         if (
             ev_model is not None
             and arm_centroid_vy is not None
@@ -722,13 +765,24 @@ def _run_inner(
             # handles those passes.
             and ev_model.supports_pose(float(pose[1]))
         ):
-            _, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
+            ws_now, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
             if wx_now is not None:
                 model_band, model_best_vy, model_best_ev = model_vy_band(
                     ev_model, wx_now, wy_now, float(pose[1]),
                 )
+                # Calm-air A/B (#48): in dead calm the static band beats
+                # the model on stripe value (n=16: 4.5 vs 2.52 pts) but
+                # the sample is too thin to flip the validated default.
+                # Alternate band vs model by throw parity so band-in-calm
+                # accumulates under the same conditions as model-in-calm,
+                # tagged band_ab/model_ab for a powered comparison later.
+                # Only the calm regime is touched; the wind-conditioned
+                # model path (validated #41) is unchanged.
+                calm_ab_arm = _calm_ab_arm(
+                    throws_taken + 1, ws_now, model_band, explore_throw,
+                )
         fire, aim_mode = _aim_fire_decision(
-            arm_centroid_vy, aim_skips, explore_throw, model_band,
+            arm_centroid_vy, aim_skips, explore_throw, model_band, calm_ab_arm,
         )
         if not fire:
             log_poll(
@@ -738,12 +792,16 @@ def _run_inner(
             last_pose_time = time.time()
             overlay_probe_clicks = 0
             aim_skips += 1
-            band_desc = (
-                f"model band [{model_band[0]},{model_band[1]}] px/s "
-                f"(best vy={model_best_vy}, ev={model_best_ev:.2f})"
-                if model_band is not None
-                else f"band [{VY_AIM_LO},{VY_AIM_HI}] px/s"
-            )
+            if calm_ab_arm == "band":
+                band_desc = f"band_ab [{VY_AIM_LO},{VY_AIM_HI}] px/s"
+            elif model_band is not None:
+                tag = "model_ab" if calm_ab_arm == "model" else "model"
+                band_desc = (
+                    f"{tag} band [{model_band[0]},{model_band[1]}] px/s "
+                    f"(best vy={model_best_vy}, ev={model_best_ev:.2f})"
+                )
+            else:
+                band_desc = f"band [{VY_AIM_LO},{VY_AIM_HI}] px/s"
             vy_desc = f"{arm_centroid_vy:+d}" if arm_centroid_vy is not None else "?"
             print(f"  [aim] vy={vy_desc} px/s outside {band_desc} — "
                   f"waiting for a better pass (skip {aim_skips}/{MAX_AIM_SKIPS})")
