@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-15T18:26:12",
-  "total_shots": 1271,
-  "total_makes": 348,
+  "generated_at": "2026-06-15T19:01:02",
+  "total_shots": 1276,
+  "total_makes": 349,
   "make_rate": 0.274,
   "sessions": [
     {
@@ -815,6 +815,13 @@
       "makes": 4,
       "explore_shots": 0,
       "explore_makes": 0
+    },
+    {
+      "started": "2026-06-15T19:00:10",
+      "shots": 5,
+      "makes": 1,
+      "explore_shots": 0,
+      "explore_makes": 0
     }
   ],
   "buckets": [
@@ -926,9 +933,9 @@
     {
       "hoop_x_bucket": 580,
       "hoop_y_bucket": 340,
-      "shots": 6,
+      "shots": 9,
       "makes": 2,
-      "last_session": "2026-05-05T01:30:42"
+      "last_session": "2026-06-15T19:00:10"
     },
     {
       "hoop_x_bucket": 580,
@@ -2046,9 +2053,9 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 59,
-      "makes": 42,
-      "last_session": "2026-06-15T18:24:46"
+      "shots": 61,
+      "makes": 43,
+      "last_session": "2026-06-15T19:00:10"
     },
     {
       "hoop_x_bucket": 710,
@@ -8407,6 +8414,29 @@
     {
       "hoop_x": 714,
       "hoop_y": 450,
+      "platform_y": 424,
+      "offset": -13,
+      "target_y": 437,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 76,
+      "ball_x_at_rim_height": 698,
+      "ball_landing_x": 609,
+      "window_w": 959,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": -13,
+      "code_commit": "9a98e05cec9e",
+      "predictor_kind": "make_prob"
+    },
+    {
+      "hoop_x": 714,
+      "hoop_y": 450,
       "platform_y": 428,
       "offset": -10,
       "target_y": 440,
@@ -10341,7 +10371,7 @@
     {
       "required_direction": "down",
       "region": "band",
-      "shots": 117,
+      "shots": 120,
       "makes": 38
     },
     {
@@ -10371,8 +10401,8 @@
     {
       "required_direction": "up",
       "region": "mid_far",
-      "shots": 136,
-      "makes": 90
+      "shots": 138,
+      "makes": 91
     }
   ]
 }
