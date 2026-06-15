@@ -164,6 +164,14 @@ PLANK_MIN_SCORE = 60  # plank-signature pixel count required to claim detection
 PLANK_Y_FRAC_MIN = 0.10
 PLANK_Y_FRAC_MAX = 0.60
 
+# When the grounded cart y is known, the plank top is searched only in this
+# offset window below the cart centre (the cart sits ON the plank, so the
+# plank top is a little below the cart's centre). Narrow enough to exclude a
+# competing tan band like an overworld floor (seen ~118px below the cart in a
+# different world room), wide enough to cover the cart-bottom-to-plank gap
+# across resolutions.
+PLANK_NEAR_DY = (-15, 60)
+
 # Coarse plank x-search range as fraction of window width. The actual
 # plank extent is detected per frame (via _find_plank_x_range) — the
 # minigame overlay is a fixed-pixel-width panel that floats above the
@@ -506,19 +514,34 @@ def _estimate_cart_half_width(frame, plank_y: int) -> int:
     return res["half_width"] if res is not None else 30
 
 
-def _find_plank_top_y(frame) -> Optional[int]:
+def _find_plank_top_y(frame, near_y: Optional[int] = None) -> Optional[int]:
     """Locate the brightest tan-hued horizontal band — the plank top.
 
     Restricted to the upper-middle of the window since the minigame
     overlay floats above the player (and the player typically stands in
     the lower half of the world view). PLANK_MIN_SCORE guards against
     overworld tan-textured surfaces being mistaken for the plank when
-    the minigame isn't active."""
+    the minigame isn't active.
+
+    near_y anchors the search to the cart: the cart sits ON the plank, so
+    the plank top is just below the cart's grounded centre. Pass the grounded
+    cart y and the row search is narrowed to [near_y+PLANK_NEAR_DY], which
+    disambiguates when a competing tan band (e.g. an overworld floor in a
+    different world room) outscores the real plank in the global window —
+    that picked the wrong band at y=297 vs the true plank at y=190 on
+    botrun_20260615_031952 and broke terrain + score. Without near_y, the
+    original global-argmax behaviour is used (cold start, before the cart /
+    grounded baseline is known; tests)."""
     h, w = frame.shape[:2]
     x0 = int(PLANK_X0_FRAC * w)
     x1 = int(PLANK_X1_FRAC * w)
     y_min = int(PLANK_Y_FRAC_MIN * h)
     y_max = int(PLANK_Y_FRAC_MAX * h)
+    if near_y is not None:
+        n_min = max(y_min, near_y + PLANK_NEAR_DY[0])
+        n_max = min(y_max, near_y + PLANK_NEAR_DY[1])
+        if n_max - n_min >= 3:   # only if the narrowed window is usable
+            y_min, y_max = n_min, n_max
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     band = hsv[y_min:y_max, x0:x1]
     is_plank = ((band[:, :, 0] >= PLANK_H_LO) & (band[:, :, 0] <= PLANK_H_HI) &

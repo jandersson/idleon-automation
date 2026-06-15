@@ -68,6 +68,18 @@ def test_find_plank_top_y_returns_none_on_empty_frame():
     assert _find_plank_top_y(frame) is None
 
 
+def test_find_plank_top_y_anchors_to_near_y():
+    """A brighter/wider competing tan band far from the cart (an overworld
+    floor when the minigame opens in a different world room) outscores the
+    real plank globally — but near_y anchors the search to the band just
+    below the cart's grounded y. Regression for botrun_20260615_031952."""
+    frame = np.zeros((H, W, 3), dtype=np.uint8)
+    frame[190:198, 200:500] = (40, 120, 200)   # real plank near the cart (narrower)
+    frame[300:312, 100:600] = (40, 120, 200)   # brighter/wider floor far below
+    assert _find_plank_top_y(frame) == 300                 # global picks the floor
+    assert _find_plank_top_y(frame, near_y=179) == 190     # anchored picks the plank
+
+
 def test_pts_score_region_is_plank_relative_below_left():
     # The PTS digits sit below-left of the plank, right-anchored near
     # plank_x0 (#6). Region is None without a located plank.

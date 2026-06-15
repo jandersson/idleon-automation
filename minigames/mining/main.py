@@ -258,7 +258,13 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # find_next_terrain skips the redundant full cart search it used to
         # do. This took the loop from ~2 FPS to ~25-30 FPS (validated on
         # trace_20260515) — the resolution #5's click policy needs.
-        plank_y = _find_plank_top_y(frame)
+        # Anchor the plank search to the cart's grounded y (from prior frames'
+        # baseline) so a competing tan band — e.g. an overworld floor when the
+        # minigame is opened in a different world room — can't outscore the
+        # real plank in the global window (it picked y=297 over the true 190
+        # on botrun_20260615_031952, breaking terrain + score). None until the
+        # baseline warms up, falling back to the global brightest-band scan.
+        plank_y = _find_plank_top_y(frame, near_y=grounded.baseline())
         cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track,
                                       max_x_jump=CART_MAX_X_JUMP_PX)
         # Anchor the column-search prior at the cart's fixed x: keep the last
