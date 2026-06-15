@@ -303,6 +303,39 @@ Deferred, with reasons (NOT done — would be speculative or need live data):
   can't reach); pruning is only validated at the botrun resolution, so it's a
   perf win with a cross-resolution correctness risk. Skipped (bot is 30+fps).
 
+### Run 8 (live human --watch, 1 attempt) — first real play; detection bug + digits
+
+First successful human watch run (`botrun_20260615_030254`, 17s, 10 clicks
+logged, human scored 4). Two outcomes:
+
+- **Digit bootstrap (#6), partially done.** The score climbed 0→1→2→3→4, so
+  the live capture caught clean glyphs; `digit_templates/{1,2,3,4}.png`
+  saved (visually confirmed; `read_score` now reads 0-4 and composed
+  multi-digit numbers). 5-9 await a higher-scoring run. (The run logged
+  `final_score=0` only because 1-4 had no templates *during* the run.)
+- **A cart-tracking bug, found and fixed (`cfbfa69`).** After jump 1 the
+  detector locked onto a false 0.85 match at x=631 — off-plank cave wall +
+  a hanging chain — and stuck there the whole run while the real cart sat at
+  x=150 (0.99). Mechanism: a transitional jump pose dipped the real cart
+  below 0.85 in-column for one frame, the full-frame fallback grabbed the
+  cave/chain, it became the prior, and the column-tracker re-found that
+  stable false match every frame after. Fix: the cart x is fixed per run
+  (issue #1), so `find_cart_detailed` rejects a fallback match that
+  teleports >`CART_MAX_X_JUMP_PX` from the prior, and the loop keeps the
+  prior anchored on a transient miss (re-acquires only after
+  `CART_REACQUIRE_MISSES`). Replaying the 337 frames: 260/313 false-lock
+  frames → 0.
+- **Slam-timing data is contaminated.** Because the cart state was wrong
+  (x=631) for jumps 2-10, those rows can't characterise slam lead/latency.
+  The ~4 scoring slams happened but their cart_y / ore-distance weren't
+  captured correctly. **Needs a fresh watch run on the fixed detector.**
+- **Residual (smaller follow-up):** with the false-lock gone the detected
+  cart_x still wanders ~108-263 during jump poses (the masked match lands a
+  few px off-centre and the column follows). It's within the plank (not the
+  cave) and mostly on airborne frames where the fire policy is suppressed,
+  so it's not run-breaking — but firming the x to a stable established lock
+  would clean up the terrain-scan origin during jumps.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
