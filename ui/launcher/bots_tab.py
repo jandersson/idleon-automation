@@ -133,8 +133,9 @@ def build_tries_strip(parent: ttk.Frame, app) -> ttk.Frame:
 def build_templates_row(parent: ttk.Frame, app, game_name: str) -> None:
     """Build the score-template coverage row for a game.
 
-    Shows N/10 captured + which digits are missing, plus two ways to
-    add new templates:
+    Always shows the N/10 status (a complete library reads "all 10
+    captured ✓"). While digits are still missing, also shows two ways to
+    add them (hidden once complete — see the build-time check below):
       - Refresh templates: scan existing monitor frames + manual
         labels for digits the OCR already could read
       - Capture from current game: grab the live game window, crop
@@ -151,18 +152,27 @@ def build_templates_row(parent: ttk.Frame, app, game_name: str) -> None:
     label = ttk.Label(row, text="—")
     label.pack(side="left", padx=(4, 8))
     app.template_status_labels[game_name] = label
-    ttk.Button(
-        row, text="Refresh from DB", width=15,
-        command=lambda g=game_name: refresh_templates(app, g),
-    ).pack(side="left")
-    ttk.Label(row, text="  Capture from game — score now:").pack(side="left", padx=(12, 4))
-    score_var = tk.StringVar()
-    entry = ttk.Entry(row, textvariable=score_var, width=6)
-    entry.pack(side="left")
-    ttk.Button(
-        row, text="Capture", width=8,
-        command=lambda g=game_name, v=score_var: capture_templates_from_game(app, g, v),
-    ).pack(side="left", padx=(4, 0))
+    # The Refresh/Capture controls only matter while digits are still
+    # missing. A complete library (10/10 — hoops, darts) shows just the
+    # "all 10 captured ✓" status; the buttons would be no-ops there (and the
+    # blob-guard removed the only reason to re-run on a complete set). Mining
+    # (5/10) and any future incomplete game still get the full controls.
+    # Evaluated at build time; if a set later drops below 10/10 the controls
+    # reappear on the next launcher start.
+    _captured, missing = template_status(game_name)
+    if missing:
+        ttk.Button(
+            row, text="Refresh from DB", width=15,
+            command=lambda g=game_name: refresh_templates(app, g),
+        ).pack(side="left")
+        ttk.Label(row, text="  Capture from game — score now:").pack(side="left", padx=(12, 4))
+        score_var = tk.StringVar()
+        entry = ttk.Entry(row, textvariable=score_var, width=6)
+        entry.pack(side="left")
+        ttk.Button(
+            row, text="Capture", width=8,
+            command=lambda g=game_name, v=score_var: capture_templates_from_game(app, g, v),
+        ).pack(side="left", padx=(4, 0))
     update_template_label(app, game_name)
 
 
