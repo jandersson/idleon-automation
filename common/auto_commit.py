@@ -5,7 +5,9 @@ fresh in git without the user having to remember to run a script. Best-effort
 — failures are logged and swallowed so the bot doesn't error out on a git
 hiccup at the end of a session.
 
-Push window honors the global rule: 09:00–22:00 Europe/Stockholm. Only the
+Push window honors the global rule: 07:00–23:59 Europe/Stockholm (only the
+small hours 00:00–06:59 are off — the rule is "don't appear to work late",
+which means avoiding the middle of the night, not the late evening). Only the
 specified file is staged, so unrelated working-tree changes are safe (the
 user's mid-edit work is never touched).
 """
@@ -14,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-PUSH_WINDOW = (9, 22)  # inclusive start, exclusive end (Europe/Stockholm hours)
+PUSH_WINDOW = (7, 24)  # inclusive start, exclusive end (Europe/Stockholm hours): 07:00–23:59
 
 
 def _within_push_window() -> bool:
