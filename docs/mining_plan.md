@@ -362,6 +362,32 @@ Net for the live-data goal: digit templates 0-4 bootstrapped (#6); detection
 hardened across positions/rooms; clean slam-timing capture validated (needs a
 longer run to accumulate enough slams to fit a Phase-D slam trigger).
 
+### Run 10 (live AUTO bot, last attempt) — fixes held; died on the multi-jump gap
+
+First full auto run on the hardened detector (`botrun`/log
+`session_20260615_033359`, no `--save-frames`). Outcome: 1 jump, died, score 0.
+**Not a regression** — the detection + airborne work all held; it died on the
+known unbuilt multi-jump policy.
+
+From the `[traj]` trace:
+- Cold start plank_y=297 (1 frame, baseline cold) then anchored to **185** —
+  the room fix worked live.
+- Jump fired at pit_dist **49** (grounded, h=6). The pit scrolled under at the
+  arc peak (h≈73) → **pit 1 cleared**.
+- The **airborne guard's first live exercise worked**: `airborne=True` across
+  the arc (dt 0.23→1.08), no spurious mid-arc click (no lethal slam).
+- Cart landed (~dt 1.16, h=6), sat ~0.4s, then sank into a following obstacle
+  and died (OUTCOME 2021ms) **without a second jump** — there is no
+  land-and-re-jump reflex. A pit arriving while airborne is (correctly)
+  click-suppressed, and by landing it's on top of the cart, behind the
+  ahead-scan.
+
+So survival is gated on the **multi-jump policy** (Phase C+): detect the
+landing (cart_y back to the grounded baseline — `policy.GroundedBaseline`
+already tracks it) and re-fire immediately if another obstacle is close. To
+build it precisely needs a `--save-frames` capture of the spaced-obstacle
+death (this run lacked frames). Daily attempts exhausted.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
