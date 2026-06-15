@@ -239,23 +239,83 @@ correction, not a new feature.
   disabled-[] contract (flip it together with the function when real ore
   lands). 408 green.
 
+### Run 7 (offline, no attempt spent) — multi-agent audit + fix sweep
+
+Ran a 7-agent audit workflow over the whole mining subsystem, then
+implemented every offline-fixable finding that could be validated against
+existing frames / pure logic / schema. Six commits (`b03b2f0`→`5817a45`).
+The headline finding: **the spaced-obstacle death has a concrete mechanism**
+— a click while the cart is airborne is a SLAM (fast descent), and
+`JUMP_COOLDOWN_S=0.6s` expired ~0.3s before the ~0.9s arc landed, so a
+second pit in `[30,50]` mid-arc fired a lethal slam into the pit.
+
+Shipped (all with tests, 429 green):
+
+- **Airborne guard** (`policy.py`, the death fix): `should_jump()` refuses to
+  fire while the cart is airborne, judged by `cart_y` vs a rolling-MAX
+  grounded baseline (max never lets airborne dips cause a false-airborne
+  suppression of a real jump; baseline=None until warmed → defaults to
+  grounded). Validated on the botrun arc (peak frames classify airborne).
+- **find_next_terrain hardening:** `_find_plank_x_range` now bridges a
+  wide-pit plank split (returns the full extent, not just the densest
+  cluster) so an incoming pit past a >100px split is still scanned; scan_x
+  clamped to the plank left edge; `plank_range` threaded from the loop
+  (drops a redundant HSV+cluster pass).
+- **`_extract_runs` merge guard** — only bridges a gap when one run already
+  meets `min_width`. This **also eliminated the x=138 "static background
+  pit"** the Run-6 note flagged: re-validation showed it was never a real
+  gap, just two isolated 1px dark specks the old merge logic glued into a
+  fake 6px pit. (So the velocity-filter's motivating example was a noise
+  artifact — see deferred below.)
+- **Dropped cart scale 0.6** — it ghosted the launch frame at the wrong x;
+  dropping it snaps frame 34 to the true x. Canary test pins the Run-5
+  match params.
+- **Phase-D schema hooks + honest accounting:** `action`, `cart_height_
+  above_plank`, `cart_pose`, `score_at_click` columns (logged at the bot +
+  human sites); `survival_rate_by_distance(source='bot')` excluding
+  human/legacy/pending rows; run-end settle relabels only the last pending
+  jump 'died'; DB connection owned by `run()` (closed in finally).
+
+Deferred, with reasons (NOT done — would be speculative or need live data):
+
+- **Scroll-velocity foreground/background filter (`TerrainTracker`).** Built
+  and unit-tested, then **removed**: its one concrete motivation (the x=138
+  static pit) turned out to be the `_extract_runs` merge artifact above, and
+  no real static-background pit remains in the data to validate against.
+  Building a stateful tracker against a hypothetical violates "no speculative
+  features". It's the prerequisite for real ore detection (also needs live
+  data), so build it *then*, validated on a real static-vs-scrolling capture.
+- **PTS OCR "P"-contamination fix.** The box right edge (`plank_x0+2`) catches
+  the 'P' of "PTS" on some crops (a 2px stub → an unmatched component →
+  read fails). But: (a) the bot's `final_score=0` is **correct** (it dies at
+  0 points; clean frames *do* read 0), so OCR isn't blocking anything now;
+  (b) the fix is entangled with `plank_x0` jitter and the units digit sits
+  only ~2px from the 'P', so no fixed right-edge cut cleanly separates them —
+  the precise box needs a real multi-digit crop to calibrate. Deferred to the
+  live scoring `--watch` run; the safe form is a component guard validated
+  against real ≥2-digit crops, not a blind geometry move.
+- **`_find_plank_top_y` top-edge rewrite.** `plank_y` is rock-stable (200)
+  while grounded and only jitters during the jump (when the airborne guard
+  suppresses anyway), so the rewrite's benefit is marginal and it would force
+  recalibrating every `*_SCAN_DY` offset. Skipped.
+- **Prune cart templates to cart_small.** The extra templates exist for
+  different window *resolutions* (cart_large covers windows cart_small×1.5
+  can't reach); pruning is only validated at the botrun resolution, so it's a
+  perf win with a cross-resolution correctness risk. Skipped (bot is 30+fps).
+
 ### Next session
 
-1. ~~**Robust airborne cart detection**~~ — **DONE (Run 5).** Continuous
-   through a jump via background-masked matching.
-2. ~~**Identify the orange obstacle / separate ore from hazard**~~ —
-   **DONE (Run 6):** no orange obstacle (cave wall); blue piles are
-   background, not ore; ore detection disabled as phantom. Real ore +
-   foreground/background velocity separation deferred to a scoring run.
-3. **Spaced-obstacle / multi-jump policy** — the current death (a second
-   obstacle right after the first jump). Detection is now continuous, so
-   this is unblocked. Likely needs a shorter cooldown + reacting the
-   instant the cart lands. **Wants a live `--save-frames` run** capturing
-   a longer multi-jump sequence (detection is no longer the bottleneck).
-   Worth adding scroll-velocity tracking here — it both filters background
-   pits and is the prerequisite for real ore detection.
-4. **Then** slam-on-ore scoring (Phase D) and the digit bootstrap (#6),
-   both of which need a *scoring* run to gather data.
+1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
+3. **Spaced-obstacle / multi-jump policy** — the airborne guard stops the
+   *lethal slam*, but the bot still needs the rapid *second jump* after
+   landing. That needs a live `--save-frames` run capturing a multi-jump
+   sequence to measure the inter-obstacle spacing and the land→re-arm timing
+   (cooldown shortening + landing detection via `cart_y` returning to the
+   grounded baseline, which `policy.GroundedBaseline` already tracks).
+4. **Slam-on-ore scoring (Phase D)** and the **digit bootstrap (#6)** — both
+   need a *scoring* `--watch` run (a human scores where the bot can't). That
+   run also provides the first real slam-ore + a real static-vs-scrolling
+   capture to (re)build the velocity filter and finalize the OCR box.
 
 Trigger `[30,50]` is good for isolated pits — don't re-tune it without
 cause; the deaths are now downstream of it.
