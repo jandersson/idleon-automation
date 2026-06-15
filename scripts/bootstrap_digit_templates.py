@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 from common.regions import get_region
 from common.score_template_ocr import (
     extract_digit_components,
+    is_plausible_digit_glyph,
     save_template,
 )
 
@@ -171,10 +172,14 @@ def bootstrap_game(game_name: str, verbose: bool = False) -> dict[int, int]:
                       f"vs {len(components)} components")
             continue
         # Pair each component with its corresponding digit char in the score.
+        # Capture the first PLAUSIBLE glyph per digit (not just the first):
+        # a merged/solid blob that slips the component-count check would
+        # otherwise poison the digit and overwrite a good template on re-run
+        # (the hoops "7" blob, 2026-06-15 — the circular read-back missed it).
         for (patch, _box), digit_char in zip(components, score_str):
             digit = int(digit_char)
             observations[digit] += 1
-            if captured[digit] is None:
+            if captured[digit] is None and is_plausible_digit_glyph(patch):
                 captured[digit] = patch
 
     # Save the first clean observation of each digit.

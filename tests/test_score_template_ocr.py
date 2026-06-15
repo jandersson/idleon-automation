@@ -13,11 +13,34 @@ import numpy as np
 from common.score_template_ocr import (
     binarize,
     extract_digit_components,
+    is_plausible_digit_glyph,
     load_templates,
     make_score_reader,
     match_digit,
     save_template,
 )
+
+_HOOPS_TEMPLATES = Path(__file__).parent.parent / "minigames" / "hoops" / "assets" / "digit_templates"
+
+
+def test_is_plausible_digit_glyph_rejects_blob():
+    # A solid/near-solid blob (the bootstrap failure mode) fills its bbox.
+    assert is_plausible_digit_glyph(np.full((9, 7), 255, np.uint8)) is False
+    assert is_plausible_digit_glyph(np.full((9, 7), 255, np.uint8) * 0) is False  # empty
+    nearly_solid = np.full((9, 7), 255, np.uint8)
+    nearly_solid[0, 0] = 0  # 62/63 on -> ~0.98 fill
+    assert is_plausible_digit_glyph(nearly_solid) is False
+
+
+def test_is_plausible_digit_glyph_accepts_real_glyphs():
+    # Every committed hoops digit template is a real glyph (fill 0.36-0.62).
+    for d in range(10):
+        p = _HOOPS_TEMPLATES / f"{d}.png"
+        if not p.exists():
+            continue
+        im = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+        _, b = cv2.threshold(im, 127, 255, cv2.THRESH_BINARY)
+        assert is_plausible_digit_glyph(b), f"digit {d} template wrongly rejected"
 
 ROOT = Path(__file__).parent.parent
 DARTS_TEMPLATES = ROOT / "minigames" / "darts" / "assets" / "digit_templates"

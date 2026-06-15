@@ -79,6 +79,30 @@ def extract_digit_components(crop: np.ndarray) -> list[tuple[np.ndarray, tuple[i
     return components
 
 
+# A real pixel-art digit is strokes with gaps, so its on-pixels fill only
+# part of its bounding box; a merged/solid "blob" (the failure mode when
+# digit-component isolation goes wrong) fills nearly all of it. Observed
+# fills: hoops/darts digits 0.36-0.62, mining's blockier font up to 0.75, a
+# solid blob 1.0. 0.85 sits clear above the densest real digit and below any
+# blob. The lower bound rejects near-empty noise that slipped the area filter.
+DIGIT_GLYPH_MIN_FILL = 0.10
+DIGIT_GLYPH_MAX_FILL = 0.85
+
+
+def is_plausible_digit_glyph(patch: np.ndarray,
+                             min_fill: float = DIGIT_GLYPH_MIN_FILL,
+                             max_fill: float = DIGIT_GLYPH_MAX_FILL) -> bool:
+    """True if `patch` (a binary digit component) looks like a real glyph
+    rather than a solid blob. Guards template bootstrapping against capturing
+    a merged blob as a digit (which exact-match OCR would then never match a
+    real digit against — and a circular read-back wouldn't catch). Keys on the
+    bounding-box fill ratio; see the constants above."""
+    if patch.size == 0:
+        return False
+    fill = float((patch > 0).sum()) / patch.size
+    return min_fill <= fill <= max_fill
+
+
 def match_digit(patch: np.ndarray, templates: dict[int, np.ndarray]) -> int | None:
     """Find the digit whose template matches `patch` pixel-for-pixel.
 
