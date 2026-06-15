@@ -97,12 +97,15 @@ SCAN_BUFFER_PX = 10
 # gated out upstream: _find_plank_top_y returns None there, so find_cart
 # returns None before matching.
 CART_MATCH_THRESHOLD = 0.85
-# Scale 0.5 dropped: no real cart pose needs it (slam matches at 0.75, peak
-# at 1.0), and a half-size masked template scores ~0.89 on off-column
-# background noise — the launch/pre-land "ghost" at the wrong x
-# (botrun_20260615_012340 frames 34/41/42 jumped to cart_x=216 at scale
-# 0.5 before this; 0.6+ tracks them at the cart's true x~150).
-CART_SCALES = (0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
+# Scales 0.5 AND 0.6 dropped: no real cart pose needs them (slam matches at
+# 0.75, peak at 1.0), and a small masked template scores ~0.86-0.89 on
+# off-column background — a "ghost" at the wrong x. Validated on
+# botrun_20260615_012340: with 0.6 present the launch frame 34 matched a
+# 0.6-scale ghost at cart_x=112 (vs the true ~150); dropping 0.6 snaps it to
+# cart_x=150 at scale 1.0 (0.85) and frame 35 wins on cart_jump@1.0 — every
+# airborne frame still detects >=0.85, at the correct x (only the dying
+# pre-vanish frame 42 stays ~30px off, and the cart is gone the next frame).
+CART_SCALES = (0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
 # (name, template_bgr, mask) triples; mask is the cart silhouette (255) vs
 # plank-tan background (0). Lazy-loaded.
 _cart_templates: Optional[list[Tuple[str, np.ndarray, np.ndarray]]] = None

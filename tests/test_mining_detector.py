@@ -191,6 +191,20 @@ def test_find_cart_locates_pasted_template():
     assert paste_y - 5 <= cy <= paste_y + th + 5, f"cy={cy} outside pasted y-range"
 
 
+def test_cart_match_constants_pinned():
+    """Canary on the validated masked-match params (Run 5 / the 0.6-drop):
+    small scales reintroduce off-column ghosts, a lower threshold admits the
+    game-over noise floor, and a wider track margin re-admits the launch
+    ghost. Pinning them makes any drift a conscious test edit."""
+    from minigames.mining.detector import (
+        CART_SCALES, CART_MATCH_THRESHOLD, CART_TRACK_X_MARGIN,
+    )
+    assert 0.5 not in CART_SCALES and 0.6 not in CART_SCALES
+    assert min(CART_SCALES) >= 0.75
+    assert CART_MATCH_THRESHOLD >= 0.85
+    assert CART_TRACK_X_MARGIN <= 50
+
+
 def test_find_cart_returns_none_when_no_plank():
     """No plank → no cart search even attempted."""
     frame = np.zeros((H, W, 3), dtype=np.uint8)
