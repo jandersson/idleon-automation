@@ -123,13 +123,17 @@ def run():
     args = parser.parse_args()
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
+        # Own the DB connection here so it's closed in a finally even if
+        # _run_inner raises (failsafe abort, detector error) — the handle is
+        # released and writes flushed before the auto-commit touches the file.
+        conn = open_db(MINING_DB)
         try:
-            _run_inner(watch=args.watch, save_frames=args.save_frames)
+            _run_inner(conn, watch=args.watch, save_frames=args.save_frames)
         finally:
+            conn.close()
             # The DB is tracked so other machines get session data via
             # `git pull`. Rollback-journal mode keeps the on-disk file
-            # consistent between transactions, so this is safe even if
-            # _run_inner bailed before conn.close().
+            # consistent between transactions, so this is safe even on abort.
             commit_file_if_changed(
                 _HERE.parent.parent,
                 "minigames/mining/assets/mining.db",
@@ -137,7 +141,7 @@ def run():
             )
 
 
-def _run_inner(watch: bool = False, save_frames: bool = False):
+def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     mode = "WATCH (observe-only)" if watch else "AUTO (jump policy)"
     print(f"Mining bot starting — {mode} — tracking window {WINDOW_TITLE!r}.")
     print("Move mouse to any screen corner to abort.")
@@ -149,7 +153,6 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         print(e)
         return
 
-    conn = open_db(MINING_DB)
     session_started = datetime.now().isoformat(timespec="seconds")
     code_commit = current_code_commit(_HERE.parent.parent)
     attempt_idx = 1
@@ -206,8 +209,10 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
     detector_state: dict = {
         "plank_y": None,
         "cart": None,
+        "cart_pose": None,
         "terrain": None,
         "plank_range": None,
+        "score": None,
         "win_left": 0, "win_top": 0, "win_w": 0, "win_h": 0,
     }
     state_lock = threading.Lock()
@@ -290,8 +295,10 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         with state_lock:
             detector_state["plank_y"] = plank_y
             detector_state["cart"] = cart
+            detector_state["cart_pose"] = cart_det["template"] if cart_det else None
             detector_state["plank_range"] = plank_range
             detector_state["terrain"] = terrain
+            detector_state["score"] = last_score
             detector_state["win_left"] = win_left
             detector_state["win_top"] = win_top
             detector_state["win_w"] = win_w
@@ -323,6 +330,10 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
                 window_h=win_h,
                 code_commit=code_commit,
                 source="bot",
+                action="jump",
+                cart_height_above_plank=(plank_y - cart[1]),
+                cart_pose=cart_det["template"] if cart_det else None,
+                score_at_click=last_score,
             )
             print(f"JUMP #{jump_to_log} pit_dist={terrain['distance_px']} "
                   f"cart=({cart[0]},{cart[1]}) row={row_id}")
@@ -373,9 +384,7 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
             # button reappears ~frame 56, vs an 8s timeout.)
             if plank_ever_seen and find_play_button(frame) is not None:
                 with pending_lock:
-                    for p in pending_outcomes:
-                        set_outcome(conn, p["row_id"], "died",
-                                    int((time.time() - p["click_time"]) * 1000))
+                    _settle_pending_on_death(conn, pending_outcomes, time.time())
                 log_run(conn, session_started=session_started,
                         attempt_idx=attempt_idx,
                         ended_at=datetime.now().isoformat(timespec="seconds"),
@@ -386,7 +395,6 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
                 _finalize_capture(capturer)
                 if listener is not None:
                     listener.stop()
-                conn.close()
                 return
             stale = time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S
             if watch and not plank_ever_seen:
@@ -396,9 +404,7 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
                 last_plank_seen = time.time()
             elif stale:
                 with pending_lock:
-                    for p in pending_outcomes:
-                        set_outcome(conn, p["row_id"], "died",
-                                    int((time.time() - p["click_time"]) * 1000))
+                    _settle_pending_on_death(conn, pending_outcomes, time.time())
                 if plank_ever_seen:
                     log_run(conn, session_started=session_started,
                             attempt_idx=attempt_idx,
@@ -412,7 +418,6 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
                 _finalize_capture(capturer)
                 if listener is not None:
                     listener.stop()
-                conn.close()
                 return
             time.sleep(POLL_INTERVAL)
             continue
@@ -445,6 +450,20 @@ def _settle_outcomes(conn, pending, now, cart):
         set_outcome(conn, p["row_id"], outcome, int(elapsed * 1000))
         print(f"  OUTCOME row={p['row_id']}: {outcome} ({int(elapsed*1000)}ms)")
     return still_pending
+
+
+def _settle_pending_on_death(conn, pending, now) -> None:
+    """Force-settle every still-pending jump when the run ends. The most
+    recent jump (last appended) is the fatal one; any earlier still-pending
+    jumps survived — the cart was alive to make the later jump. Blanket-'died'
+    would attribute one death to every distance bin those earlier jumps fired
+    at, systematically depressing the survival rate of good trigger distances
+    once a multi-jump policy overlaps several jumps in the settle window. With
+    today's single-jump rhythm `pending` is usually one entry, so this reduces
+    to 'died' — but it's correct ahead of the multi-jump policy."""
+    for i, p in enumerate(pending):
+        outcome = "died" if i == len(pending) - 1 else "survived"
+        set_outcome(conn, p["row_id"], outcome, int((now - p["click_time"]) * 1000))
 
 
 def _finalize_capture(capturer) -> None:
@@ -516,6 +535,12 @@ def _start_human_click_listener(conn, session_started, attempt_idx,
             window_h=wh,
             code_commit=code_commit,
             source="human",
+            action="jump",
+            cart_height_above_plank=(
+                s["plank_y"] - s["cart"][1]
+                if (s["plank_y"] is not None and s["cart"]) else None),
+            cart_pose=s["cart_pose"],
+            score_at_click=s["score"],
         )
         print(f"  HUMAN click logged: row={row_id} "
               f"at ({screen_x - wl},{screen_y - wt}) "

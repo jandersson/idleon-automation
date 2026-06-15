@@ -5,14 +5,22 @@ measured a couple of seconds later (did the cart survive, or did it
 fall in / did the attempt end). Mirrors the shape of darts.shot_log.
 
 Each session_started/attempt_idx pair groups jumps within one
-"Play Game" attempt. attempt_idx increments every time the bot
-clicks the Play Game button; jump_idx is per-attempt.
+"Play Game" attempt. jump_idx is per-attempt. attempt_idx is a placeholder
+that is always 1 today: the bot runs one attempt per process, so a fresh
+process (new session_started) bounds each attempt. (A future multi-attempt
+replay loop would increment it.)
 
 Outcomes (filled in after a settle delay):
-    "survived" — cart is still detected on the plank, attempt continues
-    "died"     — plank gone (game-over screen back), attempt ended
-    "unknown"  — neither: cart momentarily not detected but plank still
-                 there, or measurement window expired without a clear signal
+    "survived" — cart still detected (grounded) a beat later, attempt continues
+    "died"     — cart gone (game-over), attempt ended
+    "unknown"  — LEGACY only. The current settle code writes just
+                 survived/died (the old plank_y branch produced 'unknown'
+                 when a death left the plank briefly visible). survival
+                 queries filter to survived/died.
+
+next_kind is 'pit' or NULL today — ore detection is disabled (it found only
+parallax background; see detector._scan_plank_ore), so no row carries
+next_kind='ore'.
 
 Usage:
     from minigames.mining.jump_log import open_db, log_jump, set_outcome
@@ -52,7 +60,13 @@ CREATE TABLE IF NOT EXISTS jumps (
 
 
 _LATE_COLUMNS: list[tuple[str, str]] = [
-    # (no late columns yet — placeholder for future additions)
+    # Phase-D (slam scoring) hooks. Added ahead of the first scoring run so it
+    # records slam ground truth without a mid-collection schema bump. Migrated
+    # idempotently via open_log_db's ALTER list; old rows backfill NULL.
+    ("action", "TEXT"),                    # 'jump' | 'slam'  (NULL == legacy jump)
+    ("cart_height_above_plank", "INTEGER"),  # plank_y - cart_y at click (altitude)
+    ("cart_pose", "TEXT"),                 # matched cart template name
+    ("score_at_click", "INTEGER"),         # last OCR'd PTS at fire time
 ]
 
 
@@ -100,21 +114,36 @@ def set_outcome(conn: sqlite3.Connection, row_id: int, outcome: str,
 
 
 def survival_rate_by_distance(conn: sqlite3.Connection,
-                              kind: str = "pit") -> list[tuple[int, int, int]]:
+                              kind: str = "pit",
+                              source: str | None = "bot",
+                              ) -> list[tuple[int, int, int]]:
     """Return [(distance_bin, n_total, n_survived), ...] for jumps of
     the given kind, grouped into 10-px distance bins. Quick way to see
     'jumps fired at pit_dist=50 survived 8/10, pit_dist=70 survived
-    2/10 — tighten the trigger window.'"""
+    2/10 — tighten the trigger window.'
+
+    source defaults to 'bot' so the bot's [30,50] policy isn't blended with
+    human --watch clicks (different rhythm/aim) — mixing them describes
+    neither policy and contaminates the trigger-window calibration. Pass
+    source=None to include all rows, or 'human' for the watch data. Only
+    settled rows (outcome in survived/died) count; legacy 'unknown' and
+    still-pending rows are excluded so the ratio is meaningful."""
+    where = ["next_kind = ?", "next_distance_px IS NOT NULL",
+             "outcome IN ('survived', 'died')"]
+    params: list = [kind]
+    if source is not None:
+        where.append("source = ?")
+        params.append(source)
     rows = conn.execute(
-        '''
+        f'''
         SELECT (next_distance_px / 10) * 10 AS bin,
                COUNT(*),
                SUM(CASE WHEN outcome = 'survived' THEN 1 ELSE 0 END)
         FROM jumps
-        WHERE next_kind = ? AND next_distance_px IS NOT NULL
+        WHERE {" AND ".join(where)}
         GROUP BY bin
         ORDER BY bin
         ''',
-        (kind,),
+        params,
     ).fetchall()
     return [(int(b), int(n), int(s or 0)) for b, n, s in rows]
