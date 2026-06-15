@@ -244,6 +244,24 @@ def test_find_cart_detailed_prior_agrees_with_full():
     assert abs(tracked["center"][1] - full["center"][1]) <= 8
 
 
+def test_find_cart_detailed_rejects_far_x_teleport():
+    """With max_x_jump set, a full-frame fallback match far from the prior's
+    x is rejected (the cart x is fixed per run) — this is the guard against
+    the off-plank cave/chain false-lock seen 2026-06-15. Without max_x_jump
+    the original self-healing full search is used."""
+    frame, template = _frame_with_pasted_cart(paste_x=600)  # cart far right
+    tw = template.shape[1]
+    prior = {"center": (150, PLANK_Y)}   # column around 150 misses the cart at 600
+    # Default (no max_x_jump): self-heals to the real cart.
+    healed = find_cart_detailed(frame, prior=prior)
+    assert healed is not None and 600 <= healed["center"][0] <= 600 + tw
+    # With max_x_jump: the ~450px teleport is rejected (keeps the prior x).
+    assert find_cart_detailed(frame, prior=prior, max_x_jump=120) is None
+    # A nearby match is still accepted under the same guard.
+    near, _ = _frame_with_pasted_cart(paste_x=180)
+    assert find_cart_detailed(near, prior={"center": (150, PLANK_Y)}, max_x_jump=120) is not None
+
+
 def test_find_cart_detailed_stale_prior_falls_back_to_full():
     """A prior pointing far from the cart must not blind the detector —
     the narrow miss falls back to a full-frame search."""

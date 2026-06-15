@@ -136,6 +136,12 @@ _cart_templates: Optional[list[Tuple[str, np.ndarray, np.ndarray]]] = None
 # slightly-off cart_right on those two edge frames doesn't reach a decision.
 CART_TRACK_X_MARGIN = 50       # px half-width of the prior-anchored column
 
+# Max plausible frame-to-frame change in the cart's x. It's fixed per run
+# (issue #1), so a full-frame fallback match farther than this from the prior
+# is a false positive (an off-plank cave/chain sprite at the match threshold)
+# and is rejected — see find_cart_detailed's max_x_jump.
+CART_MAX_X_JUMP_PX = 120
+
 # Play Game button matching. The button has a per-attempt counter ("5",
 # "4", ...) rendered on a wheel icon at the right edge, so the template
 # isn't pixel-perfect across captures — a slightly looser threshold
@@ -317,7 +323,8 @@ def find_cart(frame) -> Optional[Tuple[int, int]]:
     return res["center"] if res is not None else None
 
 
-def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
+def find_cart_detailed(frame, plank_y=None, prior=None,
+                       max_x_jump=None) -> Optional[dict]:
     """Locate the cart and return {center, half_width, scale, template,
     score}, or None if no template scored above CART_MATCH_THRESHOLD.
 
@@ -326,10 +333,18 @@ def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
 
     prior: a previous find_cart_detailed result. The cart's x is fixed for
     a run (issue #1), so given a prior we first search a narrow column
-    around its x at its scale +/- CART_TRACK_SCALE_STEPS (fast). On a miss
-    we fall back to a full-frame, all-scales search, so a stale prior (new
-    attempt, different player position, or a slam-pose change) self-heals
-    within a frame.
+    around its x (fast). On a miss we fall back to a full-frame search.
+
+    max_x_jump: when set with a prior, reject a full-frame fallback match
+    whose x is more than this far from the prior's x (return None instead).
+    The cart's x is fixed per run, so a far match is a false positive — an
+    off-plank cave/chain sprite can score right at threshold (0.85 at x=631
+    on botrun_20260615_030254). Without this guard, the column-tracker adopts
+    that false x as the prior and STICKS to it for the rest of the run,
+    losing the real cart. Returning None keeps the prior at the true x so the
+    next frame re-finds the real cart in-column. Omit (None) for a plain
+    self-healing full search (the original behaviour, used by find_cart and
+    tests).
 
     Search is restricted to a band from the frame top down to the plank
     (the cart rises into it on a jump and sits on it otherwise)."""
@@ -343,6 +358,11 @@ def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
         res = _match_cart(frame, plank_y, x_center=prior["center"][0])
         if res is not None:
             return res
+        full = _match_cart(frame, plank_y)
+        if (full is not None and max_x_jump is not None and
+                abs(full["center"][0] - prior["center"][0]) > max_x_jump):
+            return None
+        return full
     return _match_cart(frame, plank_y)
 
 

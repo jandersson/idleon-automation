@@ -47,7 +47,7 @@ from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import (
     find_cart_detailed, find_next_terrain, find_play_button,
-    read_score_from_crop, score_crop,
+    read_score_from_crop, score_crop, CART_MAX_X_JUMP_PX,
     _find_plank_top_y, _find_plank_x_range,
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
@@ -91,6 +91,14 @@ OUTCOME_DELAY_S = 1.8
 # How long the bot keeps running after losing sight of the plank before
 # giving up — covers brief transitions in/out of the minigame UI.
 PLANK_LOST_TIMEOUT_S = 8.0
+
+# Consecutive cart-miss frames before the column-search prior is dropped to
+# allow a fresh full-frame re-acquisition. Below this, a transient miss keeps
+# the prior anchored at the cart's fixed x (so a momentary undetected pose
+# can't trigger a full search that adopts an off-plank false match). ~20
+# frames is ~0.8s at the live FPS — by then the cart is genuinely gone (run
+# ending) or a bad initial lock should self-heal.
+CART_REACQUIRE_MISSES = 20
 
 # Print a one-line telemetry every TELEMETRY_INTERVAL_S so we can see
 # what the detector is reporting even when no jump fires.
@@ -197,6 +205,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     # cart x is fixed). None when the cart is lost → next detection is a
     # clean full search.
     cart_track: dict | None = None
+    cart_misses = 0  # consecutive frames with no cart detection (re-acquire gate)
     # Rolling estimate of the cart's grounded (resting) y, so the fire
     # predicate can suppress a click while the cart is airborne — an airborne
     # click is a SLAM, which drives the cart down into an approaching pit
@@ -250,8 +259,21 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # do. This took the loop from ~2 FPS to ~25-30 FPS (validated on
         # trace_20260515) — the resolution #5's click policy needs.
         plank_y = _find_plank_top_y(frame)
-        cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track)
-        cart_track = cart_det
+        cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track,
+                                      max_x_jump=CART_MAX_X_JUMP_PX)
+        # Anchor the column-search prior at the cart's fixed x: keep the last
+        # good detection as the prior on a transient miss instead of resetting
+        # to None (which would full-frame search and risk adopting an
+        # off-plank false match — the x=631 cave/chain lock seen
+        # 2026-06-15). Re-acquire from scratch only after a long miss run
+        # (cart genuinely gone / a bad initial lock self-heals).
+        if cart_det is not None:
+            cart_track = cart_det
+            cart_misses = 0
+        else:
+            cart_misses += 1
+            if cart_misses >= CART_REACQUIRE_MISSES:
+                cart_track = None
         cart = cart_det["center"] if cart_det else None
         cart_right = (cart_det["center"][0] + cart_det["half_width"]) if cart_det else None
         now = time.time()
