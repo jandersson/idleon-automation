@@ -144,19 +144,35 @@ def main() -> None:
     # bucket that simply hasn't been revisited (the cumulative shots/makes
     # alone can't: a stale bucket and a stuck one look identical). See the
     # #43 review false-alarms.
+    #
+    # shots/makes blend EVERY predictor the bucket was ever fired with —
+    # including the long-since-superseded trajectory_gp/knn/gp and pre-model
+    # NULL rows that make at ~14% in the hard mid-band. That makes a bucket
+    # look pesky even where the current default (make_prob) does ~64% (the
+    # 2026-06-15 (588,340) "26%" false alarm). mp_shots/mp_makes count only
+    # make_prob rows, so reviewers can read the CURRENT bot's make rate per
+    # bucket instead of the predictor-blended one. (0 when the DB predates
+    # the predictor_kind column.)
+    pk_sel = ", predictor_kind" if has_predictor_kind else ""
     buckets = {}
     for row in conn.execute(
-        "SELECT hoop_x, hoop_y, made, session_started FROM shots "
+        f"SELECT hoop_x, hoop_y, made, session_started{pk_sel} FROM shots "
         f"WHERE hoop_x IS NOT NULL{exp_and}"
     ):
         bx = (row["hoop_x"] // 10) * 10
         by = (row["hoop_y"] // 10) * 10
         key = f"{bx},{by}"
         b = buckets.setdefault(key, {"hoop_x_bucket": bx, "hoop_y_bucket": by,
-                                     "shots": 0, "makes": 0, "last_session": None})
+                                     "shots": 0, "makes": 0,
+                                     "mp_shots": 0, "mp_makes": 0,
+                                     "last_session": None})
         b["shots"] += 1
         if row["made"]:
             b["makes"] += 1
+        if has_predictor_kind and row["predictor_kind"] == "make_prob":
+            b["mp_shots"] += 1
+            if row["made"]:
+                b["mp_makes"] += 1
         ss = row["session_started"]
         if ss and (b["last_session"] is None or ss > b["last_session"]):
             b["last_session"] = ss
