@@ -41,13 +41,19 @@ def find_fly(frame: np.ndarray) -> tuple[int, int] | None:
     return (max_loc[0] + tw // 2, max_loc[1] + th // 2)
 
 
-def find_next_gap(frame: np.ndarray, fly_pos: tuple[int, int] | None) -> tuple[int, int] | None:
-    """Find the next gold ring ahead of the fly; return (top_y, bottom_y) of
-    its inner hole — the band the fly should aim through.
+def find_next_gap(
+    frame: np.ndarray, fly_pos: tuple[int, int] | None
+) -> tuple[int, int, int, int] | None:
+    """Find the next gold ring ahead of the fly; return its bounding box as
+    (top_y, bottom_y, left_x, right_x). The vertical span (top_y, bottom_y)
+    is the band the fly should aim through; the horizontal span (left_x,
+    right_x) is how far ahead the ring is — logged so analysis can correlate
+    flap timing with the ring's approach (mirrors mining logging the plank's
+    x extent).
 
     Approach: HSV-mask gold pixels, find connected components, pick the
     leftmost component whose center is to the RIGHT of fly_x (the next ring
-    in scrolling order). Return its bounding box's vertical bounds.
+    in scrolling order). Return its bounding box's bounds.
     """
     if fly_pos is None:
         return None
@@ -75,4 +81,4 @@ def find_next_gap(frame: np.ndarray, fly_pos: tuple[int, int] | None) -> tuple[i
     # Pick the ring with smallest cx > fly_x (i.e. the next one ahead).
     candidates.sort()
     _, x, y, w, h = candidates[0]
-    return (y, y + h)
+    return (y, y + h, x, x + w)

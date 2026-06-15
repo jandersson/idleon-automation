@@ -1,5 +1,6 @@
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -9,10 +10,15 @@ from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
+from common.git_info import current_code_commit
+from common.auto_commit import commit_file_if_changed
 from minigames.catching.detector import find_fly, find_next_gap
+from minigames.catching.catch_log import open_db, log_flap, log_run
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
+CATCH_DB_PATH = _HERE / "assets" / "catching.db"
+REPO_ROOT = _HERE.parent.parent
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
@@ -33,14 +39,54 @@ MIN_CLICK_INTERVAL = 0.05
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
-        _run_inner()
+        session_started = datetime.now().isoformat(timespec="seconds")
+        code_commit = current_code_commit(REPO_ROOT)
+        if code_commit:
+            print(f"Code commit: {code_commit}")
+        if not (_HERE / "assets" / "fly.png").exists():
+            print("WARNING: assets/fly.png not found — the fly detector can't "
+                  "match, so zero flaps will be logged. Capture + extract the "
+                  "template first (catching-capture during a game, then "
+                  "catching-extract-fly).")
+        db = open_db(CATCH_DB_PATH)
+        started_at = time.time()
+        # Mutable so the finally below sees the running count even though
+        # _run_inner's loop only exits by exception (failsafe / Ctrl-C).
+        stats = {"n_flaps": 0, "end_reason": "process_exit"}
+        try:
+            _run_inner(session_started, db, code_commit, stats)
+        except KeyboardInterrupt:
+            stats["end_reason"] = "keyboard_interrupt"
+            raise
+        except Exception as e:  # FailSafeException (corner-slam) and any crash
+            stats["end_reason"] = type(e).__name__
+            raise
+        finally:
+            log_run(
+                db,
+                session_started=session_started,
+                attempt_idx=1,
+                ended_at=datetime.now().isoformat(timespec="seconds"),
+                n_flaps=stats["n_flaps"],
+                duration_s=round(time.time() - started_at, 1),
+                end_reason=stats["end_reason"],
+                code_commit=code_commit,
+            )
+            db.close()
+            # Tracked DB — other machines get the data via `git pull`.
+            commit_file_if_changed(
+                REPO_ROOT,
+                "minigames/catching/assets/catching.db",
+                "chore(catching): refresh catching.db (auto)",
+            )
 
 
-def _run_inner():
+def _run_inner(session_started, db, code_commit, stats):
     print(f"Catching bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
     last_click_time = 0.0
+    prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
     while True:
         check_failsafe()
         try:
@@ -63,24 +109,72 @@ def _run_inner():
             play_region["height"],
         )
         fly_pos = find_fly(frame)
-        gap = find_next_gap(frame, fly_pos)
-        if fly_pos is None or gap is None:
+        if fly_pos is None:
             time.sleep(POLL_INTERVAL)
             continue
-
         fly_x, fly_y = fly_pos
-        gap_top, gap_bottom = gap
+
+        # Fly vertical velocity at this frame, px/SECOND (+ = descending).
+        # Wall-clock dt keeps it cadence-invariant (the darts vy lesson); a
+        # stale prior frame from a detection dropout yields NULL rather than
+        # a bogus slow reading. Updated every detected frame for continuity.
+        now = time.time()
+        fly_vy = None
+        if prev_fly is not None:
+            dt = now - prev_fly[1]
+            if 0 < dt <= 0.2:
+                fly_vy = int(round((fly_y - prev_fly[0]) / dt))
+        prev_fly = (fly_y, now)
+
+        gap = find_next_gap(frame, fly_pos)
+        if gap is None:
+            time.sleep(POLL_INTERVAL)
+            continue
+        gap_top, gap_bottom, gap_left_x, gap_right_x = gap
 
         # Click if the fly is dropping toward / past the gap's bottom edge.
         if fly_y > gap_bottom - GAP_LOWER_MARGIN:
-            now = time.time()
             if now - last_click_time >= MIN_CLICK_INTERVAL:
-                print(f"fly y={fly_y}, gap=[{gap_top}..{gap_bottom}] — clicking")
-                random_delay(5, 20)
+                # Fire immediately on the decision. The fly is still falling,
+                # so any pre-click latency (the old random_delay that sat
+                # here) biases the sampled fly_y away from where the flap
+                # lands. Stamp the fire time and click; bookkeeping runs
+                # after — same rule as hoops/darts, see CLAUDE.md "Click
+                # timing".
+                clicked_at = datetime.now().isoformat(timespec="milliseconds")
                 cx = play_region["left"] + play_region["width"] // 2
                 cy = play_region["top"] + play_region["height"] // 2
                 click(win_left + cx, win_top + cy)
                 last_click_time = time.time()
+                stats["n_flaps"] += 1
+                print(f"fly y={fly_y} vy={fly_vy} gap=[{gap_top}..{gap_bottom}] — flap #{stats['n_flaps']}")
+                # Keep this post-click work light: heavy work here delays the
+                # next fly sample (the hoops cc42529 latency regression). One
+                # indexed insert is fine; if it ever isn't, move it after
+                # random_delay.
+                log_flap(
+                    db,
+                    session_started=session_started,
+                    attempt_idx=1,
+                    flap_idx=stats["n_flaps"],
+                    clicked_at=clicked_at,
+                    fly_x=fly_x,
+                    fly_y=fly_y,
+                    fly_vy=fly_vy,
+                    gap_top=gap_top,
+                    gap_bottom=gap_bottom,
+                    gap_left_x=gap_left_x,
+                    gap_right_x=gap_right_x,
+                    gap_center=(gap_top + gap_bottom) // 2,
+                    gap_height=gap_bottom - gap_top,
+                    fly_offset_below_gap=fly_y - gap_bottom,
+                    gap_lower_margin=GAP_LOWER_MARGIN,
+                    window_w=win_w,
+                    window_h=win_h,
+                    code_commit=code_commit,
+                    source="bot",
+                )
+                random_delay(5, 20)
 
         time.sleep(POLL_INTERVAL)
 
