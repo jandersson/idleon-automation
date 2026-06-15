@@ -214,3 +214,25 @@ def fetch_hits(
          int(r[2]) if r[2] is not None else None)
         for r in conn.execute(sql)
     ]
+
+
+def calm_ab_counts(
+    conn: sqlite3.Connection, calm_wind_max: float
+) -> tuple[int, int]:
+    """(n_band_ab, n_model_ab): calm-air A/B throws logged so far (#48).
+
+    Counts rows tagged band_ab / model_ab with a parsed wind_speed below
+    the calm cut — the band-vs-model-in-calm sample. Surfaced at darts
+    startup so the accumulating sample size is visible without a manual
+    query. (The tags are only ever written in calm, so the wind_speed
+    filter is belt-and-suspenders against any future tag reuse, and it
+    excludes rows whose wind never parsed, i.e. wind_speed IS NULL.)
+    """
+    row = conn.execute(
+        "SELECT "
+        "  SUM(CASE WHEN aim_mode = 'band_ab' THEN 1 ELSE 0 END), "
+        "  SUM(CASE WHEN aim_mode = 'model_ab' THEN 1 ELSE 0 END) "
+        "FROM throws WHERE wind_speed < ?",
+        (calm_wind_max,),
+    ).fetchone()
+    return (row[0] or 0, row[1] or 0)

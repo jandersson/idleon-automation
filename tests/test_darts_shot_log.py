@@ -148,3 +148,29 @@ def test_throw_carries_aim_mode(tmp_path):
     log_throw(conn, session_started="s", throw_idx=1, aim_mode="band", hit=1)
     assert conn.execute("SELECT aim_mode FROM throws").fetchone()[0] == "band"
     conn.close()
+
+
+def test_calm_ab_counts_filters_by_tag_and_wind(tmp_path):
+    """calm_ab_counts (#48) tallies band_ab / model_ab throws in calm wind
+    only — the running A/B sample surfaced at darts startup. Organic
+    band/model fires and windy or wind-unparsed rows don't count."""
+    from minigames.darts.shot_log import open_db, log_throw, calm_ab_counts
+    conn = open_db(tmp_path / "darts.db")
+    log_throw(conn, throw_idx=1, aim_mode="band_ab", wind_speed=0.0)
+    log_throw(conn, throw_idx=2, aim_mode="band_ab", wind_speed=1.0)
+    log_throw(conn, throw_idx=3, aim_mode="model_ab", wind_speed=0.0)
+    log_throw(conn, throw_idx=4, aim_mode="model", wind_speed=0.0)    # organic, not A/B
+    log_throw(conn, throw_idx=5, aim_mode="band", wind_speed=0.0)     # organic, not A/B
+    log_throw(conn, throw_idx=6, aim_mode="band_ab", wind_speed=5.0)  # windy → excluded
+    log_throw(conn, throw_idx=7, aim_mode="band_ab", wind_speed=None)  # no wind parse → excluded
+    n_band_ab, n_model_ab = calm_ab_counts(conn, 2.0)
+    conn.close()
+    assert (n_band_ab, n_model_ab) == (2, 1)
+
+
+def test_calm_ab_counts_zero_on_empty(tmp_path):
+    """SUM over no matching rows is NULL in SQL; the helper coerces to 0."""
+    from minigames.darts.shot_log import open_db, calm_ab_counts
+    conn = open_db(tmp_path / "darts.db")
+    assert calm_ab_counts(conn, 2.0) == (0, 0)
+    conn.close()

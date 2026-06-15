@@ -21,7 +21,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.darts.detector import find_release_pose, find_game_over, find_celebration, score_region, score_changed
 from minigames.darts.wind import parse_wind
-from minigames.darts.shot_log import open_db, log_throw, log_poll
+from minigames.darts.shot_log import open_db, log_throw, log_poll, calm_ab_counts
 from minigames.darts.arm_motion import (
     REF_MOTION_DT_S,
     centroid_vy_px_s,
@@ -508,6 +508,9 @@ def run():
                   f"wind-conditioned dy band live (#41 step 3)")
             print(f"  calm-air A/B (#48): wind < {CALM_WIND_MAX} mph alternates "
                   f"static band (band_ab) vs model (model_ab) by throw parity")
+            n_band_ab, n_model_ab = calm_ab_counts(throw_db, CALM_WIND_MAX)
+            print(f"    progress: {n_band_ab} band_ab / {n_model_ab} model_ab "
+                  f"calm throws logged so far (~50 band_ab needed to compare)")
         try:
             _run_inner(session_started, throw_db, code_commit, ev_model)
         finally:
