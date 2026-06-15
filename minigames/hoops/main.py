@@ -758,6 +758,18 @@ def _respawn_implies_make(
 # _retarget_within_bob), but the watchdog also catches modes we haven't met.
 STALE_TARGET_TIMEOUT_S = 60.0
 
+# Final catch-all session-bail: once the game has actually started (>=1 shot
+# fired), if NO shot fires for this long the run is stuck and must end. The
+# other watchdogs can all be defeated together when the game-over screen is up
+# but its template variant doesn't match AND find_rim returns a phantom
+# low-confidence "rim": the rim-missing 5s bail never fires (rim "present"),
+# the platform-not-found path only clears the target, and the stale-target
+# 60s watchdog never accumulates (the target keeps getting cleared and reset).
+# That looped forever on 2026-06-15 (session_20260615_035159: platform-not-
+# found / rim@0.48 repeating). This bail depends on nothing but wall-clock
+# since the last shot, so it always exits.
+NO_SHOT_BAIL_S = 30.0
+
 
 def _retarget_within_bob(
     target_y: int,
@@ -1375,6 +1387,23 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
             if is_over:
                 print(f"Game over detected (conf={go_conf:.2f}). Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
                 return
+
+        # Catch-all stuck-bail: the game has started (>=1 shot) but nothing has
+        # fired for NO_SHOT_BAIL_S — the run is wedged (e.g. an unmatched
+        # game-over screen variant + a phantom low-conf rim defeating the other
+        # bails; see NO_SHOT_BAIL_S). Save the frame so the unrecognised screen
+        # can be inspected / re-picked, then exit.
+        if (last_fired_at_ms is not None
+                and time.time() * 1000.0 - last_fired_at_ms > NO_SHOT_BAIL_S * 1000.0):
+            diag_dir = _HERE / "assets" / "diagnostics"
+            diag_dir.mkdir(parents=True, exist_ok=True)
+            diag_path = diag_dir / f"noshot_{datetime.now():%Y%m%d_%H%M%S}.png"
+            save_frame(diag_path, frame)
+            print(f"No shot fired in {NO_SHOT_BAIL_S:.0f}s — bailing out (game over "
+                  f"likely undetected; saved {diag_path.name} — if it's a new "
+                  f"game-over variant, re-run hoops-pick-game-over). "
+                  f"Final session: {shot_stats['makes']}/{shot_stats['attempts']} makes.")
+            return
 
         if target is not None and time.time() - target_set_at > STALE_TARGET_TIMEOUT_S:
             print(
