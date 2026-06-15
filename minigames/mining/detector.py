@@ -11,9 +11,14 @@ Obstacle types (verified visually against trace_20260515_220235 and
 trace_20260516_131332):
 
 - Pit: dark gap in the wooden plank with dark spikes. Lose-condition
-  if the cart falls in.
-- Ore: copper/tan-colored chunks protruding UP from the plank
-  surface. Slamming on top rebounds the cart (free jump) and scores.
+  if the cart falls in. This is the only hazard the survival policy
+  reacts to.
+- Ore: the slam-to-score target. NOT YET CHARACTERISED — the silver-blue
+  crystal piles above the plank turned out to be static parallax
+  background (fixed screen x while the track scrolls), and the tan signal
+  above the plank is the cave wall, so ore detection is currently disabled
+  (see _scan_plank_ore). Real ore needs a scoring run + a scroll-velocity
+  foreground/background filter to identify.
 
 The plank's screen y-position varies by window size (the minigame UI
 doesn't scale linearly), so we auto-detect the plank-top y per frame
@@ -177,6 +182,22 @@ PLANK_CLUSTER_GAP = 100
 
 # Ore scan: rows ABOVE the plank top (chunks protrude up into normally
 # dark cave-wall area). Bright tan-ish columns there == ore.
+#
+# KNOWN BROKEN — does not detect the real slam-to-score ore, and currently
+# only HARMS survival (see _scan_plank_ore and docs/mining_plan.md, Run 6
+# 2026-06-15). Two facts established offline against botrun_20260615_012340:
+#   (1) there is no distinct "orange obstacle" — the tan signal above the
+#       plank is the continuous cave wall, not a trap; the lethal hazard is
+#       the pit (dark plank gap), handled by the pit scan.
+#   (2) the silver-blue crystal piles are STATIC parallax background, not
+#       track ore: across every grounded frame they hold fixed screen x
+#       (91/196/301/406) while the foreground pit scrolls ~3px/frame. So
+#       neither tan (cave wall) nor blue (background) above-plank scanning
+#       finds slam-ore — which never appeared in this 0-score capture.
+# Real slam-ore can only be characterised from a scoring --watch run, and
+# distinguishing it will need foreground/background separation by scroll
+# velocity (foreground ~93px/s, background static). Until then ore detection
+# is disabled (returns []) so phantom ore can't mask pits in find_next_terrain.
 ORE_SCAN_DY = (-15, -2)  # rows above plank top
 ORE_V_MIN = 80
 ORE_MIN_WIDTH = 5
@@ -492,24 +513,25 @@ def _scan_plank_pits(frame, plank_y: int,
 def _scan_plank_ore(frame, plank_y: int,
                     x_start: Optional[int] = None,
                     x_end: Optional[int] = None) -> list[Tuple[int, int]]:
-    """Return list of (x_left, x_right) for ore deposits ABOVE the plank.
+    """Return list of (x_left, x_right) for slam-to-score ore above the plank.
 
-    Same x_start/x_end convention as the pit scanner."""
-    h, w = frame.shape[:2]
-    x0 = x_start if x_start is not None else int(PLANK_X0_FRAC * w)
-    x1 = x_end if x_end is not None else int(PLANK_X1_FRAC * w)
-    y0 = plank_y + ORE_SCAN_DY[0]
-    y1 = plank_y + ORE_SCAN_DY[1]
-    if y0 < 0 or y1 > h or x1 <= x0:
-        return []
-    band = frame[y0:y1, x0:x1]
-    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
-    # Tan-ish bright pixels above plank — same tan hue as plank itself
-    # but in a y-band that's normally cave-dark.
-    is_ore = ((hsv[:, :, 0] >= PLANK_H_LO) & (hsv[:, :, 0] <= PLANK_H_HI) &
-              (hsv[:, :, 2] >= ORE_V_MIN))
-    col_is_ore = is_ore.sum(axis=0) > 2
-    return _extract_runs(col_is_ore, offset=x0, min_width=ORE_MIN_WIDTH)
+    Disabled — returns [] unconditionally. Neither candidate above-plank
+    signal is the real ore (see the ORE_SCAN_DY comment block and
+    docs/mining_plan.md Run 6): tan-hue detects the cave wall, blue-hue
+    detects static parallax-background crystals. Both are phantom, and a
+    phantom obstacle here is worse than none: find_next_terrain returns the
+    nearest pit-OR-ore, and the jump trigger fires only on kind=='pit'
+    (main.py), so a phantom ore sitting between the cart and a real pit masks
+    that pit and suppresses the jump. Against botrun_20260615_012340 the
+    blue scan reported "ore at distance 28" every frame from a static
+    background pile, which would have hidden every pit and guaranteed a
+    death. Until a scoring --watch run reveals the real ore (and a
+    scroll-velocity foreground/background filter separates it from
+    decoration), detecting nothing is the safe, survival-correct behavior.
+
+    Signature and x_start/x_end convention preserved for the eventual real
+    implementation and for find_next_terrain's caller."""
+    return []
 
 
 def _find_plank_x_range(frame, plank_y: int) -> Optional[Tuple[int, int]]:

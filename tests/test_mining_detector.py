@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 
 from minigames.mining.detector import (
-    ORE_MIN_WIDTH,
     PIT_MIN_WIDTH,
     PLANK_X0_FRAC,
     PLANK_X1_FRAC,
@@ -140,27 +139,20 @@ def test_scan_plank_pits_ignores_narrow_noise():
     assert _scan_plank_pits(frame, PLANK_Y) == []
 
 
-def test_scan_plank_ore_finds_bright_protrusion():
+def test_scan_plank_ore_disabled_returns_empty():
+    """Ore detection is intentionally disabled (returns []) until a scoring
+    run reveals the real slam-ore. Both prior signals were phantom — tan
+    above the plank is the cave wall, blue is static parallax background —
+    and a phantom ore masks pits in find_next_terrain (jump trigger is
+    pit-only). See _scan_plank_ore / docs/mining_plan.md Run 6.
+
+    Flip this test (and the function) together when real ore detection,
+    backed by a scoring capture + scroll-velocity foreground filter, lands.
+    The frame here would have satisfied the old tan-hue scan."""
     frame = _frame_with_plank()
-    # Ore: bright tan pixels in the band ABOVE the plank top.
-    # Plank-hue + bright V satisfies _scan_plank_ore criteria.
     frame[PLANK_Y - 8:PLANK_Y, 500:520] = (40, 120, 220)
-    ores = _scan_plank_ore(frame, PLANK_Y)
-    assert ores == [(500, 520)]
-
-
-def test_scan_plank_ore_ignores_narrow_noise():
-    frame = _frame_with_plank()
-    frame[PLANK_Y - 8:PLANK_Y, 500:500 + ORE_MIN_WIDTH - 1] = (40, 120, 220)
     assert _scan_plank_ore(frame, PLANK_Y) == []
-
-
-def test_scan_plank_ore_respects_x_start():
-    frame = _frame_with_plank()
-    frame[PLANK_Y - 8:PLANK_Y, 400:420] = (40, 120, 220)
-    frame[PLANK_Y - 8:PLANK_Y, 600:620] = (40, 120, 220)
-    ores = _scan_plank_ore(frame, PLANK_Y, x_start=500)
-    assert ores == [(600, 620)]
+    assert _scan_plank_ore(frame, PLANK_Y, x_start=300, x_end=600) == []
 
 
 def test_load_cart_templates_finds_assets():

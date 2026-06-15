@@ -199,22 +199,63 @@ attempt**, against the existing `botrun_20260615_012340` frames.
   is degenerate on perfectly-flat synthetic frames, an artifact real cave
   frames never hit). 408 green.
 
+### Run 6 (offline, no attempt spent) — "orange obstacle" + ore, resolved
+
+Investigated the task-2 questions against the same `botrun_20260615_012340`
+frames. Both prior assumptions were wrong; the net result is a detector
+correction, not a new feature.
+
+- **There is no distinct "orange obstacle."** HSV-segmenting the plank band
+  shows the only tan signal above the plank is the *continuous cave wall*
+  (the boulder backdrop), which the old tan-hue `_scan_plank_ore` was
+  firing on. The lethal hazard is the **pit** (dark gap in the plank
+  surface), already detected by the pit scan. The prior session's "orange
+  trap" was this cave-wall false-positive.
+- **The silver-blue crystal piles are static parallax BACKGROUND, not
+  slam-ore.** Per-frame position proves it: across every grounded frame the
+  blue piles hold fixed screen x (91 / 196 / 301 / 406) while the
+  foreground pit scrolls left smoothly at ~3 px/frame (306→258 over frames
+  7–20). Static-every-frame rules out aliasing. So the blue is decoration
+  the cart can't interact with — and a naive "ore = blue" scan is *worse*
+  than the tan one.
+- **Phantom ore actively breaks survival.** `find_next_terrain` returns the
+  nearest pit-OR-ore and the jump trigger fires only on `kind=='pit'`
+  (`main.py`). A blue-ore scan reported "ore at distance 28" every frame
+  from the static x=196 pile — which sits between the cart and the real
+  pit and never scrolls away, so it would mask **every** pit and guarantee
+  a death. (Verified: with ore disabled, `find_next_terrain` cleanly tracks
+  the real pit, distance 138→84 as it approaches the [30,50] trigger.)
+- **Decision: `_scan_plank_ore` returns [] (ore detection disabled).**
+  Detecting nothing is survival-correct until the real ore is known;
+  the function/constants/x-range plumbing are preserved as scaffold.
+- **The real lesson — foreground vs background.** The detector has no
+  foreground/background separation: the pit scan also picks up a static
+  background gap at x=138 (harmless only because it sits behind the cart).
+  The clean key is scroll velocity — foreground ≈93 px/s, background
+  static. The real slam-ore (which never appeared in this 0-score capture)
+  should be characterised from a **scoring `--watch` run** and separated
+  from decoration by that velocity filter.
+- Tests: the three tan-ore detection tests collapse into one asserting the
+  disabled-[] contract (flip it together with the function when real ore
+  lands). 408 green.
+
 ### Next session
 
-1. ~~**Robust airborne cart detection**~~ — **DONE (Run 5, above).** The
-   cart is detected continuously through a jump via background-masked
-   matching. The next live `--save-frames` run can spend its attempt on
-   capturing a *longer* run (multiple jumps / spaced obstacles) to validate
-   the policy, not on detection.
-2. **Identify the orange obstacle** from the frames — is it a trap that
-   must be jumped, or passable? It's currently miscounted as "ore".
-   Separate "slam-to-score ore" (silver-blue, above plank) from
-   "hazard-to-avoid" in the detector.
-3. **Spaced-obstacle / multi-jump policy:** once detection is continuous,
-   handle a second obstacle right after a jump (the current death). May
-   need shorter cooldown + reacting the instant the cart lands.
-4. **Then** the slam-on-ore scoring (Phase D) and digit bootstrap (#6,
-   needs a scoring run).
+1. ~~**Robust airborne cart detection**~~ — **DONE (Run 5).** Continuous
+   through a jump via background-masked matching.
+2. ~~**Identify the orange obstacle / separate ore from hazard**~~ —
+   **DONE (Run 6):** no orange obstacle (cave wall); blue piles are
+   background, not ore; ore detection disabled as phantom. Real ore +
+   foreground/background velocity separation deferred to a scoring run.
+3. **Spaced-obstacle / multi-jump policy** — the current death (a second
+   obstacle right after the first jump). Detection is now continuous, so
+   this is unblocked. Likely needs a shorter cooldown + reacting the
+   instant the cart lands. **Wants a live `--save-frames` run** capturing
+   a longer multi-jump sequence (detection is no longer the bottleneck).
+   Worth adding scroll-velocity tracking here — it both filters background
+   pits and is the prerequisite for real ore detection.
+4. **Then** slam-on-ore scoring (Phase D) and the digit bootstrap (#6),
+   both of which need a *scoring* run to gather data.
 
 Trigger `[30,50]` is good for isolated pits — don't re-tune it without
 cause; the deaths are now downstream of it.
