@@ -12,7 +12,9 @@ from minigames.mining.detector import (
     PIT_MIN_WIDTH,
     PLANK_X0_FRAC,
     PLANK_X1_FRAC,
+    _extract_runs,
     _find_plank_top_y,
+    _find_plank_x_range,
     _load_cart_templates,
     _scan_plank_ore,
     _scan_plank_pits,
@@ -245,3 +247,79 @@ def test_find_next_terrain_uses_passed_cart_right_and_plank_y():
     frame[PLANK_Y:PLANK_Y + 12, 500:560] = 0  # 60px pit
     res = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350)
     assert res == {"kind": "pit", "x": 500, "distance_px": 150}
+
+
+def _split_plank_frame(segments) -> np.ndarray:
+    """A frame with tan plank bands (full plank height, so the pit-scan band
+    isn't all-dark) only at the given (x0, x1) segments."""
+    frame = np.zeros((H, W, 3), dtype=np.uint8)
+    for x0, x1 in segments:
+        frame[PLANK_Y:PLANK_Y + 12, x0:x1] = (40, 120, 200)
+    return frame
+
+
+def test_plank_x_range_bridges_a_wide_pit_split():
+    """A pit wide enough (>PLANK_CLUSTER_GAP) to split the plank into two
+    clusters must still yield the full extent — the right segment carries the
+    incoming hazards find_next_terrain scans. Densest (left) segment alone
+    would stop the scan short and hide pits on the right."""
+    frame = _split_plank_frame([(70, 200), (320, 436)])  # 120px gap, left denser
+    assert _find_plank_x_range(frame, PLANK_Y) == (70, 436)
+
+
+def test_plank_x_range_excludes_far_stray_tan():
+    """Stray cave/UI tan beyond PLANK_BRIDGE_GAP of the plank is not absorbed
+    into the plank extent (the densest-cluster anchor + bounded bridge)."""
+    frame = _split_plank_frame([(70, 200), (320, 436), (700, 720)])  # 700 is 264px past 436
+    assert _find_plank_x_range(frame, PLANK_Y) == (70, 436)
+
+
+def test_find_next_terrain_clamps_scan_to_plank_left_edge():
+    """If the cart's right edge lands left of the plank (flaky cart match /
+    fallback half_width), the scan must not read the off-plank dark region as
+    a pit — it starts no further left than the plank's left edge."""
+    frame = _split_plank_frame([(200, 600)])
+    frame[PLANK_Y:PLANK_Y + 12, 400:420] = 0  # a real 20px pit inside the plank
+    # cart_right=130 is well left of plank_left=200.
+    res = find_next_terrain(frame, (100, PLANK_Y), plank_y=PLANK_Y,
+                            cart_right=130, plank_range=(200, 600))
+    assert res is not None
+    assert res["kind"] == "pit"
+    assert res["x"] >= 200          # not the off-plank (0,200) dark region
+    assert res["x"] == 400
+
+
+def test_find_next_terrain_plank_range_passthrough_matches_recompute():
+    frame = _frame_with_plank()
+    frame[PLANK_Y:PLANK_Y + 12, 500:560] = 0
+    recomputed = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350)
+    passed = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350,
+                               plank_range=_find_plank_x_range(frame, PLANK_Y))
+    assert passed == recomputed
+
+
+def test_extract_runs_does_not_merge_two_subminwidth_specks():
+    """Two sub-min-width specks within merge_gap must NOT glue into a false
+    run — the merge only bridges a spike inside an already-wide run."""
+    mask = [False] * 30
+    for x in range(5, 8):    # 3px speck
+        mask[x] = True
+    for x in range(11, 14):  # 3px speck, gap of 3 (<= MERGE_GAP_PX)
+        mask[x] = True
+    assert _extract_runs(mask, offset=0, min_width=5) == []
+
+
+def test_extract_runs_bridges_spike_inside_wide_pit():
+    """A wide pit with a 2px bright spike splitting it merges back to one run
+    (the wide fragment carries min_width, so the merge is allowed)."""
+    mask = [False] * 80
+    for x in range(10, 40):  # 30px
+        mask[x] = True
+    for x in range(42, 70):  # 28px, gap of 2
+        mask[x] = True
+    assert _extract_runs(mask, offset=0, min_width=5) == [(10, 70)]
+
+
+def test_extract_runs_trailing_run_at_array_end():
+    mask = [False] * 10 + [True] * 8
+    assert _extract_runs(mask, offset=100, min_width=5) == [(110, 118)]

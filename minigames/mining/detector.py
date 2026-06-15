@@ -180,6 +180,18 @@ MERGE_GAP_PX = 4
 # the play area.
 PLANK_CLUSTER_GAP = 100
 
+# When a pit is wide enough to SPLIT the plank into two clusters (>
+# PLANK_CLUSTER_GAP), the plank's true x-extent is the chain of clusters
+# around the densest one, bridged across gaps up to this width. The old
+# code returned only the densest cluster's bounds, so a >100px pit split
+# dropped the incoming-hazard (right) side entirely — find_next_terrain's
+# scan stopped short and a real pit past the split went undetected (latent
+# as the speed ramps and pits widen). 150 bridges a split pit up to ~150px
+# wide while still excluding far stray cave tan: in botrun_20260615_012340
+# the next tan past the plank's right edge (435) is a lone column at 656
+# (221px away), comfortably beyond this bridge.
+PLANK_BRIDGE_GAP = 150
+
 # Ore scan: rows ABOVE the plank top (chunks protrude up into normally
 # dark cave-wall area). Bright tan-ish columns there == ore.
 #
@@ -331,18 +343,19 @@ def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
     return _match_cart(frame, plank_y)
 
 
-def find_next_terrain(frame, cart, plank_y=None, cart_right=None) -> Optional[dict]:
+def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
+                      plank_range=None) -> Optional[dict]:
     """Return the nearest obstacle (pit or ore) ahead of the cart.
 
     Result: {"kind": "pit"|"ore", "x": int, "distance_px": int} where
     x is the left edge of the obstacle and distance_px is x - cart_right.
 
-    plank_y and cart_right are accepted so the hot path can pass values it
-    already computed this frame. Recomputing them here cost a redundant
-    _find_plank_top_y plus a full 24-match cart search (via
-    _estimate_cart_half_width) — the latter dominated the loop. They fall
-    back to recomputation when omitted, so existing callers/tests are
-    unaffected.
+    plank_y, cart_right and plank_range are accepted so the hot path can
+    pass values it already computed this frame. Recomputing them here cost a
+    redundant _find_plank_top_y, a full 24-match cart search (via
+    _estimate_cart_half_width), and a second _find_plank_x_range HSV+cluster
+    pass — all of which the main loop already does. They fall back to
+    recomputation when omitted, so existing callers/tests are unaffected.
     """
     if cart is None:
         return None
@@ -356,12 +369,19 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None) -> Optional[di
     # width unless the caller already has it.
     if cart_right is None:
         cart_right = cart[0] + _estimate_cart_half_width(frame, plank_y)
-    scan_x = cart_right + SCAN_BUFFER_PX
     # Bound the scan to the actual plank x-extent — the minigame overlay
     # is a fixed-pixel-width panel, not full-window-wide, so cave/UI
     # beyond the plank edge can otherwise read as obstacles.
-    plank_range = _find_plank_x_range(frame, plank_y)
+    if plank_range is None:
+        plank_range = _find_plank_x_range(frame, plank_y)
     x_end = plank_range[1] if plank_range else None
+    # Start the scan past the cart's right edge, but never left of the plank:
+    # a flaky cart match (small cart_x, or the half_width=30 fallback) could
+    # otherwise put scan_x in the off-plank dark region left of the plank,
+    # which _scan_plank_pits would read as a pit.
+    scan_x = cart_right + SCAN_BUFFER_PX
+    if plank_range is not None:
+        scan_x = max(scan_x, plank_range[0])
     pits = _scan_plank_pits(frame, plank_y, x_start=scan_x, x_end=x_end)
     ores = _scan_plank_ore(frame, plank_y, x_start=scan_x, x_end=x_end)
     candidates = (
@@ -539,44 +559,65 @@ def _find_plank_x_range(frame, plank_y: int) -> Optional[Tuple[int, int]]:
     minigame overlay is a fixed-pixel-width panel and doesn't extend to
     the window edges. Detected by scanning a thin y-band at the plank
     top for plank-tan-signature columns, clustering them with
-    PLANK_CLUSTER_GAP tolerance to bridge real pits, and returning the
-    bounds of the largest cluster. Stray tan-bright pixels elsewhere on
-    screen (UI, cave decoration) don't extend the range. Returns None if
-    no plank found."""
+    PLANK_CLUSTER_GAP tolerance, anchoring on the densest cluster (the
+    plank, not stray UI/cave tan), then extending the span across both
+    sides while consecutive clusters are within PLANK_BRIDGE_GAP — so a
+    wide pit that splits the plank into two clusters still yields the full
+    extent (the right side carries the incoming hazards find_next_terrain
+    scans). Far stray tan stays excluded. Returns None if no plank found."""
+    clusters = _plank_clusters(frame, plank_y)
+    if not clusters:
+        return None
+    # Anchor on the densest cluster (most plank columns) — definitely plank,
+    # not sparse UI/cave decoration — then absorb neighbours on each side as
+    # long as the gap to the next cluster is pit-sized (<= PLANK_BRIDGE_GAP).
+    best_i = max(range(len(clusters)), key=lambda i: len(clusters[i]))
+    lo = hi = best_i
+    while lo > 0 and clusters[lo][0] - clusters[lo - 1][-1] <= PLANK_BRIDGE_GAP:
+        lo -= 1
+    while hi < len(clusters) - 1 and clusters[hi + 1][0] - clusters[hi][-1] <= PLANK_BRIDGE_GAP:
+        hi += 1
+    return clusters[lo][0], clusters[hi][-1] + 1
+
+
+def _plank_clusters(frame, plank_y: int) -> list[list[int]]:
+    """Plank-tan column clusters at the plank top, split on gaps >
+    PLANK_CLUSTER_GAP. Each cluster is the list of its plank columns (so
+    callers can rank by density). Empty list if no plank-tan band is found.
+    Shared by _find_plank_x_range and any scan-bound logic so the HSV pass
+    and clustering aren't duplicated."""
     h, _w = frame.shape[:2]
     y0 = plank_y
     y1 = min(h, plank_y + 3)
     if y1 <= y0:
-        return None
+        return []
     hsv = cv2.cvtColor(frame[y0:y1, :], cv2.COLOR_BGR2HSV)
     is_plank = ((hsv[:, :, 0] >= PLANK_H_LO) & (hsv[:, :, 0] <= PLANK_H_HI) &
                 (hsv[:, :, 1] >= PLANK_S_MIN) & (hsv[:, :, 2] >= PLANK_V_MIN))
     col_score = is_plank.sum(axis=0)
     plank_cols = np.where(col_score >= 2)[0]
     if len(plank_cols) < 10:
-        return None
-    # Cluster into groups separated by gaps > PLANK_CLUSTER_GAP. Real
-    # pits are typically 30-80px wide; cave-wall stray pixels live in
-    # entirely separate parts of the frame (hundreds of px away).
+        return []
     clusters: list[list[int]] = [[int(plank_cols[0])]]
     for c in plank_cols[1:]:
         if c - clusters[-1][-1] > PLANK_CLUSTER_GAP:
             clusters.append([int(c)])
         else:
             clusters[-1].append(int(c))
-    # Pick the cluster with the most plank columns (densest), not just
-    # the widest one — UI decorations can span many columns sparsely.
-    best = max(clusters, key=lambda cl: len(cl))
-    return best[0], best[-1] + 1
+    return clusters
 
 
 def _extract_runs(col_mask, offset: int, min_width: int,
                   merge_gap: int = MERGE_GAP_PX) -> list[Tuple[int, int]]:
     """Find contiguous True runs in col_mask, return (x_left, x_right)
     pairs offset into frame coords. Adjacent runs separated by <= merge_gap
-    columns of False are merged — a single pit's interior often has small
-    bright spots (spike highlights) that split it into fragments. Final
-    pass filters out runs narrower than min_width."""
+    columns of False are merged — but ONLY when at least one of the two
+    already meets min_width. The merge exists to bridge a bright spike
+    highlight inside a single WIDE pit (the wide fragment carries the
+    min_width); merging two sub-min-width specks would instead fabricate a
+    false pit out of unrelated dark texture/shadow noise (two 3px specks 4px
+    apart became a 10px 'pit' before this guard). Final pass filters out runs
+    still narrower than min_width."""
     runs: list[Tuple[int, int]] = []
     in_run = False
     start = 0
@@ -593,7 +634,8 @@ def _extract_runs(col_mask, offset: int, min_width: int,
         merged = [runs[0]]
         for a, b in runs[1:]:
             prev_a, prev_b = merged[-1]
-            if a - prev_b <= merge_gap:
+            established = (prev_b - prev_a) >= min_width or (b - a) >= min_width
+            if a - prev_b <= merge_gap and established:
                 merged[-1] = (prev_a, b)
             else:
                 merged.append((a, b))

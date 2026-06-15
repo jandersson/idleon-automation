@@ -251,7 +251,8 @@ def _run_inner(watch: bool = False, save_frames: bool = False):
         cart_right = (cart_det["center"][0] + cart_det["half_width"]) if cart_det else None
         now = time.time()
         plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
-        terrain = (find_next_terrain(frame, cart, plank_y=plank_y, cart_right=cart_right)
+        terrain = (find_next_terrain(frame, cart, plank_y=plank_y,
+                                     cart_right=cart_right, plank_range=plank_range)
                    if cart is not None else None)
         # Track the cart's resting y for the airborne guard (updated before
         # the fire decision so it reflects this frame).
