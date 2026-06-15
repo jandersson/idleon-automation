@@ -117,6 +117,34 @@ def test_read_score_from_crop_none_input():
     assert read_score_from_crop(None) is None
 
 
+def test_bootstrapped_digit_templates_read_single_and_multi_digit():
+    """The digit templates bootstrapped from the 2026-06-15 watch run (0-4)
+    read back, including composed multi-digit numbers — the first validation
+    of the multi-digit read path (the live run only reached single digits)."""
+    from common.score_template_ocr import load_templates
+    from minigames.mining.detector import _HERE
+    templates = load_templates(_HERE / "assets" / "digit_templates")
+    assert {0, 1, 2, 3, 4} <= set(templates), "expected digits 0-4 bootstrapped"
+
+    def compose(digits):
+        patches = [templates[d] for d in digits]
+        gap = 2
+        h = max(p.shape[0] for p in patches) + 4
+        w = sum(p.shape[1] for p in patches) + gap * (len(patches) + 1)
+        canvas = np.zeros((h, w), dtype=np.uint8)
+        x = gap
+        for p in patches:
+            ph, pw = p.shape
+            canvas[2:2 + ph, x:x + pw] = p
+            x += pw + gap
+        return cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
+
+    assert read_score_from_crop(compose([3])) == 3
+    assert read_score_from_crop(compose([1, 2])) == 12
+    assert read_score_from_crop(compose([4, 0])) == 40
+    assert read_score_from_crop(compose([1, 0, 3])) == 103
+
+
 def test_scan_plank_pits_finds_single_pit():
     frame = _frame_with_plank()
     # Punch a 10-px wide pit on the plank surface.
