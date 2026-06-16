@@ -18,6 +18,35 @@
 # special/star-talent block at indices 618-658 (active on every character
 # regardless of class; caps up to 121). Left out rather than guessed.
 
+# CharacterClass int -> class name. The save's per-character
+# `CharacterClass` is a direct index into IdleonToolbox's `classes` array
+# (data/website-data.json; `character.classIndex = char.CharacterClass`),
+# so this is that array with the non-class slots (skills / "Nope" fillers /
+# the *_Basics rows) dropped. Verified against the local save: the seven
+# characters read 8/9 (Barbarian/Squire), 20/21 (Bowman/Hunter), 31/32/33
+# (Mage/Wizard/Shaman) — note the Mage line does NOT follow the Warrior/
+# Archer "base, +1=W2, +2=W3" ordering (Wizard=32 precedes Shaman=33), so
+# the numbers come from the authoritative array, not an inferred pattern.
+CLASS_BY_ID: dict[int, str] = {
+    1: "Beginner", 2: "Journeyman", 3: "Maestro", 4: "Voidwalker", 5: "Infinilyte",
+    7: "Warrior", 8: "Barbarian", 9: "Squire", 10: "Blood Berserker",
+    12: "Divine Knight", 14: "Death Bringer", 16: "Royal Guardian",
+    19: "Archer", 20: "Bowman", 21: "Hunter", 22: "Siege Breaker",
+    25: "Beast Master", 29: "Wind Walker",
+    31: "Mage", 32: "Wizard", 33: "Shaman", 34: "Elemental Sorcerer",
+    35: "Spiritual Monk", 36: "Bubonic Conjuror", 40: "Arcane Cultist",
+}
+
+
+def class_name(class_id: int | None) -> str:
+    """Human class name for a save `CharacterClass` int, or `Class <id>`
+    when the id isn't a known class (future/secret classes degrade
+    gracefully rather than hiding the raw number)."""
+    if class_id is None:
+        return "?"
+    return CLASS_BY_ID.get(int(class_id), f"Class {int(class_id)}")
+
+
 TALENT_META: dict[int, dict] = {
     0: {"name": 'Health Booster', "class": 'Beginner', "tab": 0, "importance": 4, "bookable": True},
     1: {"name": 'Mana Booster', "class": 'Beginner', "tab": 0, "importance": 4, "bookable": True},

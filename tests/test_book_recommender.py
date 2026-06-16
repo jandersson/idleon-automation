@@ -1,5 +1,6 @@
 """Tests for the talent-book recommender (#44) — pure logic, synthetic data."""
-from ui.launcher.book_recommender import recommend_books
+from ui.launcher.book_recommender import recommend_books, recommend_books_account
+from ui.launcher.talent_data import CLASS_BY_ID, class_name
 
 # index -> meta. Importance 1 = highest.
 META = {
@@ -49,9 +50,44 @@ def test_gap_is_max_book_minus_cap():
     assert recs[0]["gap"] == MAXBOOK - 120
 
 
-def test_unknown_index_defaults_bookable_and_named():
-    # An at-cap active talent with no meta entry is still surfaced
-    # (named by index, default importance) — better to over-list than drop.
-    recs = recommend_books([100], [100], {}, MAXBOOK)
-    assert len(recs) == 1
-    assert recs[0]["name"] == "#0" and recs[0]["importance"] == 3
+def test_unmapped_index_is_skipped():
+    # An at-cap active talent with NO meta entry is the star/special block,
+    # which isn't Library-bookable — it must be skipped, not surfaced.
+    assert recommend_books([100], [100], {}, MAXBOOK) == []
+    # Even alongside a known candidate, the unmapped one is dropped.
+    recs = recommend_books([100, 100], [100, 100], {0: META[0]}, MAXBOOK)
+    assert [r["index"] for r in recs] == [0]
+
+
+def test_account_ranking_flattens_and_tags_characters():
+    talents = {
+        "Warr": {"skill_levels": [100, 0, 0, 100], "skill_levels_max": [100, -1, -1, 100],
+                 "character_class": 8},
+        "Mage": {"skill_levels": [0, 0, 100, 0], "skill_levels_max": [-1, -1, 100, -1],
+                 "character_class": 31},
+    }
+    recs = recommend_books_account(talents, META, MAXBOOK)
+    # Warr idx0 (imp1) > Warr idx3 (imp2) > Mage idx2 (imp4).
+    assert [(r["character"], r["index"]) for r in recs] == [
+        ("Warr", 0), ("Warr", 3), ("Mage", 2),
+    ]
+    assert all("character" in r for r in recs)
+
+
+def test_account_ranking_empty_when_nothing_at_cap():
+    talents = {"A": {"skill_levels": [50], "skill_levels_max": [100], "character_class": 8}}
+    assert recommend_books_account(talents, META, MAXBOOK) == []
+
+
+def test_class_name_maps_known_ids_and_degrades_gracefully():
+    # Verified against the local save's characters.
+    assert CLASS_BY_ID[8] == "Barbarian"
+    assert CLASS_BY_ID[9] == "Squire"
+    assert CLASS_BY_ID[20] == "Bowman"
+    assert CLASS_BY_ID[21] == "Hunter"
+    assert CLASS_BY_ID[31] == "Mage"
+    assert CLASS_BY_ID[32] == "Wizard"   # Mage line breaks the W2/W3 ordering
+    assert CLASS_BY_ID[33] == "Shaman"
+    assert class_name(8) == "Barbarian"
+    assert class_name(999) == "Class 999"  # unknown id → readable fallback
+    assert class_name(None) == "?"

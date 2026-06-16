@@ -175,6 +175,29 @@ _OLA_DARTS_PLAYS_TODAY = 440     # 0..N, grows with each scored darts session
 # stored base — so OLA[442] is not used for the cooldown.
 _OLA_TICKS_PER_SECOND = 5
 
+# Accumulated Library book-checkout pool (the shared count you spend to
+# generate Talent Books for any character). IdleonToolbox reads it from
+# OptionsListAccount[55] (`timeAway.BookLib` / book count); confirmed
+# against the local save (29). The checkout pool is account-wide, so the
+# book recommender ranks candidates across all characters (#44).
+_OLA_BOOK_CHECKOUTS = 55
+
+
+def read_book_checkouts(save_dir: str = SAVE_DIR) -> int | None:
+    """Accumulated Library book-checkout pool (OLA[55]) — the shared count
+    spent to check out Talent Books. None if the save can't be read or the
+    array is too short / non-numeric."""
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    ola = data.get("OptionsListAccount")
+    if not isinstance(ola, list) or len(ola) <= _OLA_BOOK_CHECKOUTS:
+        return None
+    n = ola[_OLA_BOOK_CHECKOUTS]
+    if not isinstance(n, (int, float)):
+        return None
+    return int(n)
+
 
 def read_darts_cooldown(save_dir: str = SAVE_DIR) -> dict[str, float | int] | None:
     """Read the live darts cooldown state from the save.

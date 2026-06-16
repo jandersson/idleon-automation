@@ -16,6 +16,13 @@ any room for a better book (`gap = max_book_level - cap > 0`).
 
 Candidates are ranked by talent importance (1 = highest) then by the gap
 (how many cap-levels a fresh max book unlocks).
+
+Only talents we have metadata for are recommendable. The unmapped active
+talents are the star/special block (save indices ~618+): those are raised
+by **Special Talent Books** (drops / quests / Merit shops), a separate
+system from the Library checkout pool (wiki: *Special Talents* /
+*Talent Book Library*), so a Library recommendation for them would point
+the user at a book that can't be checked out.
 """
 from __future__ import annotations
 
@@ -32,8 +39,10 @@ def recommend_books(
     """Ranked book candidates for one character.
 
     A talent index is a candidate iff it is active (`max != INACTIVE`),
-    bookable (not on the can't-be-booked exclusion list), currently AT CAP
-    (`level >= max`), and a higher book exists (`max < max_book_level`).
+    KNOWN (present in `talent_meta` — see module docstring on why unmapped
+    star talents are excluded), bookable (not on the can't-be-booked
+    exclusion list), currently AT CAP (`level >= max`), and a higher book
+    exists (`max < max_book_level`).
 
     Returns a list of dicts (best first):
         {index, name, klass, level, cap, gap, importance}
@@ -46,7 +55,9 @@ def recommend_books(
         lvl = skill_levels[i]
         if cap == INACTIVE or cap is None or lvl is None:
             continue
-        meta = talent_meta.get(i, {})
+        meta = talent_meta.get(i)
+        if meta is None:
+            continue  # unmapped → star/special talent, not Library-bookable
         if meta.get("bookable", True) is False:
             continue
         if lvl < cap:
@@ -63,5 +74,34 @@ def recommend_books(
             "gap": gap,
             "importance": meta.get("importance", DEFAULT_IMPORTANCE),
         })
+    out.sort(key=lambda c: (c["importance"], -c["gap"], -c["cap"]))
+    return out
+
+
+def recommend_books_account(
+    talents: dict[str, dict],
+    talent_meta: dict[int, dict],
+    max_book_level: int,
+) -> list[dict]:
+    """Account-wide book candidates ranked across ALL characters.
+
+    Library checkouts come from one shared pool (OLA[55]), so the real
+    question isn't "what's best for this character" but "where do my next
+    checkouts go" across the whole account. Flattens every character's
+    per-character candidates into one list, tags each with its
+    `character`, and ranks by the same (importance, -gap, -cap) key.
+
+    `talents` is the `read_talents()` shape: {char_name: {"skill_levels",
+    "skill_levels_max", "character_class"}}.
+    """
+    out: list[dict] = []
+    for name, t in talents.items():
+        for c in recommend_books(
+            t.get("skill_levels") or [],
+            t.get("skill_levels_max") or [],
+            talent_meta,
+            max_book_level,
+        ):
+            out.append({**c, "character": name})
     out.sort(key=lambda c: (c["importance"], -c["gap"], -c["cap"]))
     return out
