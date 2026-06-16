@@ -111,7 +111,16 @@ JUMP_COOLDOWN_S = 0.6
 # rows will refine.
 ORE_JUMP_TRIGGER_MIN = 40
 ORE_JUMP_TRIGGER_MAX = 70
-ORE_SLAM_MAX_DIST = 25     # airborne + nearest ore within this px => slam now
+# Slam when the airborne cart is nearly OVER the ore. The first auto run
+# (botrun_20260616_152324) slammed at ore_dist=17 and died — the cart came
+# down in front of the ore and the ore hit its side. The scoring run's
+# SUCCESSFUL human slams were at ore_dist <=10 (the crash was at 13), so the
+# slam must fire later, when the ore is at the cart's leading edge. find_next_
+# terrain reports ore no nearer than SCAN_BUFFER_PX(=10), so 11 fires it in
+# the ~10-11 success zone. (If it now misses the slam — never fires, runs in
+# grounded — the window is too tight and SCAN_BUFFER must drop so the ore is
+# seen closer.)
+ORE_SLAM_MAX_DIST = 11     # airborne + nearest ore within this px => slam now
 SLAM_COOLDOWN_S = 0.5      # one slam per airborne arc
 
 # How long after a jump click before we measure the outcome.

@@ -484,6 +484,18 @@ the pit-1 approach and a nearer pit always wins, so pit-1 clearing is intact.
 Tuned on ONE run/window — the next run's `kind='ore'` / `action='slam'` rows +
 outcomes refine the trigger/slam distances and confirm the signature live.
 
+### Run 14 (2026-06-16 auto) — detection good; slam was too EARLY
+
+`botrun_20260616_152324`: JUMP #1 (pit, dist 29) survived, JUMP #2 (ore, dist
+70) survived — **ore detection + ore-jump both work**. Then SLAM #3 fired at
+ore_dist=17 and DIED: the cart came down in front of the ore and the ore hit
+its side. Compared to the human scoring run — successful slams at ore_dist
+**≤10**, human's own crash at 13, bot's crash at 17 — the slam was firing ~7px
+too early. `ORE_SLAM_MAX_DIST` 25 → **11** (find_next_terrain floors ore_dist
+at SCAN_BUFFER_PX=10, so 11 fires in the ~10-11 success zone). If the next run
+shows the bot never slams (window too tight → runs into ore grounded), drop
+SCAN_BUFFER_PX so the ore is seen closer and widen the window.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
