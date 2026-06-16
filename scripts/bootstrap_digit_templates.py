@@ -83,6 +83,16 @@ def _is_clean_reading(reading: int, components: int) -> bool:
 
 def bootstrap_game(game_name: str, verbose: bool = False) -> dict[int, int]:
     """Extract digit templates for one game. Returns dict of {digit: count_observed}."""
+    if game_name not in GAMES:
+        # Only darts/hoops bootstrap digits from the DB (OCR'd per-shot score +
+        # post_throw monitor frames). Mining bootstraps offline from labelled
+        # digit_capture crops, so there's nothing to refresh from its DB —
+        # return cleanly rather than KeyError (the launcher hides the button,
+        # but guard the direct/CLI path too).
+        print(f"[{game_name}] no DB-refresh config — this game bootstraps digit "
+              f"templates another way (e.g. mining: label digit_capture crops). "
+              f"Nothing to refresh from the DB.", file=sys.stderr)
+        return {}
     cfg = GAMES[game_name]
     db_path = cfg["db"]
     if not db_path.exists():

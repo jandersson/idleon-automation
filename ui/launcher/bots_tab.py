@@ -161,10 +161,18 @@ def build_templates_row(parent: ttk.Frame, app, game_name: str) -> None:
     # reappear on the next launcher start.
     _captured, missing = template_status(game_name)
     if missing:
-        ttk.Button(
-            row, text="Refresh from DB", width=15,
-            command=lambda g=game_name: refresh_templates(app, g),
-        ).pack(side="left")
+        # "Refresh from DB" runs bootstrap_digit_templates.bootstrap_game, which
+        # only supports games whose DB stores OCR'd per-shot scores + post_throw
+        # monitor frames (darts/hoops). Mining bootstraps digits offline from
+        # labelled digit_capture crops instead, so it gets only "Capture from
+        # game" — showing Refresh for it would KeyError. Gate on the bootstrap
+        # script's own GAMES so the two can't drift.
+        from scripts.bootstrap_digit_templates import GAMES as _DB_REFRESH_GAMES
+        if game_name in _DB_REFRESH_GAMES:
+            ttk.Button(
+                row, text="Refresh from DB", width=15,
+                command=lambda g=game_name: refresh_templates(app, g),
+            ).pack(side="left")
         ttk.Label(row, text="  Capture from game — score now:").pack(side="left", padx=(12, 4))
         score_var = tk.StringVar()
         entry = ttk.Entry(row, textvariable=score_var, width=6)
