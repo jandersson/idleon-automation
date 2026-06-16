@@ -308,6 +308,34 @@ investigations:
   and `fallback` rates are comparable, and stratify the stripe-value
   comparison by vy range. All of that is recoverable from the log
   (`aim_mode`, `wind_speed`, `arm_centroid_vy_at_fire`, `score_increment`).
+  **Second caveat (#51 regime confound):** the throw-count gate (#51)
+  re-targets only the model band late-game, so once gray/tan die (≥10/25
+  hits) `model_ab` aims green/red while `band_ab` stays on the static
+  band — conflating aim quality with the gate. In calm air the argmax is
+  usually already green/red so the band rarely shifts, but to be safe
+  stratify the calm A/B to `hits < 10` (reconstruct cumulative hits from
+  the per-session `hit` column) for a gate-free comparison.
+
+- **Throw-count stripe gate is live (#51, 2026-06-16).** Low-value
+  stripes stop scoring as a game progresses (idleon.wiki *Throwy Darts*
+  "Until 10th/25th hit"; confirmed in darts.db over 52 games): gray (+1)
+  becomes a miss once 10 hits have been made, tan (+2) once 25. The
+  threshold counts cumulative HITS, not throws — tan's last scoring
+  hit-number is exactly 25 (n=207) and gray's is ≤9 (n=25), which only
+  lines up on the hit axis (throw-count smears below 25 once misses are
+  included). The E[stripe] model is now three surfaces
+  (`RegimeStripeModel` in `stripe_model.py`): full / gray-dead /
+  gray+tan-dead, selected per fire by `shot_stats["makes"]` (the live
+  scoring-hit count). The dead-stripe surfaces re-score those stripes to
+  0 — warm-started from the full fit's optimised kernel (~0.01s each, no
+  startup cost) — so the wind-conditioned band scan walks off the doomed
+  vys toward green/red on its own. Only the `model`/`model_ab` aim path
+  is gated; the static band already targets the mid-board, and
+  explore/fallback fire on any valid pass. The gate keys on the live
+  `makes` count, which can lag true hits if score detection drops (~10%),
+  triggering the gate a few hits late — there's no cleaner in-game hit
+  signal. The secondary red-chain/life mechanic (3 consecutive bullseyes
+  = +1 life) is NOT modelled (needs life tracking): issue #56.
 
 ### Safety
 
