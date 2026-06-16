@@ -13,6 +13,12 @@ dependencies = [
     "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
     "pynput>=1.7",
     "scikit-learn>=1.4",
+    # IANA tz database. Windows ships no system zoneinfo, so without this
+    # the Europe/Stockholm push-window lookup in common/auto_commit.py
+    # always raises and silently falls back to naive system-local time
+    # (#49). Pure-python and harmless on Unix; included unconditionally so
+    # the zone-aware path is robust to the host TZ (CI/cron/second machine).
+    "tzdata>=2024.1",
 ]
 
 [dependency-groups]
