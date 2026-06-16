@@ -398,6 +398,38 @@ this without a `--save-frames` capture: measure pit width + the airborne span,
 then set the trigger so the whole gap passes while airborne. Daily attempts
 exhausted; next session needs a frames run of the first-pit death.
 
+### Run 11 analysis (2026-06-16) — the "fire earlier" hypothesis is BACKWARDS; fire LATER
+
+Re-derived from the same death trace (session_20260616_131320, an exact repro
+at pit_dist=49) in ABSOLUTE time, cross-checked by a 3-lens agent panel. The
+gap reaches the cart at a fixed world-time regardless of when we jump; the
+click only shifts the (fixed-length) airborne window. Survival needs the window
+`[launch, land]` to contain the gap passage `[near, far]`. With v≈79 px/s,
+click→launch δ≈0.23 s, airborne A≈0.88 s, this gives two bounds on the fire
+distance D:
+
+- **(1)** airborne before the gap arrives: `D ≥ δ·v ≈ 18`
+- **(2)** gap clears before landing: `D + W ≤ v·(δ+A) ≈ 88`  (W = gap width)
+
+The old `[30,50]` fired at ~49: `49 + 52 = 101 > 88`, so the cart landed ~13 px
+into the far edge — exactly the death. Bound (2) shrinks with **smaller** D, so
+the fix is to fire **LATER** (smaller trigger). Firing *earlier* (the Run-10
+hypothesis) raises D and makes bound (2) worse — that hypothesis confused the
+gap's arrival relative to the fire frame with its arrival relative to landing.
+
+**Feasibility is still W-dependent (the real open question).** Point/center
+collision with W≈52 → feasible band `D ∈ [18, 36]`, fire ~27. Full-footprint
+collision (cart ~36 px, any overlap kills) → needs `W+F ≈ 88 px` of relative
+travel but only `v·A ≈ 70 px` happens airborne → **no single-jump timing clears**
+(short by ~19 px) and the fix is a multi-jump policy.
+
+**Action taken:** trigger lowered to `[20,30]` (fires ~30, inside the point-model
+band). This is the discriminator — a `--save-frames` re-run that **clears**
+confirms the point model; one that **still dies, now landing at the far lip**
+(not mid-gap), confirms footprint + W≈52 → build the land-and-re-jump policy.
+Either outcome also lets us **measure the true W** from the frames. This is the
+frames run Run 10 asked for, now with a corrected trigger to test.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
@@ -412,8 +444,9 @@ exhausted; next session needs a frames run of the first-pit death.
    run also provides the first real slam-ore + a real static-vs-scrolling
    capture to (re)build the velocity filter and finalize the OCR box.
 
-Trigger `[30,50]` is good for isolated pits — don't re-tune it without
-cause; the deaths are now downstream of it.
+Trigger retuned to `[20,30]` (Run 11 analysis above): the old `[30,50]` fired
+too early and landed into the pit's far edge. The remaining unknown is the gap
+width W + the collision model, which the next `--save-frames` re-run resolves.
 
 ## Open questions
 

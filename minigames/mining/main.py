@@ -66,20 +66,36 @@ WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.005
 
 # Click policy. Trigger when a pit's leading edge is within this distance
-# (px) of the cart's right edge. The bot fires on the first frame the pit
-# enters the window, i.e. at ~JUMP_TRIGGER_MAX.
+# (px) of the cart. The bot fires on the first frame the pit enters the
+# window, i.e. at ~JUMP_TRIGGER_MAX.
 #
-# Tuned 2026-06-15 from the measured jump arc (trace_20260516_131332 + the
-# first live bot run): a jump is airborne ~0.9s, peaking ~0.5s after the
-# click; scroll is ~94 px/s. The old [40,90] fired at ~90, so the pit
-# reached the cart at 90/94 ~= 0.95s — exactly as the cart finished its
-# arc and landed (the bot's JUMP #1 jumped, peaked, then came down into
-# the pit and died). Firing at ~50 makes the pit reach the cart at ~0.5s =
-# the arc's peak, so it passes under while the cart is highest. Pit width
-# is still unknown, so this is a first physics-based estimate — validate
-# live (the [traj] log lines below print the live arc to confirm/refine).
-JUMP_TRIGGER_MIN = 30
-JUMP_TRIGGER_MAX = 50
+# Retuned 2026-06-16 (#5) from the first-pit death trace
+# (session_20260616_131320), worked through in ABSOLUTE time. Once the cart
+# launches its airborne window is fixed: launch ~delta=0.23s after the
+# click, airborne A~0.88s. The gap reaches the cart at a fixed world-time no
+# matter when we jump; firing only shifts the window. To land on solid
+# ground the window [launch, land] must CONTAIN the gap passage [near, far].
+# With scroll v~79 px/s that pins two bounds on the fire distance D:
+#   (1) airborne before the gap arrives:  D >= delta*v       ~= 18
+#   (2) gap clears before landing:        D + W <= v*(delta+A) ~= 88   (W = gap width)
+# The old [30,50] fired at ~49: D+W = 49+52 = 101 > 88, so the cart landed
+# ~13px into the far edge and died (confirmed in the trace). The fix is to
+# fire LATER (smaller D) — NOT earlier as an earlier note speculated; firing
+# earlier worsens bound (2). [20,30] fires at ~30, inside the point-model
+# feasible band [18, 88-W].
+#
+# CAVEAT — this is an EXPERIMENT, not a settled fix. Feasibility depends on
+# the (still unmeasured) gap width W and the collision model. Center/point
+# model with W~=52: a single jump clears at this timing. Full-footprint
+# model (cart ~36px wide, any overlap kills): gap+footprint (~88px) exceeds
+# the airborne relative travel (v*A ~= 70px) by ~19px, so NO single-jump
+# timing clears and the real fix is a multi-jump (land-and-re-jump) policy.
+# This window is the discriminator: a --save-frames re-run that CLEARS
+# confirms the point model; one that still dies — now landing at the far
+# lip, not mid-gap — confirms footprint + W~=52. Measure the true W on that
+# run (the [traj] log lines below print the live arc).
+JUMP_TRIGGER_MIN = 20
+JUMP_TRIGGER_MAX = 30
 
 # After a jump click, ignore further triggers for this long so we don't
 # spam clicks while the same pit is still in the trigger window.

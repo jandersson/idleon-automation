@@ -36,6 +36,22 @@ def test_no_fire_on_ore_or_out_of_window():
     assert should_jump(**{**BASE_KW, "terrain": {"kind": "pit", "x": 300, "distance_px": 10}}) is False
 
 
+def test_trigger_window_fires_later_than_the_old_far_lip():
+    """#5 (2026-06-16): the configured trigger fires LATER (smaller pit_dist)
+    than the old [30,50], so the airborne window is phased to contain the gap
+    passage instead of landing into the far edge. The old fire distance (~49)
+    must no longer fire; a pit at the new max does. MIN stays >= ~18 (the
+    delta*v floor) so the cart is airborne before the gap arrives."""
+    from minigames.mining.main import JUMP_TRIGGER_MIN, JUMP_TRIGGER_MAX
+    assert JUMP_TRIGGER_MAX <= 32
+    assert JUMP_TRIGGER_MIN >= 18
+    kw = {**BASE_KW, "trig_min": JUMP_TRIGGER_MIN, "trig_max": JUMP_TRIGGER_MAX}
+    far = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": 49}}
+    assert should_jump(**far) is False  # the old fire point no longer fires
+    at_max = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": JUMP_TRIGGER_MAX}}
+    assert should_jump(**at_max) is True
+
+
 def test_no_fire_during_cooldown():
     assert should_jump(**{**BASE_KW, "now": 10.0, "last_click_time": 9.8}) is False  # 0.2s < 0.6s
     assert should_jump(**{**BASE_KW, "now": 10.0, "last_click_time": 9.3}) is True   # 0.7s >= 0.6s
