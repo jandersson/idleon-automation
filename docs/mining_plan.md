@@ -430,6 +430,35 @@ confirms the point model; one that **still dies, now landing at the far lip**
 Either outcome also lets us **measure the true W** from the frames. This is the
 frames run Run 10 asked for, now with a corrected trigger to test.
 
+### Run 12 (2026-06-16, `[20,30]` trigger) — pit 1 CLEARED; ore detection still blocked
+
+`session_20260616_133056` (`--save-frames`, 130 frames): **JUMP #1 cleared pit
+1 (survived)** — the `[20,30]` retune works, so a single jump DOES clear and the
+point/center collision model holds (the footprint "impossible" branch is
+falsified for this pit). The cart then crashed into the **ore** (user-observed),
+which the bot can't see (ore detection disabled), so it jumped it like a pit and
+sank.
+
+**Ore characterisation attempted and FAILED — do not repeat as-is.** A 3-agent
+panel reported the ore as a darker-tan band `V in [98,119]` "scrolling as
+foreground." Re-checked directly against the frames: that tan is the **plank
+surface** — with any workable column threshold it fires across the whole plank
+on every frame (including before the ore arrives). The agent's "scrolling blob"
+was the tan plank *between pits*, with the dark pit-gap scrolling through it.
+Two other traps confirmed: (a) scroll-velocity can't isolate ore from plank
+(both are foreground ~3px/frame; the velocity split only rejects the static
+parallax crystals); (b) the saved frames are the FULL window (572×959) so
+`_find_plank_top_y` mis-locks to a lower tan band (~296) — offline work must
+crop to the play region or pass the live `plank_y~185`.
+
+**What's actually needed (unchanged from the original Phase-A/D plan):** a
+SCORING `--watch` run where a human jump-slams ore and the PTS counter
+increments, with `--save-frames`. Isolate the ore from what sits under the cart
+on the frame the score changes; measure the slam timing from that successful
+slam (jump→2nd-click interval + the ore-under-cart position). Only then build
+`_scan_plank_ore` + the slam policy (`should_slam`: airborne + ore under cart →
+2nd click; never over a pit). Ore stays disabled until then.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

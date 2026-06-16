@@ -209,25 +209,32 @@ PLANK_CLUSTER_GAP = 100
 # (221px away), comfortably beyond this bridge.
 PLANK_BRIDGE_GAP = 150
 
-# Ore scan: rows ABOVE the plank top (chunks protrude up into normally
-# dark cave-wall area). Bright tan-ish columns there == ore.
-#
-# KNOWN BROKEN — does not detect the real slam-to-score ore, and currently
-# only HARMS survival (see _scan_plank_ore and docs/mining_plan.md, Run 6
-# 2026-06-15). Two facts established offline against botrun_20260615_012340:
-#   (1) there is no distinct "orange obstacle" — the tan signal above the
-#       plank is the continuous cave wall, not a trap; the lethal hazard is
-#       the pit (dark plank gap), handled by the pit scan.
-#   (2) the silver-blue crystal piles are STATIC parallax background, not
-#       track ore: across every grounded frame they hold fixed screen x
-#       (91/196/301/406) while the foreground pit scrolls ~3px/frame. So
-#       neither tan (cave wall) nor blue (background) above-plank scanning
-#       finds slam-ore — which never appeared in this 0-score capture.
-# Real slam-ore can only be characterised from a scoring --watch run, and
-# distinguishing it will need foreground/background separation by scroll
-# velocity (foreground ~93px/s, background static). Until then ore detection
-# is disabled (returns []) so phantom ore can't mask pits in find_next_terrain.
-ORE_SCAN_DY = (-15, -2)  # rows above plank top
+# Ore scan: STILL DISABLED. A 2026-06-16 investigation of
+# botrun_20260616_133056 (the run that cleared pit 1 then crashed into ore)
+# tried to characterise the slam-ore and FAILED — recorded here so it isn't
+# re-attempted the same way:
+#   - A 3-agent panel reported the ore as a darker-tan band V in [98,119]
+#     "scrolling as foreground" (x 420->321 over frames 60-93). Re-checked
+#     directly: that V[98,119] tan is the PLANK SURFACE itself — with a
+#     workable column threshold it fires across the whole plank on EVERY
+#     frame, including well before the ore arrives. The apparent "scrolling
+#     blob" was the tan plank BETWEEN pits, with the dark pit-gap scrolling
+#     through it; not a discrete ore object.
+#   - Scroll velocity can't isolate ore either: the plank AND any ore on it
+#     are both foreground (same ~3px/frame), so the foreground/background
+#     velocity split (which does reject the static parallax crystals) does
+#     not separate ore from plank.
+#   - The saved frames are the FULL window (572x959); the play area / plank
+#     is the upper band (plank_y~185 live), but _find_plank_top_y locks to a
+#     lower tan band (~296) on the full frame — so offline tuning must crop
+#     to the play region or pass the live plank_y.
+# CONCLUSION: this run's frames do not contain a separable ore signature.
+# Real slam-ore needs a SCORING --watch run (a human slams ore and the PTS
+# increments) with --save-frames, so the ore can be isolated by what's under
+# the cart on the frame the score changes — and the slam timing measured from
+# a successful slam. Until then ore stays disabled (returns []) so phantom
+# plank-tan can't mask pits in find_next_terrain.
+ORE_SCAN_DY = (-15, -2)  # rows above plank top (unused while disabled)
 ORE_V_MIN = 80
 ORE_MIN_WIDTH = 5
 
@@ -579,24 +586,13 @@ def _scan_plank_pits(frame, plank_y: int,
 def _scan_plank_ore(frame, plank_y: int,
                     x_start: Optional[int] = None,
                     x_end: Optional[int] = None) -> list[Tuple[int, int]]:
-    """Return list of (x_left, x_right) for slam-to-score ore above the plank.
+    """Return list of (x_left, x_right) for slam-to-score ore on the plank.
 
-    Disabled — returns [] unconditionally. Neither candidate above-plank
-    signal is the real ore (see the ORE_SCAN_DY comment block and
-    docs/mining_plan.md Run 6): tan-hue detects the cave wall, blue-hue
-    detects static parallax-background crystals. Both are phantom, and a
-    phantom obstacle here is worse than none: find_next_terrain returns the
-    nearest pit-OR-ore, and the jump trigger fires only on kind=='pit'
-    (main.py), so a phantom ore sitting between the cart and a real pit masks
-    that pit and suppresses the jump. Against botrun_20260615_012340 the
-    blue scan reported "ore at distance 28" every frame from a static
-    background pile, which would have hidden every pit and guaranteed a
-    death. Until a scoring --watch run reveals the real ore (and a
-    scroll-velocity foreground/background filter separates it from
-    decoration), detecting nothing is the safe, survival-correct behavior.
-
-    Signature and x_start/x_end convention preserved for the eventual real
-    implementation and for find_next_terrain's caller."""
+    DISABLED — returns [] unconditionally. The 2026-06-16 attempt to
+    characterise the ore from botrun_20260616_133056 found no signature
+    separable from the plank surface (see the ORE_* comment block above for
+    the full investigation). Re-enabling needs a scoring --watch capture.
+    Signature/x_start/x_end convention preserved for the real implementation."""
     return []
 
 
