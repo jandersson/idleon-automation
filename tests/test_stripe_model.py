@@ -6,13 +6,19 @@ from pathlib import Path
 from minigames.darts.shot_log import open_db, log_throw, log_poll
 from minigames.darts.stripe_model import (
     EV_MARGIN,
+    GRAY_DEAD_AFTER_HITS,
     MIN_SAMPLES,
+    RegimeStripeModel,
+    TAN_DEAD_AFTER_HITS,
     VALID_INCREMENTS,
     VY_GRID,
     VY_OUTLIER_ABS,
     fetch_stripe_rows,
+    fit_regime_models,
     fit_stripe_gp,
     model_vy_band,
+    regime_for_hits,
+    relabel_for_hits,
 )
 
 
@@ -158,3 +164,89 @@ def test_band_members_are_within_margin():
     assert band == (min(VY_GRID), max(VY_GRID))
     assert best_ev == 1.0
     assert EV_MARGIN > 0
+
+
+# ---- Throw-count stripe gate (#51) -----------------------------------
+
+
+def test_gate_thresholds_match_wiki():
+    """idleon.wiki Throwy Darts ("Until 10th/25th hit") + darts.db
+    confirmation. A regression guard: bumping these silently would
+    de-gate (or over-gate) the late-game model."""
+    assert GRAY_DEAD_AFTER_HITS == 10
+    assert TAN_DEAD_AFTER_HITS == 25
+    assert regime_for_hits(0) == "full"
+    assert regime_for_hits(9) == "full"
+    assert regime_for_hits(10) == "gray dead"
+    assert regime_for_hits(24) == "gray dead"
+    assert regime_for_hits(25) == "gray+tan dead"
+
+
+def test_relabel_for_hits_zeroes_dead_stripes():
+    """Gray (score 1) dies at hit 10, tan (score 2) at hit 25; green/red/
+    miss are untouched, and the input list is never mutated in place."""
+    base = [
+        (0.0, 0.0, -20.0, 316.0, 0.0),  # miss
+        (0.0, 0.0, -56.0, 316.0, 1.0),  # gray
+        (0.0, 0.0, -12.0, 316.0, 2.0),  # tan
+        (0.0, 0.0, -36.0, 316.0, 3.0),  # green
+        (0.0, 0.0, -40.0, 316.0, 5.0),  # red
+    ]
+    # Nothing dead before hit 10 → identity (same object, no copy).
+    assert relabel_for_hits(base, 9) is base
+    # Gray dead 10..24, tan still alive.
+    assert [r[4] for r in relabel_for_hits(base, 10)] == [0.0, 0.0, 2.0, 3.0, 5.0]
+    assert [r[4] for r in relabel_for_hits(base, 24)] == [0.0, 0.0, 2.0, 3.0, 5.0]
+    # Gray + tan both dead from hit 25.
+    assert [r[4] for r in relabel_for_hits(base, 25)] == [0.0, 0.0, 0.0, 3.0, 5.0]
+    # Original rows untouched.
+    assert [r[4] for r in base] == [0.0, 1.0, 2.0, 3.0, 5.0]
+
+
+def test_regime_model_routes_by_hit_count():
+    """for_hits picks the surface matching the dead-stripe set, and falls
+    back to the full surface when a warm regime fit is missing."""
+    full, gray_dead, all_dead = object(), object(), object()
+    m = RegimeStripeModel(full, gray_dead, all_dead)
+    assert m.for_hits(0) is full
+    assert m.for_hits(9) is full
+    assert m.for_hits(10) is gray_dead
+    assert m.for_hits(24) is gray_dead
+    assert m.for_hits(25) is all_dead
+    assert m.for_hits(40) is all_dead
+    # Missing warm fits → full (keeps the live aim path total).
+    assert RegimeStripeModel(full, None, None).for_hits(10) is full
+    assert RegimeStripeModel(full, None, None).for_hits(25) is full
+
+
+def test_regime_fit_collapses_dead_stripe_ev():
+    """End to end: relabel -> warm refit -> predict. Three well-separated
+    vy clusters each land one stripe; zeroing a stripe must drop its vy
+    region's EV (the band scan then walks off it) while leaving live
+    stripes' EV intact. ~15% misses give the WhiteKernel real noise."""
+    rng = random.Random(2)
+    rows = []
+    for _ in range(70):
+        for vy, stripe in ((-56.0, 1.0), (-36.0, 3.0), (-12.0, 2.0)):
+            score = 0.0 if rng.random() < 0.15 else stripe
+            rows.append((0.0, 0.0, vy + rng.uniform(-2, 2), 316.0, score))
+    m = fit_regime_models(rows)
+    assert m is not None
+    full, gray_dead, all_dead = m.full, m.gray_dead, m.all_dead
+    # Routing identity (same objects the EV checks use).
+    assert m.for_hits(9) is full
+    assert m.for_hits(10) is gray_dead
+    assert m.for_hits(25) is all_dead
+
+    def ev(model, vy):
+        return model.predict(0.0, 0.0, vy, 316.0)
+
+    GRAY_VY, GREEN_VY, TAN_VY = -56.0, -36.0, -12.0
+    # hits>=10: gray region collapses; tan and green hold.
+    assert ev(gray_dead, GRAY_VY) < ev(full, GRAY_VY) - 0.4
+    assert abs(ev(gray_dead, TAN_VY) - ev(full, TAN_VY)) < 0.4
+    assert abs(ev(gray_dead, GREEN_VY) - ev(full, GREEN_VY)) < 0.4
+    # hits>=25: tan region also collapses; green still holds.
+    assert ev(all_dead, TAN_VY) < ev(full, TAN_VY) - 0.4
+    assert ev(all_dead, GRAY_VY) < ev(full, GRAY_VY) - 0.4
+    assert abs(ev(all_dead, GREEN_VY) - ev(full, GREEN_VY)) < 0.4

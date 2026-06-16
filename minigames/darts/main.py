@@ -28,11 +28,14 @@ from minigames.darts.arm_motion import (
     compute_arm_centroid,
 )
 from minigames.darts.stripe_model import (
+    GRAY_DEAD_AFTER_HITS,
     MIN_SAMPLES as STRIPE_MIN_SAMPLES,
-    StripeEvModel,
+    RegimeStripeModel,
+    TAN_DEAD_AFTER_HITS,
     fetch_stripe_rows,
-    fit_stripe_gp,
+    fit_regime_models,
     model_vy_band,
+    regime_for_hits,
 )
 
 _HERE = Path(__file__).parent
@@ -499,13 +502,16 @@ def run():
         # once per session — the training set only grows between
         # sessions, and a startup fit keeps the poll loop allocation-free.
         ev_rows = fetch_stripe_rows(throw_db)
-        ev_model = fit_stripe_gp(ev_rows)
+        ev_model = fit_regime_models(ev_rows)
         if ev_model is None:
             print(f"stripe EV model: data floor not met ({len(ev_rows)} rows "
                   f"< {STRIPE_MIN_SAMPLES}) — static vy band [{VY_AIM_LO},{VY_AIM_HI}] px/s")
         else:
             print(f"stripe EV model: fitted on {len(ev_rows)} throws — "
                   f"wind-conditioned dy band live (#41 step 3)")
+            print(f"  throw-count gate (#51): gray (+1) -> 0 after hit "
+                  f"{GRAY_DEAD_AFTER_HITS}, tan (+2) -> 0 after hit "
+                  f"{TAN_DEAD_AFTER_HITS} — model re-targets green/red late-game")
             print(f"  calm-air A/B (#48): wind < {CALM_WIND_MAX} mph alternates "
                   f"static band (band_ab) vs model (model_ab) by throw parity")
             n_band_ab, n_model_ab = calm_ab_counts(throw_db, CALM_WIND_MAX)
@@ -528,7 +534,7 @@ def _run_inner(
     session_started: str,
     throw_db,
     code_commit: str | None,
-    ev_model: StripeEvModel | None = None,
+    ev_model: RegimeStripeModel | None = None,
 ):
     print(f"Darts bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
@@ -564,6 +570,7 @@ def _run_inner(
     last_celebration_click = 0.0  # rate-limits dismiss-clicks during the streak banner
     overlay_probe_clicks = 0  # unknown-overlay probes since the last real pose match
     aim_skips = 0  # out-of-band passes skipped since the last fire (#41 dy-band aim)
+    last_regime = regime_for_hits(0)  # throw-count stripe regime (#51); print on change
 
     while True:
         check_failsafe()
@@ -754,24 +761,42 @@ def _run_inner(
         # pre-click latency) and scan the model for the near-argmax vys.
         # Unparseable wind or no model falls back to the static band.
         explore_throw = (throws_taken + 1) % EXPLORE_EVERY_N == 0
+        # Throw-count stripe gate (#51): select the EV surface whose dead-
+        # stripe set matches the hits made so far. shot_stats["makes"] is
+        # the cumulative scoring-hit count (same score-change signal as the
+        # logged `hit` column), so at fire time it's the hits from prior
+        # throws — exactly the count the gray@10 / tan@25 thresholds key
+        # on. The gray/tan-dead surfaces re-score those stripes to 0, so
+        # the band scan below walks off the now-doomed vys toward green/red.
+        hits_made = shot_stats["makes"]
+        active_model = ev_model.for_hits(hits_made) if ev_model is not None else None
+        # Announce regime transitions only when a model is live — without
+        # one the gate has no effect (the static band already targets the
+        # mid-board) and the message would mislead.
+        if ev_model is not None:
+            regime = regime_for_hits(hits_made)
+            if regime != last_regime:
+                print(f"  [gate] {hits_made} hits made — stripe regime now "
+                      f"'{regime}' (model re-targets green/red)")
+                last_regime = regime
         model_band: tuple[int, int] | None = None
         model_best_vy: int | None = None
         model_best_ev: float | None = None
         calm_ab_arm: str | None = None
         if (
-            ev_model is not None
+            active_model is not None
             and arm_centroid_vy is not None
             and not explore_throw
             # Outside the training data's pose_y support the band is GP
             # mean-reversion junk — seen live when the (146, 38) phantom
             # match slipped past the adapted conf gate. Static band
             # handles those passes.
-            and ev_model.supports_pose(float(pose[1]))
+            and active_model.supports_pose(float(pose[1]))
         ):
             ws_now, _, wx_now, wy_now = parse_wind(_crop_wind(frame))
             if wx_now is not None:
                 model_band, model_best_vy, model_best_ev = model_vy_band(
-                    ev_model, wx_now, wy_now, float(pose[1]),
+                    active_model, wx_now, wy_now, float(pose[1]),
                 )
                 # Calm-air A/B (#48): in dead calm the static band beats
                 # the model on stripe value (n=16: 4.5 vs 2.52 pts) but

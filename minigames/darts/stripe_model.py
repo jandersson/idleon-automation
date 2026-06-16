@@ -62,6 +62,19 @@ VY_OUTLIER_ABS = 160
 POSE_SUPPORT_PCT = 0.05
 POSE_SUPPORT_PAD = 25.0
 
+# Throw-count stripe gating (#51). Low-value stripes stop scoring as a
+# game progresses (Throwy Darts; idleon.wiki "Until 10th/25th hit" +
+# confirmed against darts.db): gray (+1) becomes a miss once this many
+# hits have been made, tan (+2) likewise. The thresholds count cumulative
+# HITS in the current game, not throws — across 52 logged games tan's
+# last scoring hit-number is exactly 25 (n=207) and gray's is <=9 (n=25),
+# which only lines up on the hit axis (throw-count would smear below 25
+# once misses are included). Firing on a vy that lands a dead stripe is a
+# guaranteed miss (a lost life), so the regime models below re-score
+# those stripes to 0 and the band scan walks off the doomed vys.
+GRAY_DEAD_AFTER_HITS = 10
+TAN_DEAD_AFTER_HITS = 25
+
 
 class StripeEvModel:
     """Wraps a fitted sklearn GP regressor over
@@ -179,6 +192,9 @@ def fetch_stripe_rows(
 def fit_stripe_gp(
     rows: list[tuple[float, float, float, float, float]],
     min_samples: int = MIN_SAMPLES,
+    *,
+    kernel=None,
+    optimize: bool = True,
 ) -> StripeEvModel | None:
     """Fit the EV surface. Returns None below the sample floor.
 
@@ -189,6 +205,14 @@ def fit_stripe_gp(
     convention for sprite-position dims). WhiteKernel absorbs the
     outcome noise — the target is 0-or-stripe, so per-point variance
     is large by construction.
+
+    `kernel`/`optimize` support the warm-started regime fits (#51): pass
+    an already-fitted kernel with optimize=False to skip hyperparameter
+    search and just recompute the posterior for a relabelled target. A
+    dead-stripe surface differs from the full one only in a handful of
+    zeroed points, so its smoothness is the full model's — the warm fit
+    is ~0.01s vs ~5s for a fresh optimisation, so the gate costs nothing
+    extra at startup.
     """
     if len(rows) < min_samples:
         return None
@@ -198,18 +222,20 @@ def fit_stripe_gp(
 
     X = np.array([[r[0], r[1], r[2], r[3]] for r in rows])
     y = np.array([r[4] for r in rows])
-    kernel = (
-        ConstantKernel(1.0, (1e-2, 1e3))
-        * RBF(
-            length_scale=[3.0, 3.0, 16.0, 50.0],
-            length_scale_bounds=(0.5, 1e3),
+    if kernel is None:
+        kernel = (
+            ConstantKernel(1.0, (1e-2, 1e3))
+            * RBF(
+                length_scale=[3.0, 3.0, 16.0, 50.0],
+                length_scale_bounds=(0.5, 1e3),
+            )
+            + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-2, 1e2))
         )
-        + WhiteKernel(noise_level=1.0, noise_level_bounds=(1e-2, 1e2))
-    )
     gp = GaussianProcessRegressor(
         kernel=kernel,
         normalize_y=True,
-        n_restarts_optimizer=4,
+        n_restarts_optimizer=4 if optimize else 0,
+        optimizer="fmin_l_bfgs_b" if optimize else None,
         random_state=0,
     )
     gp.fit(X, y)
@@ -243,3 +269,107 @@ def model_vy_band(
     while hi_i < len(vys) - 1 and evs[hi_i + 1] >= floor:
         hi_i += 1
     return (int(vys[lo_i]), int(vys[hi_i])), int(vys[best_i]), evs[best_i]
+
+
+def relabel_for_hits(
+    rows: list[tuple[float, float, float, float, float]],
+    hits_made: int,
+) -> list[tuple[float, float, float, float, float]]:
+    """Re-score training rows for the dead-stripe set at `hits_made` (#51).
+
+    A row's score VALUE uniquely identifies its stripe (1=gray, 2=tan,
+    3=green, 5=red, 0=miss — fetch_stripe_rows maps the OCR'd increment
+    straight to score), so the relabel is a pure value remap: gray (1) ->
+    0 once hits_made >= GRAY_DEAD_AFTER_HITS, tan (2) -> 0 once hits_made
+    >= TAN_DEAD_AFTER_HITS. Green/red/miss are untouched. Returns the
+    input list unchanged when nothing is dead yet (hits < 10)."""
+    gray_dead = hits_made >= GRAY_DEAD_AFTER_HITS
+    tan_dead = hits_made >= TAN_DEAD_AFTER_HITS
+    if not gray_dead and not tan_dead:
+        return rows
+    out = []
+    for wx, wy, vy, py, score in rows:
+        if gray_dead and score == 1.0:
+            score = 0.0
+        elif tan_dead and score == 2.0:
+            score = 0.0
+        out.append((wx, wy, vy, py, score))
+    return out
+
+
+def regime_for_hits(hits_made: int) -> str:
+    """Human label for the active throw-count regime (#51), for logging."""
+    if hits_made >= TAN_DEAD_AFTER_HITS:
+        return "gray+tan dead"
+    if hits_made >= GRAY_DEAD_AFTER_HITS:
+        return "gray dead"
+    return "full"
+
+
+class RegimeStripeModel:
+    """Per-regime E[stripe] surfaces for the throw-count gate (#51).
+
+    Gray (+1) stops scoring after the 10th hit and tan (+2) after the
+    25th. Once a stripe is dead, firing on a vy that lands it is a
+    guaranteed miss (a lost life). Re-scoring those stripes to 0 and
+    re-fitting the EV surface makes the band scan walk off the doomed vys
+    toward green/red on its own — the issue's "feed throw count into the
+    GP" option, done as three surfaces selected by cumulative hits:
+      full       — hits 0-9:   gray + tan both score
+      gray_dead  — hits 10-24: gray worth 0
+      all_dead   — hits 25+:   gray + tan both worth 0
+
+    The three share one training set (relabelling only touches the score
+    target, not pose_y), so pose support is identical — supports_pose
+    delegates to the full model.
+    """
+
+    def __init__(
+        self,
+        full: StripeEvModel,
+        gray_dead: StripeEvModel | None,
+        all_dead: StripeEvModel | None,
+    ):
+        self.full = full
+        self.gray_dead = gray_dead
+        self.all_dead = all_dead
+
+    def for_hits(self, hits_made: int) -> StripeEvModel:
+        """The EV sub-model whose dead-stripe set matches this hit count.
+        Falls back to the full surface if a warm regime fit is missing
+        (can't happen for in-floor data — relabelling drops no rows — but
+        keeps the live path total)."""
+        if hits_made >= TAN_DEAD_AFTER_HITS:
+            return self.all_dead or self.full
+        if hits_made >= GRAY_DEAD_AFTER_HITS:
+            return self.gray_dead or self.full
+        return self.full
+
+    def supports_pose(self, pose_y: float) -> bool:
+        return self.full.supports_pose(pose_y)
+
+
+def fit_regime_models(
+    rows: list[tuple[float, float, float, float, float]],
+    min_samples: int = MIN_SAMPLES,
+) -> RegimeStripeModel | None:
+    """Fit the three throw-count regimes (#51). Returns None below the
+    sample floor (caller falls back to the static vy band).
+
+    The full surface is optimised normally; the two dead-stripe surfaces
+    reuse the full model's fitted kernel and skip hyperparameter search
+    (optimize=False), so the gate adds ~0.02s rather than ~11s to startup
+    (see fit_stripe_gp)."""
+    full = fit_stripe_gp(rows, min_samples)
+    if full is None:
+        return None
+    kernel = full._gp.kernel_
+    gray_dead = fit_stripe_gp(
+        relabel_for_hits(rows, GRAY_DEAD_AFTER_HITS),
+        min_samples, kernel=kernel, optimize=False,
+    )
+    all_dead = fit_stripe_gp(
+        relabel_for_hits(rows, TAN_DEAD_AFTER_HITS),
+        min_samples, kernel=kernel, optimize=False,
+    )
+    return RegimeStripeModel(full, gray_dead, all_dead)
