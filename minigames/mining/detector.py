@@ -209,34 +209,34 @@ PLANK_CLUSTER_GAP = 100
 # (221px away), comfortably beyond this bridge.
 PLANK_BRIDGE_GAP = 150
 
-# Ore scan: STILL DISABLED. A 2026-06-16 investigation of
-# botrun_20260616_133056 (the run that cleared pit 1 then crashed into ore)
-# tried to characterise the slam-ore and FAILED — recorded here so it isn't
-# re-attempted the same way:
-#   - A 3-agent panel reported the ore as a darker-tan band V in [98,119]
-#     "scrolling as foreground" (x 420->321 over frames 60-93). Re-checked
-#     directly: that V[98,119] tan is the PLANK SURFACE itself — with a
-#     workable column threshold it fires across the whole plank on EVERY
-#     frame, including well before the ore arrives. The apparent "scrolling
-#     blob" was the tan plank BETWEEN pits, with the dark pit-gap scrolling
-#     through it; not a discrete ore object.
-#   - Scroll velocity can't isolate ore either: the plank AND any ore on it
-#     are both foreground (same ~3px/frame), so the foreground/background
-#     velocity split (which does reject the static parallax crystals) does
-#     not separate ore from plank.
-#   - The saved frames are the FULL window (572x959); the play area / plank
-#     is the upper band (plank_y~185 live), but _find_plank_top_y locks to a
-#     lower tan band (~296) on the full frame — so offline tuning must crop
-#     to the play region or pass the live plank_y.
-# CONCLUSION: this run's frames do not contain a separable ore signature.
-# Real slam-ore needs a SCORING --watch run (a human slams ore and the PTS
-# increments) with --save-frames, so the ore can be isolated by what's under
-# the cart on the frame the score changes — and the slam timing measured from
-# a successful slam. Until then ore stays disabled (returns []) so phantom
-# plank-tan can't mask pits in find_next_terrain.
-ORE_SCAN_DY = (-15, -2)  # rows above plank top (unused while disabled)
-ORE_V_MIN = 80
-ORE_MIN_WIDTH = 5
+# Ore scan: the slam-to-score ore is a pile of brown rocks on the plank that
+# POKES UP above the plank-top line. Characterised 2026-06-16 from the
+# scoring run botrun_20260616_135951 (a human jump-slammed ore; PTS 0->1 at
+# frame 132):
+#   - On the plank SURFACE the ore is brown rock, spectrally identical to the
+#     brown plank (both V~115, S~114) — a surface colour mask can't separate
+#     them (an earlier "V[98,119]" attempt was just the plank).
+#   - But in the band JUST ABOVE the plank top, bare plank shows only the dark
+#     cave; an ore pile shows its brown rock poking up. So brown there
+#     LOCALISES to discrete ore piles — validated: scanning x PAST the cart
+#     returns discrete runs that scroll leftward across frames 91->159, with
+#     zero-gaps over bare plank / pits. (The cart pokes up too, so callers
+#     scan past cart_right; find_next_terrain already does.)
+#   - Scroll velocity can't help (plank and ore are both foreground); the
+#     above-plank signal is the discriminator.
+#
+# EXPERIMENTAL (#5 / Phase D): tuned on ONE scoring run/window — frac/width
+# may need a retune elsewhere, and the cave wall could in principle dip to the
+# plank top in another room (the original phantom worry). Ore (brown) and pits
+# (dark gap) stay spectrally disjoint and the pit scan is unchanged, so a near
+# pit still wins on distance in find_next_terrain. The next run logs
+# kind='ore' + action='slam' so the signature + slam timing validate live.
+ORE_SCAN_DY = (-15, 0)    # band straddling the plank top; ore pokes up here
+ORE_H = (5, 22)
+ORE_S_MIN = 85
+ORE_V = (65, 180)
+ORE_COL_FRAC = 0.25       # column is "ore" if > this fraction of band rows match
+ORE_MIN_WIDTH = 10
 
 
 def find_play_button(frame) -> Optional[Tuple[int, int]]:
@@ -586,14 +586,30 @@ def _scan_plank_pits(frame, plank_y: int,
 def _scan_plank_ore(frame, plank_y: int,
                     x_start: Optional[int] = None,
                     x_end: Optional[int] = None) -> list[Tuple[int, int]]:
-    """Return list of (x_left, x_right) for slam-to-score ore on the plank.
+    """Return list of (x_left, x_right) for slam-to-score ore piles.
 
-    DISABLED — returns [] unconditionally. The 2026-06-16 attempt to
-    characterise the ore from botrun_20260616_133056 found no signature
-    separable from the plank surface (see the ORE_* comment block above for
-    the full investigation). Re-enabling needs a scoring --watch capture.
-    Signature/x_start/x_end convention preserved for the real implementation."""
-    return []
+    Detected where brown rock pokes UP above the plank-top line (bare plank
+    shows only dark cave there) — see the ORE_* comment block for how this
+    was validated. Mirrors _scan_plank_pits: HSV-gate a y-band straddling the
+    plank top, keep columns where > ORE_COL_FRAC of the band is brown, extract
+    runs wider than ORE_MIN_WIDTH. Callers pass cart_right as x_start (the cart
+    pokes up too) and the plank x-extent as x_end."""
+    h, w = frame.shape[:2]
+    x0 = x_start if x_start is not None else int(PLANK_X0_FRAC * w)
+    x1 = x_end if x_end is not None else int(PLANK_X1_FRAC * w)
+    y0 = max(0, plank_y + ORE_SCAN_DY[0])
+    y1 = min(h, plank_y + ORE_SCAN_DY[1])
+    if y1 <= y0 or x1 <= x0:
+        return []
+    band = frame[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+    is_ore = (
+        (hsv[:, :, 0] >= ORE_H[0]) & (hsv[:, :, 0] <= ORE_H[1]) &
+        (hsv[:, :, 1] >= ORE_S_MIN) &
+        (hsv[:, :, 2] >= ORE_V[0]) & (hsv[:, :, 2] <= ORE_V[1])
+    )
+    col_is_ore = is_ore.sum(axis=0) > (y1 - y0) * ORE_COL_FRAC
+    return _extract_runs(col_is_ore, offset=x0, min_width=ORE_MIN_WIDTH)
 
 
 def _find_plank_x_range(frame, plank_y: int) -> Optional[Tuple[int, int]]:

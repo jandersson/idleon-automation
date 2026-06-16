@@ -80,25 +80,70 @@ def is_cart_airborne(cart_y: Optional[int], grounded_baseline_y: Optional[int],
 def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
                 grounded_baseline_y: Optional[int], cooldown_s: float,
                 trig_min: int, trig_max: int,
+                ore_trig_min: Optional[int] = None,
+                ore_trig_max: Optional[int] = None,
                 airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
-    """The auto-mode fire predicate. Returns True iff a jump click should
-    fire this frame.
+    """The grounded-jump predicate (the FIRST click). Returns True iff a jump
+    should fire this frame.
 
-    Gates, in cheap-to-expensive order: cart + plank present; nearest terrain
-    is a pit; its distance is inside [trig_min, trig_max]; the post-jump
-    cooldown has expired; and the cart is NOT airborne (see module docstring —
-    an airborne click is a lethal slam). Click POSITION is irrelevant (Idleon
-    reads a click as a button press), so this returns only the yes/no — the
-    caller picks where to click."""
+    Gates, cheap-to-expensive: cart + plank present; the nearest terrain is a
+    jumpable obstacle in its trigger window; the post-jump cooldown has
+    expired; the cart is NOT airborne (an airborne click is a slam, see
+    should_slam + the module docstring). Click POSITION is irrelevant (Idleon
+    reads a click as a button press), so this returns only yes/no.
+
+    A PIT fires in [trig_min, trig_max] (jump to clear it). An ORE fires in
+    [ore_trig_min, ore_trig_max] when those are supplied — a FARTHER window so
+    the cart is airborne by the time the ore scrolls under it to be slammed
+    (see should_slam). With the ore window omitted (None) ore never jumps, so
+    the pit-only behaviour is unchanged."""
     if cart is None or plank_y is None or terrain is None:
         return False
-    if terrain.get("kind") != "pit":
-        return False
+    kind = terrain.get("kind")
     dist = terrain.get("distance_px")
-    if dist is None or not (trig_min <= dist <= trig_max):
+    if dist is None:
+        return False
+    if kind == "pit":
+        lo, hi = trig_min, trig_max
+    elif kind == "ore" and ore_trig_min is not None and ore_trig_max is not None:
+        lo, hi = ore_trig_min, ore_trig_max
+    else:
+        return False
+    if not (lo <= dist <= hi):
         return False
     if now - last_click_time < cooldown_s:
         return False
     if is_cart_airborne(cart[1], grounded_baseline_y, airborne_eps):
+        return False
+    return True
+
+
+def should_slam(*, cart, terrain, now: float, last_slam_time: float,
+                grounded_baseline_y: Optional[int], slam_cooldown_s: float,
+                slam_max_dist: int,
+                airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
+    """The slam predicate (the SECOND click) — drop the airborne cart onto
+    ore to mine it. Returns True iff:
+
+      - the cart is AIRBORNE (slamming is only meaningful mid-arc), and
+      - the nearest obstacle is ORE within slam_max_dist of the cart's
+        leading edge (the ore has scrolled under the cart), and
+      - the per-arc slam cooldown has expired.
+
+    NEVER fires over a pit (kind must be 'ore') — an airborne click over a
+    pit is the lethal slam the airborne guard exists to prevent. The grounded
+    jump that got the cart airborne is should_jump's ore branch; this is the
+    follow-up. Self-timing: it fires when the ore actually reaches the cart,
+    not on a fixed delay."""
+    if cart is None or terrain is None:
+        return False
+    if terrain.get("kind") != "ore":
+        return False
+    if not is_cart_airborne(cart[1], grounded_baseline_y, airborne_eps):
+        return False
+    dist = terrain.get("distance_px")
+    if dist is None or dist > slam_max_dist:
+        return False
+    if now - last_slam_time < slam_cooldown_s:
         return False
     return True

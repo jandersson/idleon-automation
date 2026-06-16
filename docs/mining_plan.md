@@ -459,6 +459,31 @@ slam (jump→2nd-click interval + the ore-under-cart position). Only then build
 `_scan_plank_ore` + the slam policy (`should_slam`: airborne + ore under cart →
 2nd click; never over a pit). Ore stays disabled until then.
 
+### Run 13 (2026-06-16 scoring run) — ore CHARACTERISED; detection + slam BUILT
+
+`botrun_20260616_135951` (`--watch --save-frames`): a human jump-slammed ore,
+**PTS 0→1 at frame 132** — slam-on-ore scores, confirmed. Run 12's "no
+separable signature" was the wrong band:
+- **The ore is a brown rock pile that POKES UP above the plank-top line.** On
+  the plank surface it's spectrally identical to the brown plank (both V~115),
+  but in the band JUST ABOVE the top, bare plank is dark cave while an ore pile
+  shows brown. Scanning that band past the cart returns discrete runs that
+  scroll leftward across frames (validated f70→f159); bare plank / pits read
+  zero. That above-plank brown is the discriminator (not surface colour, not
+  scroll-velocity — plank and ore are both foreground).
+- **Slam timing** from the human clicks (cart_y: grounded 179 vs airborne):
+  jump at ore_dist~69 (grounded) → slam ~0.75s later at ore_dist~10 (airborne).
+
+**Built (experimental):** `_scan_plank_ore` re-enabled (above-plank brown,
+frac 0.25 / min-width 10); `should_jump` gains an ore window
+`[ORE_JUMP_TRIGGER_MIN=40, MAX=70]` (farther than pits so the cart is airborne
+when the ore arrives); new `should_slam` fires the 2nd click when airborne and
+the nearest obstacle is ore within `ORE_SLAM_MAX_DIST=25` (self-timing off the
+live ore distance, never over a pit). Regression-checked: ore stays empty on
+the pit-1 approach and a nearer pit always wins, so pit-1 clearing is intact.
+Tuned on ONE run/window — the next run's `kind='ore'` / `action='slam'` rows +
+outcomes refine the trigger/slam distances and confirm the signature live.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

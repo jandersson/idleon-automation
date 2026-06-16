@@ -10,6 +10,7 @@ from minigames.mining.policy import (
     JUMP_GROUNDED_EPS_PX,
     is_cart_airborne,
     should_jump,
+    should_slam,
 )
 from minigames.mining import detector as D
 
@@ -50,6 +51,32 @@ def test_trigger_window_fires_later_than_the_old_far_lip():
     assert should_jump(**far) is False  # the old fire point no longer fires
     at_max = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": JUMP_TRIGGER_MAX}}
     assert should_jump(**at_max) is True
+
+
+def test_jump_fires_for_ore_only_in_the_ore_window():
+    """#5 ore: a grounded jump fires for ore in [ore_trig_min, ore_trig_max]
+    (a farther window than pits — be airborne when it arrives). Without the
+    ore window params, ore never jumps (pit-only behaviour preserved)."""
+    ore = {"kind": "ore", "x": 300, "distance_px": 60}  # in [40,70], not pit [30,50]
+    kw = {**BASE_KW, "terrain": ore, "ore_trig_min": 40, "ore_trig_max": 70}
+    assert should_jump(**kw) is True
+    # ore below the ore window doesn't fire (cart not yet airborne-able in time)
+    assert should_jump(**{**kw, "terrain": {"kind": "ore", "x": 300, "distance_px": 20}}) is False
+    # backward-compat: no ore window -> ore never jumps
+    assert should_jump(**{**BASE_KW, "terrain": ore}) is False
+
+
+def test_should_slam_only_airborne_over_near_ore():
+    """The slam (2nd click) fires only when airborne AND the nearest obstacle
+    is ore within slam_max_dist — never over a pit (lethal), never grounded."""
+    base = dict(cart=(150, 120), terrain={"kind": "ore", "x": 160, "distance_px": 15},
+                now=10.0, last_slam_time=0.0, grounded_baseline_y=193,
+                slam_cooldown_s=0.5, slam_max_dist=25)
+    assert should_slam(**base) is True                                   # airborne + near ore
+    assert should_slam(**{**base, "cart": (150, 193)}) is False           # grounded -> no slam
+    assert should_slam(**{**base, "terrain": {"kind": "pit", "x": 160, "distance_px": 15}}) is False  # never over a pit
+    assert should_slam(**{**base, "terrain": {"kind": "ore", "x": 200, "distance_px": 40}}) is False  # ore too far
+    assert should_slam(**{**base, "now": 10.2, "last_slam_time": 10.0}) is False  # within slam cooldown
 
 
 def test_no_fire_during_cooldown():

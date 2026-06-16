@@ -52,7 +52,7 @@ from minigames.mining.detector import (
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
-from minigames.mining.policy import GroundedBaseline, should_jump, is_cart_airborne
+from minigames.mining.policy import GroundedBaseline, should_jump, should_slam, is_cart_airborne
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -100,6 +100,19 @@ JUMP_TRIGGER_MAX = 30
 # After a jump click, ignore further triggers for this long so we don't
 # spam clicks while the same pit is still in the trigger window.
 JUMP_COOLDOWN_S = 0.6
+
+# Ore jump-slam (#5 / Phase D) — see policy.should_jump/should_slam and the
+# detector ORE_* block. Tuned from the scoring run botrun_20260616_135951:
+# the human jumped at ore_dist~69 and slammed ~0.75s later at ore_dist~10.
+# Jump for ore in a FARTHER window than pits (so the cart is airborne by the
+# time the ore scrolls under it), then SLAM when the ore reaches the cart's
+# leading edge. EXPERIMENTAL — detection validated offline on that run; the
+# slam timing is a first cut (n=2) the next run's kind='ore'/action='slam'
+# rows will refine.
+ORE_JUMP_TRIGGER_MIN = 40
+ORE_JUMP_TRIGGER_MAX = 70
+ORE_SLAM_MAX_DIST = 25     # airborne + nearest ore within this px => slam now
+SLAM_COOLDOWN_S = 0.5      # one slam per airborne arc
 
 # How long after a jump click before we measure the outcome.
 OUTCOME_DELAY_S = 1.8
@@ -210,6 +223,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     start_time = time.time()
     frame_i = 0
     last_click_time = 0.0
+    last_slam_time = 0.0
     last_plank_seen = time.time()
     last_telemetry_at = 0.0
     last_loop_at = 0.0  # for live FPS in telemetry
@@ -317,16 +331,35 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # "Idleon clicks are buttons"), so the cart coords are just a sane
         # in-play-area default. Bookkeeping for the fired jump happens below.
         jump_to_log = None
-        if not watch and should_jump(
-                cart=cart, plank_y=plank_y, terrain=terrain, now=now,
-                last_click_time=last_click_time,
-                grounded_baseline_y=grounded_baseline_y,
-                cooldown_s=JUMP_COOLDOWN_S,
-                trig_min=JUMP_TRIGGER_MIN, trig_max=JUMP_TRIGGER_MAX):
-            bot_click(win_left + cart[0], win_top + cart[1])
-            last_click_time = now
-            jump_idx += 1
-            jump_to_log = jump_idx
+        action = None
+        if not watch and cart is not None:
+            if should_jump(
+                    cart=cart, plank_y=plank_y, terrain=terrain, now=now,
+                    last_click_time=last_click_time,
+                    grounded_baseline_y=grounded_baseline_y,
+                    cooldown_s=JUMP_COOLDOWN_S,
+                    trig_min=JUMP_TRIGGER_MIN, trig_max=JUMP_TRIGGER_MAX,
+                    ore_trig_min=ORE_JUMP_TRIGGER_MIN,
+                    ore_trig_max=ORE_JUMP_TRIGGER_MAX):
+                bot_click(win_left + cart[0], win_top + cart[1])
+                last_click_time = now
+                jump_idx += 1
+                jump_to_log = jump_idx
+                action = "jump"
+            elif should_slam(
+                    cart=cart, terrain=terrain, now=now,
+                    last_slam_time=last_slam_time,
+                    grounded_baseline_y=grounded_baseline_y,
+                    slam_cooldown_s=SLAM_COOLDOWN_S,
+                    slam_max_dist=ORE_SLAM_MAX_DIST):
+                # Second click mid-arc = slam down onto the ore (score). Fired
+                # immediately like the jump; the airborne guard in should_jump
+                # ensures this branch only runs while airborne.
+                bot_click(win_left + cart[0], win_top + cart[1])
+                last_slam_time = now
+                jump_idx += 1
+                jump_to_log = jump_idx
+                action = "slam"
 
         # Save the raw frame (post-click so it never delays the fire) when
         # --save-frames is on. Named frame_NNNN.png so render_overlay can
@@ -374,12 +407,14 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                 window_h=win_h,
                 code_commit=code_commit,
                 source="bot",
-                action="jump",
+                action=action,
                 cart_height_above_plank=(plank_y - cart[1]),
                 cart_pose=cart_det["template"] if cart_det else None,
                 score_at_click=last_score,
             )
-            print(f"JUMP #{jump_to_log} pit_dist={terrain['distance_px']} "
+            print(f"{action.upper()} #{jump_to_log} "
+                  f"kind={terrain['kind'] if terrain else None} "
+                  f"dist={terrain['distance_px'] if terrain else None} "
                   f"cart=({cart[0]},{cart[1]}) row={row_id}")
             with pending_lock:
                 pending_outcomes.append({"row_id": row_id, "click_time": now})

@@ -181,20 +181,27 @@ def test_scan_plank_pits_ignores_narrow_noise():
     assert _scan_plank_pits(frame, PLANK_Y) == []
 
 
-def test_scan_plank_ore_disabled_returns_empty():
-    """Ore detection is intentionally disabled (returns []) until a scoring
-    run reveals the real slam-ore. Both prior signals were phantom — tan
-    above the plank is the cave wall, blue is static parallax background —
-    and a phantom ore masks pits in find_next_terrain (jump trigger is
-    pit-only). See _scan_plank_ore / docs/mining_plan.md Run 6.
-
-    Flip this test (and the function) together when real ore detection,
-    backed by a scoring capture + scroll-velocity foreground filter, lands.
-    The frame here would have satisfied the old tan-hue scan."""
+def test_scan_plank_ore_finds_pile_above_plank():
+    """Ore is detected where brown rock pokes UP above the plank-top line
+    (validated 2026-06-16 from the scoring run; see _scan_plank_ore). A
+    darker-brown pile in the above-plank band -> a run. BGR (30,70,130) is
+    HSV ~(12,196,130): in the ore mask (H[5,22], S>=85, V[65,180]) — unlike
+    bright plank (V~200) which is excluded by the V cap."""
     frame = _frame_with_plank()
-    frame[PLANK_Y - 8:PLANK_Y, 500:520] = (40, 120, 220)
+    frame[PLANK_Y - 12:PLANK_Y, 500:540] = (30, 70, 130)  # brown pile, 40px wide
+    runs = _scan_plank_ore(frame, PLANK_Y)
+    assert len(runs) == 1
+    lo, hi = runs[0]
+    assert 495 <= lo <= 505 and 535 <= hi <= 545
+
+
+def test_scan_plank_ore_empty_over_bare_plank():
+    """Bare plank (dark cave above the top) yields no ore — so a phantom
+    can't mask pits. Also respects x_start (skip past a pile)."""
+    frame = _frame_with_plank()
     assert _scan_plank_ore(frame, PLANK_Y) == []
-    assert _scan_plank_ore(frame, PLANK_Y, x_start=300, x_end=600) == []
+    frame[PLANK_Y - 12:PLANK_Y, 400:440] = (30, 70, 130)
+    assert _scan_plank_ore(frame, PLANK_Y, x_start=460) == []  # pile is left of x_start
 
 
 def test_load_cart_templates_finds_assets():
