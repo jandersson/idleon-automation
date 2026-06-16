@@ -199,6 +199,59 @@ def read_book_checkouts(save_dir: str = SAVE_DIR) -> int | None:
     return int(n)
 
 
+# Card star recommender inputs. Counts live in Cards[0] (code -> copies);
+# the account star cap is 4, +1 once Rift level >= 45 unlocks five-star
+# cards (Rift[0] is the rift level), +1 once a Spelunking lore boss
+# unlocks six-star (not decoded here — defaults off; only very-late
+# accounts hit the 6th star). The "five-star list" of auto-maxed cards is
+# a comma-string in OptionsListAccount[155]. Mirrors IdleonToolbox
+# parsers/cards.ts (parseCards).
+_RIFT_FIVE_STAR_LEVEL = 45
+_OLA_FIVE_STAR_CARDS = 155
+_CARD_BASE_MAX_STARS = 4
+
+
+def read_card_counts(save_dir: str = SAVE_DIR) -> dict[str, int] | None:
+    """Per-card collected copy counts (save `Cards[0]`: code -> copies).
+    None if the save can't be read or the structure is unexpected."""
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    cards = data.get("Cards")
+    if not isinstance(cards, list) or not cards or not isinstance(cards[0], dict):
+        return None
+    return {k: int(v) for k, v in cards[0].items() if isinstance(v, (int, float))}
+
+
+def read_card_five_star_set(save_dir: str = SAVE_DIR) -> set[str]:
+    """Card codes auto-pinned to five stars via the five-star list
+    (OptionsListAccount[155], a comma-string). Empty when unset (the field
+    reads 0 until the mechanic is unlocked)."""
+    data = load_save(save_dir)
+    if data is None:
+        return set()
+    ola = data.get("OptionsListAccount")
+    if not isinstance(ola, list) or len(ola) <= _OLA_FIVE_STAR_CARDS:
+        return set()
+    raw = ola[_OLA_FIVE_STAR_CARDS]
+    if not isinstance(raw, str):
+        return set()
+    return {s for s in raw.split(",") if s}
+
+
+def read_card_star_cap(save_dir: str = SAVE_DIR) -> int:
+    """Account card-star cap: 4 base, +1 once Rift level (Rift[0]) >= 45.
+    The six-star Spelunking unlock isn't decoded yet (defaults off), so
+    this can under-cap a very-late account by one — safe (it just won't
+    suggest farming toward a 6th star). Defaults to 4 if unreadable."""
+    data = load_save(save_dir)
+    if data is None:
+        return _CARD_BASE_MAX_STARS
+    rift = data.get("Rift")
+    level = rift[0] if isinstance(rift, list) and rift and isinstance(rift[0], (int, float)) else 0
+    return _CARD_BASE_MAX_STARS + (1 if level >= _RIFT_FIVE_STAR_LEVEL else 0)
+
+
 def read_darts_cooldown(save_dir: str = SAVE_DIR) -> dict[str, float | int] | None:
     """Read the live darts cooldown state from the save.
 

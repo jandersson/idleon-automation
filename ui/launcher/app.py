@@ -14,7 +14,7 @@ from tkinter import ttk
 
 from PIL import ImageTk
 
-from ui.launcher import books_tab, bots_tab, frames_tab, setup_tab, sql_tab, theme
+from ui.launcher import books_tab, bots_tab, cards_tab, frames_tab, setup_tab, sql_tab, theme
 from ui.launcher.config import MINIGAMES
 
 
@@ -76,17 +76,20 @@ class Launcher:
         frames_frame = ttk.Frame(nb)
         sql_frame = ttk.Frame(nb)
         books_frame = ttk.Frame(nb)
+        cards_frame = ttk.Frame(nb)
         nb.add(bots_frame, text="Bots")
         nb.add(setup_frame, text="Setup")
         nb.add(frames_frame, text="Frames")
         nb.add(sql_frame, text="SQL")
         nb.add(books_frame, text="Books")
+        nb.add(cards_frame, text="Cards")
 
         bots_tab.build(bots_frame, self)
         setup_tab.build(setup_frame, self)
         frames_tab.build(frames_frame, self)
         sql_tab.build(sql_frame, self)
         books_tab.build(books_frame, self)
+        cards_tab.build(cards_frame, self)
 
     def enqueue_log(self, text: str):
         self.log_queue.put(text)
