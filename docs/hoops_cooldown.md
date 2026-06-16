@@ -59,3 +59,11 @@ Alternatively, extract the game's `z.js` bundle and read the `ActorEvents_510` r
 ## Not published online
 
 The escalating-per-play *mechanic* is documented (FearLess Cheat Engine, the wiki: "makes successive reset timer longer"), but the numeric formula and cap are not published anywhere searchable — they were derived empirically here.
+
+## Daily-reset time-of-day estimate
+
+Separate from the per-play cooldown *duration* above: `OLA[424]` (and the darts plays counter) zero out at the account's **daily reset**, a fixed wall-clock time that is **per-account and Pocketwatch-adjustable** (the wiki *Silver Pocketwatch* / Consumables: "Hold down to change your daily reset time by 15 minutes"). So there's no universal reset time — it's derived per account from the logged observations.
+
+`common.hoops_cooldown_observer.estimate_daily_reset()` recovers it: a daily reset shows as a consecutive-flush pair where `streak` or `darts_plays_today` drops to ≤ 1 (a mid-day decrement of `streak` to a higher value is decay, not a reset, and is excluded). The reset fires somewhere inside the gap between the last pre-reset flush and the first post-reset flush, so only **tight** boundaries (gap < `RESET_TIGHT_GAP_S` = 900 s) localise it; their midpoints are averaged with a **circular mean** over time-of-day (so values either side of midnight don't cancel). The launcher's tries strip shows `🔄 Reset: ~HH:MM (in …)` from this, with a `?` marker when confidence is low (one sample, or wide spread).
+
+For the current account the estimate is **≈ 01:52 local (CEST) ≈ 23:52 UTC**, stable across 2026-06-10..16 (spread 0.3 min). Note `OLA[424]` stays 0 from the reset until the first play of the day — so the clean plays-1..7 capture for the constants just needs to be the day's *first* hoops session, not literally run at 01:52.

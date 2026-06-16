@@ -47,6 +47,12 @@ class Launcher:
         # to save_mtime (not read time) keeps the math correct across
         # save flushes and surfaces save-staleness as a separate signal.
         self.hoops_cooldown_snapshot: tuple[float, float] | None = None
+        # Estimated daily-reset time-of-day, derived from logged plays-drop
+        # boundaries (#22). dict {"hour","minute","samples","spread_min"}
+        # or None when there isn't enough data yet. Recomputed on launcher
+        # open + on manual Refresh; the per-second tick renders the live
+        # countdown from it.
+        self.reset_estimate: dict | None = None
         # Last-seen save file mtime, so the periodic display loop can
         # re-pull when Idleon writes a fresh save (e.g. after a hoops
         # session ends in-game and the cooldown jumps to its full value).

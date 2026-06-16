@@ -11,7 +11,11 @@ import tkinter as tk
 from tkinter import ttk
 
 from common import tries_counter
-from common.hoops_cooldown_observer import record_observation as _record_hoops_cooldown_observation
+from common.hoops_cooldown_observer import (
+    record_observation as _record_hoops_cooldown_observation,
+    estimate_daily_reset,
+    next_daily_reset,
+)
 from common.idleon_save import read_minigame_plays_shared, read_hoops_cooldown
 from ui.launcher import config, process, theme
 
@@ -113,7 +117,7 @@ def build_tries_strip(parent: ttk.Frame, app) -> ttk.Frame:
     app.tries_label.pack(side="left", padx=(6, 12))
 
     ttk.Button(strip, text="Refresh", width=8,
-               command=lambda: refresh_tries(app)).pack(side="left")
+               command=lambda: (refresh_tries(app), update_reset_estimate(app))).pack(side="left")
 
     # 🚧 = save-flush timing makes this unreliable; see GitHub #22.
     ttk.Label(strip, text="🏀 Cooldown 🚧:").pack(side="left", padx=(16, 4))
@@ -122,8 +126,20 @@ def build_tries_strip(parent: ttk.Frame, app) -> ttk.Frame:
     )
     app.hoops_label.pack(side="left")
 
+    # Estimated daily-reset time (#22): derived from logged plays-drop
+    # boundaries (per-account / Pocketwatch-adjustable, so read from the
+    # user's own data, not hardcoded). The per-second tick renders the
+    # live countdown; the time-of-day itself is recomputed on open +
+    # Refresh.
+    ttk.Label(strip, text="🔄 Reset:").pack(side="left", padx=(16, 4))
+    app.reset_label = ttk.Label(
+        strip, text="—", font=("Segoe UI", 10, "bold"), foreground=theme.ACCENT,
+    )
+    app.reset_label.pack(side="left")
+
     # Read once at startup so values are visible without a manual click.
     refresh_tries(app, silent=True)
+    update_reset_estimate(app)
     # Tick the hoops countdown every second so it stays live between
     # save flushes.
     tick_hoops_display(app)
@@ -457,7 +473,42 @@ def tick_hoops_display(app) -> None:
             age_str = f"{am}m{asec:02d}s" if am else f"{asec}s"
             base += f"  (save {age_str} old)"
         app.hoops_label.config(text=base)
+    _render_reset_label(app)
     app.root.after(1000, lambda: tick_hoops_display(app))
+
+
+def update_reset_estimate(app) -> None:
+    """Recompute the estimated daily-reset time-of-day from the logged
+    observations and refresh its label. Reads the whole JSONL, so it runs
+    on launcher open + manual Refresh only — the time-of-day is stable;
+    the per-second tick just re-renders the countdown from the cached
+    estimate."""
+    try:
+        app.reset_estimate = estimate_daily_reset()
+    except Exception as e:  # never let it block the UI
+        app.reset_estimate = None
+        app.enqueue_log(f"[reset-est] skipped: {e}\n")
+    _render_reset_label(app)
+
+
+def _render_reset_label(app) -> None:
+    """Render the reset label from app.reset_estimate: estimated time-of-
+    day plus a live countdown. Safe to call every tick (no IO)."""
+    from datetime import datetime
+    label = getattr(app, "reset_label", None)
+    if label is None:
+        return
+    est = getattr(app, "reset_estimate", None)
+    nxt = next_daily_reset(est)
+    if nxt is None:
+        label.config(text="~?  (no data yet)")
+        return
+    rem = max(0, int((nxt - datetime.now()).total_seconds()))
+    h, r = divmod(rem, 3600)
+    countdown = f"in {h}h{r // 60:02d}m" if h else f"in {r // 60}m"
+    # Mark low-confidence estimates (one boundary, or wide disagreement).
+    rough = "?" if est.get("samples", 0) < 2 or est.get("spread_min", 0.0) > 20.0 else ""
+    label.config(text=f"~{est['hour']:02d}:{est['minute']:02d}{rough}  ({countdown})")
 
 
 def refresh_tries(app, silent: bool = False) -> None:

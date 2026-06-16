@@ -124,3 +124,125 @@ def record_observation(
     row = build_observation(data, save_mtime_at, time.time())
     append_observation(row, out_path)
     return row
+
+
+# --- Daily-reset time estimate (#22) ----------------------------------
+#
+# A daily reset zeroes both plays-today counters (hoops `streak` and
+# `darts_plays_today`). It fires at a fixed wall-clock time that is
+# per-account and Pocketwatch-adjustable, so we estimate it from the
+# user's OWN logged observations rather than hardcoding a value — it then
+# self-corrects if the reset is ever shifted. The reset happens somewhere
+# inside the gap between the last pre-reset flush and the first post-reset
+# flush; only a TIGHT gap brackets it well (a wide gap could place the
+# reset anywhere in hours of idle time), so we use only tight boundaries.
+RESET_TIGHT_GAP_S = 900.0  # max boundary gap that still localises the reset
+
+
+def _read_observations(path: Path = OBSERVATIONS_PATH) -> list[dict]:
+    """All observation rows, sorted by timestamp. [] if the file is
+    missing; malformed lines are skipped."""
+    if not path.exists():
+        return []
+    rows: list[dict] = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    rows.sort(key=lambda r: r.get("ts") or 0.0)
+    return rows
+
+
+def _reset_boundary_midpoints(
+    rows: list[dict], tight_gap_s: float = RESET_TIGHT_GAP_S
+) -> list[float]:
+    """Unix-timestamp midpoints of tight daily-reset boundaries.
+
+    A boundary is a consecutive pair where hoops `streak` or
+    `darts_plays_today` drops to <= 1 — a daily reset zeroes them, while a
+    mid-day decrement (observed e.g. 4 -> 2) does not land at 0/1, so the
+    <= 1 floor excludes decay. Only pairs gapped under `tight_gap_s` are
+    kept, since a wide gap can't localise the reset time.
+    """
+    mids: list[float] = []
+    for a, b in zip(rows, rows[1:]):
+        ta, tb = a.get("ts"), b.get("ts")
+        if not isinstance(ta, (int, float)) or not isinstance(tb, (int, float)):
+            continue
+        gap = tb - ta
+        if not 0 < gap < tight_gap_s:
+            continue
+        for key in ("streak", "darts_plays_today"):
+            pa, pb = a.get(key), b.get(key)
+            if (
+                isinstance(pa, (int, float))
+                and isinstance(pb, (int, float))
+                and pb < pa
+                and pb <= 1
+            ):
+                mids.append((ta + tb) / 2.0)
+                break
+    return mids
+
+
+def estimate_daily_reset(
+    path: Path = OBSERVATIONS_PATH,
+    tight_gap_s: float = RESET_TIGHT_GAP_S,
+) -> dict | None:
+    """Estimate the account's daily-reset time-of-day in LOCAL time from
+    logged plays-drop boundaries (#22).
+
+    Returns {"hour", "minute", "samples", "spread_min"} or None when no
+    tight reset boundary has been logged yet. Boundary midpoints are
+    averaged with a CIRCULAR mean over time-of-day so values either side
+    of local midnight don't cancel; `spread_min` is the circular standard
+    deviation in minutes (a confidence proxy — small = tightly agreed).
+    """
+    import math
+    from datetime import datetime
+
+    mids = _reset_boundary_midpoints(_read_observations(path), tight_gap_s)
+    if not mids:
+        return None
+    angles = []
+    for ts in mids:
+        lt = datetime.fromtimestamp(ts)
+        secs = lt.hour * 3600 + lt.minute * 60 + lt.second
+        angles.append(secs / 86400.0 * 2 * math.pi)
+    sin_sum = sum(math.sin(a) for a in angles)
+    cos_sum = sum(math.cos(a) for a in angles)
+    mean_secs = (math.atan2(sin_sum, cos_sum) % (2 * math.pi)) / (2 * math.pi) * 86400.0
+    resultant = math.hypot(sin_sum, cos_sum) / len(angles)
+    spread_min = (
+        math.sqrt(-2.0 * math.log(resultant)) / (2 * math.pi) * 1440.0
+        if resultant > 1e-9 else 0.0
+    )
+    return {
+        "hour": int(mean_secs // 3600) % 24,
+        "minute": int((mean_secs % 3600) // 60),
+        "samples": len(angles),
+        "spread_min": round(spread_min, 1),
+    }
+
+
+def next_daily_reset(estimate: dict | None, now=None):
+    """The next datetime the daily reset is expected to fire, given an
+    `estimate` from `estimate_daily_reset`. None if estimate is None.
+    `now` defaults to the local current time (override for tests)."""
+    from datetime import datetime, timedelta
+
+    if estimate is None:
+        return None
+    if now is None:
+        now = datetime.now()
+    target = now.replace(
+        hour=estimate["hour"], minute=estimate["minute"], second=0, microsecond=0
+    )
+    if target <= now:
+        target += timedelta(days=1)
+    return target
