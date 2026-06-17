@@ -100,6 +100,12 @@ NOT_READY_RETRY_S = 0.3
 CAST_SETTLE_S = 1.6
 LANDING_POLL_S = 0.1
 LANDING_RETRACT_PX = 25   # x dropped this far below the max = reeling in (landed)
+# A landing is trusted only if the lure SETTLED there: >= MIN_LANDING_DETECTIONS
+# sightings within LANDING_STABLE_PX of the farthest x. A lone find_lure flicker
+# (a mid-arc catch or a false match — e.g. run-13 cast 2's single x=93) was being
+# logged as a landing and corrupting the fill->distance fit (#58).
+LANDING_STABLE_PX = 10
+MIN_LANDING_DETECTIONS = 2
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -128,10 +134,14 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
     release), not measured here — this poll only locates the bobber to classify
     the hit and supply landed_dist as the model's training target.
 
+    The landing is trusted only if the lure SETTLED (MIN_LANDING_DETECTIONS
+    sightings near the farthest x); a single flicker returns (None, None) so it
+    isn't logged (#58).
+
     When frames_dir is set (--save-frames), every poll frame is saved with the
     find_lure x (or NA) in the name — for debugging which moment the landing
     read latches onto (#58)."""
-    best, best_frame = None, None   # (x, y) at the FARTHEST x = the landing
+    dets: list[tuple[int, int, "object"]] = []   # all (x, y, frame) sightings
     seen = False
     deadline = time.time() + settle_s
     j = 0
@@ -147,14 +157,32 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
         j += 1
         if lure is not None:
             seen = True
-            if best is None or lure[0] > best[0]:
-                best, best_frame = lure, post          # new farthest = landing
-            elif lure[0] < best[0] - LANDING_RETRACT_PX:
+            dets.append((lure[0], lure[1], post))
+            if lure[0] < max(d[0] for d in dets) - LANDING_RETRACT_PX:
                 break              # reeling in past the landing -> done
         elif seen:
             break                  # bobber vanished after landing -> done
         time.sleep(poll_s)
-    return best, best_frame
+    landing = _landing_from_detections(dets)
+    if landing is None:
+        return None, None
+    return (landing[0], landing[1]), landing[2]
+
+
+def _landing_from_detections(dets, stable_px: int = LANDING_STABLE_PX,
+                             min_dets: int = MIN_LANDING_DETECTIONS):
+    """The landing from a list of (x, y, frame) lure sightings: the entry at the
+    FARTHEST x, accepted only if at least `min_dets` sightings settled within
+    `stable_px` of it. Returns that (x, y, frame), or None when the lure was seen
+    too few times / only flickered (so the cast isn't logged with a bad landing,
+    #58). Pure — the IO poll lives in _measure_landing."""
+    if len(dets) < min_dets:
+        return None
+    farthest = max(dets, key=lambda d: d[0])
+    near = [d for d in dets if d[0] >= farthest[0] - stable_px]
+    if len(near) < min_dets:
+        return None              # the max was a lone transient, not a settle
+    return farthest
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
