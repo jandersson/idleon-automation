@@ -106,6 +106,21 @@ Two bugs the trace exposed (both now fixed):
   preempting the model. Cut to 0.05s (~1–2 polls at 37Hz); detection-gap falls
   are caught by the position bound, not the lookahead.
 
+### Run 17 (branch-order fix live, 2026-06-17): 52.5s, scored 12
+
+Big jump (2 → 12) — the reorder let the model launch fire and the floor rescue
+threaded the orange rings (its fixed bound ≈ 130 anchors the apex at ~79, near
+the orange centre ~87). It died at a **green ring**: green rings sit *higher*
+(centre ~73 vs orange ~87) and are smaller, and the `FLAP_MARGIN` on the model
+hover delayed the hover flap ~6px so the floor rescue preempted it and anchored
+the apex low (apex 88 vs the green centre 73 → bottom clip). Fix: the model
+hover flaps AT the bob bottom (no margin), so the hover beats the floor on the
+higher rings and the apex centres (probe: apex offset at centre 73 goes +6 →
++2; at 65, +9 → +2). Orange is unaffected (floor still anchors it). Known
+follow-up (#52): `classify_hoop_color` counts the whole bbox, so a green ring
+over the orange cliff misclassifies as orange — it needs the contour mask, not
+the bbox (it's not yet wired into gameplay, so it doesn't affect threading).
+
 ### Why the phase-lock is hard (sub-bob granularity)
 
 You can't hover tighter than the 44px bob: every flap imparts a fixed ~44px of

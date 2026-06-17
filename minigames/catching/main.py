@@ -596,7 +596,13 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
                 else (play_region["height"] - 25)
             do_flap, where = fly_y > floor, "coast"
         else:
-            do_flap = fly_y > target_y + FLAP_MARGIN
+            # Model path flaps AT the bob bottom (no margin) so the apex centres
+            # on the hole; the +FLAP_MARGIN delayed the flap ~6px, letting the
+            # floor rescue preempt the hover on HIGHER green rings and anchor the
+            # apex low (run 17 clipped a green ring's bottom, apex 88 vs centre
+            # 73). The hand-tuned path keeps its margin.
+            hover_margin = 0 if dyn is not None else FLAP_MARGIN
+            do_flap = fly_y > target_y + hover_margin
             where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
         fired = False  # whether a click actually fired this poll (vs blocked)
         if do_flap and now - last_click_time >= MIN_CLICK_INTERVAL:

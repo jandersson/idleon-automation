@@ -77,7 +77,7 @@ def run_one(dyn, hole_centers, spacing_px, seed_phase=0.0, verbose=False,
             do, where = y > floor, "coast"
         else:
             target = hover_target_y(dc, dyn) if dc is not None else PLAY_H * 0.5
-            do, where = y > target + M.FLAP_MARGIN, "hover"
+            do, where = y > target, "hover"   # model path: no margin (apex centres on hole)
 
         if do and t - last_click >= M.MIN_CLICK_INTERVAL:
             vy = dyn.flap_vy
