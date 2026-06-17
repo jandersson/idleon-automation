@@ -4,7 +4,42 @@ The lure must SETTLE (>= MIN_LANDING_DETECTIONS sightings near the farthest x)
 for a landing to count — a single mid-arc / false-match flicker is rejected so
 it doesn't pollute the fill->distance fit (#58). The IO poll is separate.
 """
-from minigames.fishing.main import _landing_from_detections
+from minigames.fishing.main import _landing_from_detections, _classify_catch
+
+
+def _f(x, kind="green"):
+    return {"x": x, "kind": kind}
+
+
+def test_catch_when_fish_near_landing_vanishes():
+    # run-14 cast 6: green@109 before, gone after the lure lands at 107 -> catch
+    pre = [_f(109, "green"), _f(60, "eel")]
+    post = [_f(59, "eel")]
+    assert _classify_catch(pre, post, landed_x=107) == ("green", 1)
+
+
+def test_miss_when_fish_still_there():
+    # the lure landed next to a fish but it's still sitting there -> not caught
+    pre = [_f(100, "green")]
+    post = [_f(100, "green")]
+    assert _classify_catch(pre, post, landed_x=104) == ("miss", 0)
+
+
+def test_miss_when_lure_overshoots_the_fish():
+    # run-14 cast 3: fish at 203, lure landed at 226 (23px past) -> miss
+    pre = [_f(203, "green")]
+    post = [_f(203, "green")]
+    assert _classify_catch(pre, post, landed_x=226) == ("miss", 0)
+
+
+def test_miss_on_empty_water():
+    assert _classify_catch([_f(50, "green")], [], landed_x=180) == ("miss", 0)
+
+
+def test_catch_reports_nearest_fish_kind():
+    pre = [_f(120, "eel"), _f(108, "green")]   # green is nearer the landing
+    post = []
+    assert _classify_catch(pre, post, landed_x=110) == ("green", 1)
 
 
 def _d(x, y=40):

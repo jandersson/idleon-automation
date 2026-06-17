@@ -37,7 +37,7 @@ from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
-    find_fish, find_mines, find_lure, find_game_over, kind_at, find_cast_bar,
+    find_fish, find_mines, find_lure, find_game_over, find_cast_bar,
     find_play_button, find_charge_fill,
 )
 from minigames.fishing.fish_log import (
@@ -106,6 +106,11 @@ LANDING_RETRACT_PX = 25   # x dropped this far below the max = reeling in (lande
 # logged as a landing and corrupting the fill->distance fit (#58).
 LANDING_STABLE_PX = 10
 MIN_LANDING_DETECTIONS = 2
+# A catch is a fish that sat within this many px of the landing just before the
+# lure arrived and is GONE after (the caught fish vanishes). Observed catch
+# offsets: ~2-11px (run 14 casts 6/9), so 15 covers a hit while excluding a
+# fish the lure clearly overshot (cast 3: fish 203, lure 226 = miss).
+CATCH_RADIUS = 15
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -135,13 +140,19 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
     the hit and supply landed_dist as the model's training target.
 
     The landing is trusted only if the lure SETTLED (MIN_LANDING_DETECTIONS
-    sightings near the farthest x); a single flicker returns (None, None) so it
-    isn't logged (#58).
+    sightings near the farthest x); a single flicker returns (None, None, ...) so
+    it isn't logged (#58).
+
+    Returns (landing (x, y), landed_frame, pre_frame). `pre_frame` is the last
+    frame BEFORE the lure first appears — the catch test compares the fish there
+    (about to be caught) against the landed frame, since a caught fish DISAPPEARS
+    (a fish present at the landing post-cast means it was NOT caught, #58).
 
     When frames_dir is set (--save-frames), every poll frame is saved with the
     find_lure x (or NA) in the name — for debugging which moment the landing
     read latches onto (#58)."""
     dets: list[tuple[int, int, "object"]] = []   # all (x, y, frame) sightings
+    pre_frame = None             # most recent frame before the lure appears
     seen = False
     deadline = time.time() + settle_s
     j = 0
@@ -162,11 +173,31 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
                 break              # reeling in past the landing -> done
         elif seen:
             break                  # bobber vanished after landing -> done
+        else:
+            pre_frame = post       # not seen yet -> keep as the pre-catch frame
         time.sleep(poll_s)
     landing = _landing_from_detections(dets)
     if landing is None:
-        return None, None
-    return (landing[0], landing[1]), landing[2]
+        return None, None, pre_frame
+    return (landing[0], landing[1]), landing[2], pre_frame
+
+
+def _classify_catch(pre_fish: list[dict], post_fish: list[dict], landed_x: int,
+                    radius: int = CATCH_RADIUS) -> tuple[str, int]:
+    """Classify a cast outcome from the fish near the landing BEFORE vs AFTER the
+    lure arrives. A catch = a fish that was within `radius` of the landing just
+    before is GONE after (the caught fish is consumed/vanishes); a fish still
+    sitting there means the lure missed it. Returns (kind, made).
+
+    This replaces the old 'is a fish at the landing now?' test, which scored
+    every catch as a miss because the fish has already vanished by then (#58)."""
+    near = sorted((f for f in pre_fish if abs(f["x"] - landed_x) <= radius),
+                  key=lambda f: abs(f["x"] - landed_x))
+    if not near:
+        return "miss", 0          # nothing was there to catch
+    if any(abs(f["x"] - landed_x) <= radius for f in post_fish):
+        return "miss", 0          # a fish is still there -> not caught
+    return near[0]["kind"], 1     # the nearest fish vanished -> caught
 
 
 def _landing_from_detections(dets, stable_px: int = LANDING_STABLE_PX,
@@ -461,18 +492,21 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         # Locate the bobber landing (max-x poll) to classify the hit and supply
         # landed_dist (the charge->distance model's training target). The cast
         # power is `charge` from the release above — the robust, in-crop signal.
-        lure, post = _measure_landing(win_left, win_top, play,
-                                      CAST_SETTLE_S, LANDING_POLL_S,
-                                      frames_dir, stats["n_casts"])
+        lure, post, pre_frame = _measure_landing(win_left, win_top, play,
+                                                 CAST_SETTLE_S, LANDING_POLL_S,
+                                                 frames_dir, stats["n_casts"])
         landed_x = landed_dist = landed_kind = points = made = None
         if lure is not None:
             landed_x, landed_y = lure
-            landed_kind = kind_at(post, landed_x, landed_y) or "miss"
+            # Catch = a fish near the landing JUST BEFORE the lure arrives is gone
+            # after it lands (a caught fish vanishes); a fish still there = miss.
+            pre_fish = find_fish(pre_frame, bar=bar) if pre_frame is not None else []
+            post_fish = find_fish(post, bar=bar)
+            landed_kind, made = _classify_catch(pre_fish, post_fish, landed_x)
             points = FISH_VALUE.get(landed_kind, 0)
-            made = 1 if points > 0 else 0
             landed_dist = abs(landed_x - origin_x)
             stats["points_total"] += points
-            # Streak: any fish landing extends it; a Whale catch resets to 1
+            # Streak: any fish catch extends it; a Whale catch resets to 1
             # (wiki); a miss breaks it.
             streak = (1 if landed_kind == "whale" else streak + 1) if made else 0
             stats["max_streak"] = max(stats["max_streak"], streak)
