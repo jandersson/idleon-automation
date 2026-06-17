@@ -23,6 +23,18 @@ def test_fit_recovers_linear_relationship():
     assert m.n >= MIN_SAMPLES
 
 
+def test_fit_is_robust_to_landing_outliers():
+    # Real landing measurement is noisy: the bobber poll sometimes catches a
+    # launch/mid-arc position, giving a long-hold / tiny-distance outlier. The
+    # Theil-Sen fit must recover the true slope despite a couple of those.
+    pts = _linear_samples(slope=0.2, intercept=10.0, n=MIN_SAMPLES)
+    pts[3] = (pts[3][0], 5.0)      # long hold, tiny distance (bad landing)
+    pts[7] = (pts[7][0], 8.0)
+    m = fit_cast_model(pts)
+    assert m is not None
+    assert abs(m.slope - 0.2) < 0.03   # least-squares would be dragged well below
+
+
 def test_fit_none_below_min_samples():
     assert fit_cast_model(_linear_samples(n=MIN_SAMPLES - 1)) is None
 

@@ -67,29 +67,38 @@ def fit_cast_model(
     samples: list[tuple[int, float]],
     min_samples: int = MIN_SAMPLES,
 ) -> CastModel | None:
-    """Least-squares line through (hold_ms, landed_dist_px) samples.
+    """Robust (Theil-Sen) line through (hold_ms, landed_dist_px) samples.
 
-    Returns None below `min_samples` or when the holds don't vary (a
-    degenerate fit) or the fitted slope is non-positive (holding longer
-    must cast farther — a non-positive slope means the data is noise, not
-    signal, so fall back to exploration)."""
+    The landing measurement is noisy — the bobber poll occasionally catches a
+    launch/mid-arc position instead of the landing, producing outliers (a long
+    hold with a tiny distance). Least-squares would let those skew the aim, so
+    the slope is the MEDIAN of all pairwise slopes (Theil-Sen, robust to ~29%
+    outliers) and the intercept the median residual.
+
+    Returns None below `min_samples`, when the holds don't vary (degenerate),
+    or when the robust slope is non-positive (holding longer must cast farther;
+    a non-positive slope means noise, not signal — fall back to exploration)."""
     pts = [(float(h), float(d)) for h, d in samples if h is not None and d is not None]
     if len(pts) < min_samples:
         return None
-    n = len(pts)
-    sx = sum(h for h, _ in pts)
-    sy = sum(d for _, d in pts)
-    sxx = sum(h * h for h, _ in pts)
-    sxy = sum(h * d for h, d in pts)
-    denom = n * sxx - sx * sx
-    if denom == 0:
+    slopes = [(dj - di) / (hj - hi)
+              for i, (hi, di) in enumerate(pts)
+              for hj, dj in pts[i + 1:] if hj != hi]
+    if not slopes:
         return None  # all holds identical — no slope recoverable
-    slope = (n * sxy - sx * sy) / denom
+    slope = _median(slopes)
     if slope <= 0:
         return None
-    intercept = (sy - slope * sx) / n
+    intercept = _median([d - slope * h for h, d in pts])
     holds = [int(h) for h, _ in pts]
-    return CastModel(slope, intercept, min(holds), max(holds), n)
+    return CastModel(slope, intercept, min(holds), max(holds), len(pts))
+
+
+def _median(xs: list[float]) -> float:
+    s = sorted(xs)
+    n = len(s)
+    mid = n // 2
+    return s[mid] if n % 2 else 0.5 * (s[mid - 1] + s[mid])
 
 
 def distance_for_hold(model: CastModel, hold_ms: int) -> float:
