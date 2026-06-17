@@ -33,6 +33,25 @@ def click(x: int, y: int, jitter: int = 3):
     pyautogui.click(x, y)
 
 
+def hold(x: int, y: int, duration_ms: int, jitter: int = 3):
+    """Press and hold the left mouse button at (x, y) for duration_ms, then
+    release. The fishing minigame's cast is a hold-to-charge mechanic: the
+    hold duration sets the cast distance (release to cast). Position gets
+    the same +/-jitter as click(); per the "Idleon clicks are buttons"
+    finding, only the hold timing should matter, not where it lands.
+
+    mouseUp runs in a finally so a crash/abort mid-hold never leaves the
+    button stuck down."""
+    x += random.randint(-jitter, jitter)
+    y += random.randint(-jitter, jitter)
+    pyautogui.moveTo(x, y)
+    pyautogui.mouseDown()
+    try:
+        time.sleep(max(0, duration_ms) / 1000.0)
+    finally:
+        pyautogui.mouseUp()
+
+
 def press_key(key: str):
     pyautogui.press(key)
 

@@ -84,4 +84,15 @@ MINIGAMES = [
             ("Render overlay video", "mining-render-overlay"),
         ],
     },
+    {
+        "name": "fishing",
+        "emoji": "🎣",
+        "bot": "fishing",
+        "setup": [
+            ("Observe (you play)", "fishing-observe"),
+            ("Capture", "fishing-capture"),
+            ("Pick play region", "fishing-pick-play-region"),
+            ("Calibrate", "fishing-calibrate"),
+        ],
+    },
 ]

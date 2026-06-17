@@ -70,6 +70,11 @@ mining-pick-play-region = "minigames.mining.pick_play_region:run"
 mining-trace = "minigames.mining.trace:run"
 mining-pick-start-button = "minigames.mining.pick_start_button:run"
 mining-render-overlay = "minigames.mining.render_overlay:run"
+fishing = "minigames.fishing.main:run"
+fishing-observe = "minigames.fishing.observe:run"
+fishing-capture = "minigames.fishing.capture:run"
+fishing-calibrate = "minigames.fishing.calibrate:run"
+fishing-pick-play-region = "minigames.fishing.pick_play_region:run"
 
 [build-system]
 requires = ["hatchling"]

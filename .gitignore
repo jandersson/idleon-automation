@@ -17,6 +17,7 @@ minigames/*/assets/observations/
 minigames/*/assets/analysis/
 minigames/*/assets/digit_capture/
 minigames/*/calibration/
+minigames/*/assets/calibration/
 data/
 
 # Editor / OS

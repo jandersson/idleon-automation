@@ -1,0 +1,105 @@
+# Fishing minigame — mechanics, bot plan, open questions
+
+Research for the fishing bot (scaffolded 2026-06-17). Sourced from the
+idleon.wiki *Fishing Minigame* page + the *Fishing* skill page's minigame
+section; cross-checked against the existing bots' patterns. Pointer from
+`minigames/fishing/main.py`.
+
+## The mechanic
+
+A **hold-to-cast distance game**, unlike the click-timing minigames:
+
+- **Hold** the left mouse button (PC) to charge, then **release** to cast
+  the lure. The hold duration sets how far the lure flies.
+- Land the lure on a fish to score. Fish are distinguished by colour:
+
+  | Fish | Colour | Points |
+  |---|---|---|
+  | Green Fish | green | 1 |
+  | Eel | yellow | 2 |
+  | Squid | purple | 3 |
+  | Whale | blue | 5 |
+  | Megalodon | red | trophy only (behemoth) |
+
+- **Mines** litter the water. Key rule (wiki, emphasised): *landing on a
+  fish still counts even if a mine is directly under it* — you only fail by
+  landing on a **mine with no fish**. So the bot should aim at fish and
+  treat mines as "don't land on a mine-only spot," not "avoid the whole
+  area."
+- **Difficulty ramps**: more casts → fish start **moving** and more mines
+  appear. (So detection/aim must handle moving targets late-game.)
+
+## Streak (unlocks higher-value fish)
+
+Consecutive fish landings escalate which fish appear:
+
+- 3 consecutive Green Fish → **Eels** start appearing
+- +3 more consecutive landings → **Squid** appears
+- +7 more consecutive landings → **Whale** appears
+- **Catching the Whale resets the streak to 1.**
+
+Megalodon (the trophy): catch two Whales in a row, then spawn a third
+Whale but catch a *different* fish → the behemoth appears.
+
+## Control model — hold_ms ↔ cast distance
+
+The bot's one control knob is the hold duration. `cast_model.py` fits a
+linear `landed_dist_px = slope·hold_ms + intercept` over logged casts and
+inverts it (`hold_for_distance`) to aim. Linear is the starting form; if
+observe data shows a charge **cap** or easing, swap in a monotone curve
+there (callers use the inverse only).
+
+- Fitted once at startup from `fishing.db` (the darts `stripe_model`
+  pattern). `MIN_SAMPLES` clean casts gate the fit; below it the bot
+  **explores** — random holds in `[EXPLORE_HOLD_MIN_MS, …MAX_MS]` — and
+  logs `(hold_ms, landed_dist_px)` to build the curve. `EXPLORE_EVERY_N`
+  keeps sampling after the fit.
+- Target selection (`choose_target`): highest point value among fish the
+  model can **reach**, nearest as the tie-break.
+
+## Detection (HSV, like chopping)
+
+Targets are colour-coded, so `detector.py` uses HSV masks + blob centroids
+(the chopping gold>green>red style), one mask per fish colour + mine +
+megalodon. **The HSV ranges are first-guess placeholders** — they must be
+tuned against real frames (`fishing-calibrate` dumps per-colour overlays).
+
+The **lure** (landing position), **play prompt**, and **game-over** screen
+need sprite templates (`assets/lure.png` / `play_button.png` /
+`game_over.png`), captured via `fishing-capture`. Until `lure.png` exists,
+landings can't be measured, so the cast model can't train.
+
+## Open questions (resolve from observe runs before trusting the bot)
+
+1. **Cast geometry**: is distance purely horizontal (1-D), or a 2-D arc?
+   Where is the cast origin (rod tip)? `_cast_origin` is a placeholder
+   (play-region centre, lower third) and must be calibrated — target
+   distance is measured from it.
+2. **hold→distance shape**: linear, or capped/eased? Drives whether the
+   linear `cast_model` survives or needs a curve.
+3. **Does a mine-landing end the game, or just miss?** The wiki says
+   "you're allowed to miss as much as you want" yet "you won't lose if you
+   land on a fish" — ambiguous about a pure mine hit. Confirm; it decides
+   how hard to weight mine-avoidance vs. the no-fish-timeout bail.
+4. **Hold position independence**: assumed (per the CLAUDE.md
+   "Idleon clicks are buttons" finding) — the bot holds at play-centre.
+   Verify a hold elsewhere casts the same distance.
+5. **Streak strategy**: a Whale is 5 pts but resets the streak. Is
+   value-max optimal, or should the bot skip Whales to keep climbing /
+   bank Eel/Squid? Decide once outcomes are logged (the #23/#38
+   discipline). `choose_target` is value-max for now.
+
+## Bot setup order (once the game is in front of it)
+
+1. `fishing-pick-play-region` — bound the water.
+2. `fishing-observe` — verify the detector sees fish/mines on real frames.
+3. `fishing-calibrate` — tune `FISH_HSV` / `MINE_HSV` in `detector.py`.
+4. `fishing-capture` — grab frames; crop `assets/lure.png` (+ play_button,
+   game_over) so landings/game-over can be detected.
+5. Run `fishing` — it explores holds, logs `(hold_ms, landed_dist_px)`;
+   after `MIN_SAMPLES` the cast model fits and aiming switches to `model`.
+
+## Sources
+
+- IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
+- IdleOn Wiki — Fishing (skill), "Fishing Minigame" section: https://idleon.wiki/wiki/Fishing
