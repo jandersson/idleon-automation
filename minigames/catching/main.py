@@ -147,6 +147,17 @@ STATIC_GAMEOVER_S = 2.0
 START_MOTION_RANGE_PX = 10
 START_MOTION_FRAMES = 8
 
+# Startup free-fall arrest (run 15, 2026-06-17): the avatar spawns and
+# free-falls ~50px before fly_started_moving confirms the game (it needs
+# motion = the avatar falling), landing ~5px from the floor — a coin-flip
+# whether the first in-game flap catches it (run 14 recovered from y=140; run
+# 15 hit ~145 and died). Once PLAY GAME has been clicked, flap a detected fly
+# that's fallen below this fraction of the play height to keep it up DURING
+# confirmation. The flaps also add the y-motion the confirmation needs, so the
+# game confirms sooner. Gated on start_attempts>0 so a world-map scenery blob
+# (no prompt ever clicked) can't trigger phantom flapping.
+STARTUP_FLAP_FRAC = 0.5
+
 # --- Region anchoring to the PLAY GAME prompt (issue #60) -----------------
 # The catching minigame is a player-anchored overlay BAND (banner + avatar +
 # hoops) drawn over the local biome, not a fixed-position screen. The band
@@ -225,6 +236,16 @@ def timed_flap_due(fly_x, fly_y, gap_left_x, gap_center_y,
         return False
     dist = gap_left_x - fly_x
     return 0 < dist <= lead_dist_px and fly_y >= gap_center_y + low_offset_px
+
+
+def startup_flap_due(fly_y, play_height, play_started,
+                     frac=STARTUP_FLAP_FRAC) -> bool:
+    """During the startup window (after PLAY GAME is clicked, before the game
+    is confirmed), flap a detected fly that has fallen below `frac` of the play
+    height — arresting the spawn free-fall before it reaches the floor.
+    `play_started` is True once PLAY GAME has been clicked, so a world-map
+    scenery blob (no prompt) never triggers it."""
+    return bool(play_started) and fly_y > play_height * frac
 
 
 def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
@@ -460,6 +481,15 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
             # frame button-match dropout at the prompt) does not.
             if fly_pos is not None:
                 recent_fly_y.append(fly_pos[1])
+                # Arrest the spawn free-fall while confirmation accrues, so the
+                # avatar doesn't sink to the floor before control is handed off.
+                if (startup_flap_due(fly_pos[1], play_region["height"],
+                                     start_attempts > 0)
+                        and time.time() - last_click_time >= MIN_CLICK_INTERVAL):
+                    cx = play_region["left"] + play_region["width"] // 2
+                    cy = play_region["top"] + play_region["height"] // 2
+                    click(win_left + cx, win_top + cy)
+                    last_click_time = time.time()
             if fly_pos is None or not fly_started_moving(recent_fly_y):
                 time.sleep(POLL_INTERVAL)
                 continue

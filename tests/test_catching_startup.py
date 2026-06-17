@@ -13,7 +13,9 @@ from collections import deque
 from minigames.catching.main import (
     fly_started_moving,
     timed_flap_due,
+    startup_flap_due,
     START_MOTION_RANGE_PX,
+    STARTUP_FLAP_FRAC,
     _anchored_play_region,
     ANCHOR_PLAY_HALF_W,
     ANCHOR_PLAY_TOP_DY,
@@ -76,6 +78,29 @@ def test_anchored_region_clamps_bottom_and_right():
     assert r["left"] + r["width"] <= 959
     assert r["top"] + r["height"] <= 572
     assert r["width"] > 0 and r["height"] > 0
+
+
+# --- startup_flap_due (spawn free-fall arrest, run 15) ----------------------
+
+def test_startup_flap_fires_when_started_and_low():
+    # PLAY GAME clicked + avatar fallen below mid-height -> flap to keep it up.
+    assert startup_flap_due(120, 185, play_started=True) is True
+
+
+def test_startup_flap_not_due_before_play_clicked():
+    # No PLAY GAME click yet (world-map scenery blob): never flap.
+    assert startup_flap_due(170, 185, play_started=False) is False
+
+
+def test_startup_flap_not_due_when_high():
+    # avatar still high in the play area -> let it descend, don't over-lift.
+    assert startup_flap_due(50, 185, play_started=True) is False
+
+
+def test_startup_flap_threshold_is_the_frac():
+    h = 185
+    assert startup_flap_due(h * STARTUP_FLAP_FRAC + 1, h, True) is True
+    assert startup_flap_due(h * STARTUP_FLAP_FRAC - 1, h, True) is False
 
 
 # --- timed_flap_due (phase-timing, #60) -------------------------------------
