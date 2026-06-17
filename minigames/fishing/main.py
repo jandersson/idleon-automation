@@ -73,7 +73,7 @@ EXPLORE_EVERY_N = 10
 # start charging before declaring it not-ready (previous lure still reeling);
 # never hold longer than this (the bar saturates ~750ms, so this bounds a
 # stuck hold and the wait on an over-cap target).
-CHARGE_POLL_S = 0.025
+CHARGE_POLL_S = 0.012  # tight poll: the bar rises ~0.1px/ms, so release-overshoot ~ grab(~13ms)+poll
 # With the thermometer read correctly (find_charge_fill), the fill rises from 0
 # within ~2-3 polls of a real hold, so the not-ready grace can be short; a
 # genuinely-reeling rod leaves it at 0 and aborts here. (The old 0.8s was a
@@ -372,12 +372,14 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         cast_bar_full = (play["left"] + bar[0], play["top"] + bar[1], bar[2], bar[3])
 
         def _read_charge():
+            # Fast poll: grab + read only. NO per-poll frame save — writing a
+            # full-window PNG each poll stalled the loop ~40ms and the fast-
+            # rising bar overshot the target by 20+ on those polls (run 11: the
+            # 3 big overshoots were all save-stalls). The bar is located now;
+            # find_charge_fill is validated, so the diagnostic save is gone.
             full = grab_region(win_left, win_top, win_w, win_h)
             c = find_charge_fill(full, cast_bar_full)
             charge_dbg["peak"] = max(charge_dbg["peak"], c)
-            if frames_dir is not None:
-                save_frame(frames_dir / f"chargefull{charge_dbg['attempt']:03d}_"
-                           f"p{charge_dbg['polls']:02d}_c{c}.png", full)
             charge_dbg["polls"] += 1
             return c
 
