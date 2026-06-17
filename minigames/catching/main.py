@@ -38,23 +38,21 @@ FLAP_MARGIN = 6
 # tuning against real flight physics (the DB logs fly_y/vy per flap).
 MIN_CLICK_INTERVAL = 0.12
 
-# Auto-start (#47): when no fly is on screen the bot is at the entry prompt
-# between attempts, so it clicks the "PLAY GAME" button to start the next
-# play and keeps going until the daily plays run out. After a click, poll
-# for the fly for up to this long WITHOUT re-clicking or re-matching the
-# button — the fly needs flapping the instant it appears, so we must NOT
-# sleep through the load (a fixed sleep let it free-fall and die).
+# Auto-start (#47): the bot clicks "PLAY GAME" to start ONE game, plays it,
+# then STOPS when the fly dies — it does NOT auto-replay the next daily play
+# (auto-replay-all is a possible future opt-in). After a click, poll for the
+# fly for up to this long WITHOUT re-clicking or re-matching the button — the
+# fly needs flapping the instant it appears, so we must NOT sleep the load.
 START_CLICK_COOLDOWN_S = 2.0
-# Stop after this many PLAY-GAME clicks in a row that don't produce a fly —
-# the plays are exhausted (the button still renders but no game starts), or
-# the bot is stuck. Resets whenever a play actually starts (a fly appears).
+# Give up starting after this many PLAY-GAME clicks that don't produce a fly
+# (the click missed, or no plays left). Only governs the initial start.
 MAX_START_ATTEMPTS = 3
 
-# Game-over bail (#47): with no fly AND no PLAY GAME button for this long,
-# the player has left the catching screen (or the prompt vanished) — exit
-# cleanly so the run summary is logged. Longer than a normal end-of-attempt
-# transition so auto-start isn't cut off between plays.
-NO_FLY_BAIL_S = 12.0
+# Game over: once a game has started, the fly being gone this long means the
+# attempt ended (it died / the prompt is back), so exit cleanly. Long enough
+# to ride out brief mid-play fly-detection dropouts, short enough to stop
+# promptly without re-clicking PLAY GAME.
+FLY_GONE_GAMEOVER_S = 2.0
 
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
@@ -138,45 +136,45 @@ def _run_inner(session_started, db, code_commit, stats):
         )
         fly_pos = find_fly(frame)
         if fly_pos is None:
-            # Just clicked PLAY GAME — the game is loading. Poll fast for the
-            # fly (cheap, on the small play crop) WITHOUT re-clicking or the
-            # expensive button match, so we start flapping the instant it
-            # appears instead of sleeping through the fall.
+            # A game has already started and the fly is gone -> the attempt is
+            # over (it died / the prompt is back). STOP — do NOT re-click PLAY
+            # GAME to start another play. The grace rides out brief mid-play
+            # detection dropouts.
+            if first_fly_seen:
+                if time.time() - last_fly_time > FLY_GONE_GAMEOVER_S:
+                    stats["end_reason"] = "game_over"
+                    print(f"Fly gone {FLY_GONE_GAMEOVER_S:.0f}s — attempt over. "
+                          f"Flaps: {stats['n_flaps']}.")
+                    return
+                time.sleep(POLL_INTERVAL)
+                continue
+            # No game started yet. If we just clicked PLAY GAME, poll fast for
+            # the fly without re-clicking (don't sleep through the load).
             if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
                 time.sleep(POLL_INTERVAL)
                 continue
-            # Not loading and no fly = at the entry prompt. Click PLAY GAME to
-            # start the next play. The prompt is anchored to the player, so
-            # search the FULL window for the button.
+            # At the entry prompt — click PLAY GAME to start the game. The
+            # prompt is anchored to the player, so search the FULL window.
             full = grab_region(win_left, win_top, win_w, win_h)
             btn = find_play_button(full)
-            if btn is not None:
-                if start_attempts >= MAX_START_ATTEMPTS:
-                    stats["end_reason"] = "plays_exhausted"
-                    print(f"Clicked PLAY GAME {start_attempts}x with no game "
-                          f"starting — plays likely exhausted. "
-                          f"Flaps total: {stats['n_flaps']}.")
-                    return
-                bx, by = btn
-                start_attempts += 1
-                last_start_click = time.time()
-                last_fly_time = time.time()  # don't let the bail fire mid-start
-                print(f"PLAY GAME at ({bx},{by}) — starting play "
-                      f"(attempt {start_attempts}/{MAX_START_ATTEMPTS})")
-                click(win_left + bx, win_top + by)
+            if btn is None:
+                time.sleep(POLL_INTERVAL)
                 continue
-            # No fly AND no button: a long transition, or off the screen.
-            if first_fly_seen and time.time() - last_fly_time > NO_FLY_BAIL_S:
-                stats["end_reason"] = "game_over"
-                print(f"No fly or PLAY GAME button for {NO_FLY_BAIL_S:.0f}s — "
-                      f"done. Flaps this run: {stats['n_flaps']}.")
+            if start_attempts >= MAX_START_ATTEMPTS:
+                stats["end_reason"] = "no_start"
+                print(f"Clicked PLAY GAME {start_attempts}x with no game "
+                      f"starting — giving up. Flaps: {stats['n_flaps']}.")
                 return
-            time.sleep(POLL_INTERVAL)
+            bx, by = btn
+            start_attempts += 1
+            last_start_click = time.time()
+            print(f"PLAY GAME at ({bx},{by}) — starting game "
+                  f"(attempt {start_attempts}/{MAX_START_ATTEMPTS})")
+            click(win_left + bx, win_top + by)
             continue
         fly_x, fly_y = fly_pos
         first_fly_seen = True
         last_fly_time = time.time()
-        start_attempts = 0    # a fly appeared → the last start succeeded
 
         # Fly vertical velocity at this frame, px/SECOND (+ = descending).
         # Wall-clock dt keeps it cadence-invariant (the darts vy lesson); a
