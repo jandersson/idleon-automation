@@ -33,14 +33,23 @@ ASSETS = Path(__file__).parent / "assets"
 # the tan dock reads as `eel` and shore plants as `green` (heavy false
 # positives). See docs/fishing_minigame.md.
 FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
-    "green": ((70, 100, 110), (90, 255, 255)),    # Green Fish (in-game H77-82)
-    "eel": ((13, 90, 120), (30, 255, 255)),       # Eel (yellow; sprite H18-24)
-    "squid": ((132, 70, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
-    # Whale (blue) overlaps the blue bar background (H~109) — the bar is high
-    # saturation (S~186), the whale much lower (sprite S~79), so cap S to
-    # separate them. Provisional until a whale is seen live.
-    "whale": ((100, 35, 100), (120, 130, 255)),
+    # Green Fish: in-game fill is H76 S79 V255 — the S floor must be LOW (was
+    # 100, which excluded the fish entirely) and the hue capped BELOW the cast
+    # bar's cyan top-edge (H~98) so the fish doesn't merge into it. Verified on
+    # the capture frames (one clean ~17x17 blob per frame).
+    "green": ((70, 50, 130), (92, 255, 255)),
+    "eel": ((13, 60, 120), (28, 255, 255)),       # Eel (yellow; sprite H18-24)
+    "squid": ((132, 60, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
+    # Whale (blue) overlaps the blue bar (H~109) — separated by saturation (bar
+    # S~186, whale sprite S~79). Provisional until a whale is seen live.
+    "whale": ((100, 40, 110), (118, 130, 255)),
 }
+# Fish are roughly-square SOLID sprites; the warm-hued false positives (the
+# tan dock / palm / sandcastle edges that read as 'eel') are thin and wide,
+# and the score text glyphs are small. Keep only square-ish, filled blobs.
+FISH_ASPECT_RANGE = (0.45, 2.3)   # width/height
+FISH_MIN_FILL = 0.35              # contourArea / bbox area
+FISH_MIN_AREA = 70
 # Red wraps the hue circle; Megalodon (red behemoth, sprite H6-10 S~81 V255).
 MEGALODON_HSV_LOW = ((3, 90, 150), (12, 255, 255))
 MEGALODON_HSV_HIGH = ((172, 90, 150), (179, 255, 255))
@@ -77,13 +86,28 @@ def _mask(hsv: np.ndarray, low, high) -> np.ndarray:
     return cv2.inRange(hsv, np.array(low), np.array(high))
 
 
-def _blob_centroids(mask: np.ndarray, min_area: int = MIN_BLOB_AREA) -> list[tuple[int, int]]:
-    """Centroids (x, y) of mask blobs above `min_area`, largest first."""
+def _blob_centroids(mask: np.ndarray, min_area: int = MIN_BLOB_AREA,
+                    aspect_range: tuple[float, float] | None = None,
+                    min_fill: float = 0.0) -> list[tuple[int, int]]:
+    """Centroids (x, y) of mask blobs above `min_area`, largest first.
+
+    Optional shape gates reject non-target blobs: `aspect_range` (width/height)
+    drops thin wide edges (scenery) and tall slivers; `min_fill`
+    (contourArea / bbox area) drops sparse/outline blobs. Used by find_fish to
+    keep the square solid fish sprites and discard the tan-scenery edges and
+    score-text glyphs that share fish hues (#63)."""
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     out: list[tuple[int, int, float]] = []
     for c in contours:
         area = cv2.contourArea(c)
         if area < min_area:
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        if w == 0 or h == 0:
+            continue
+        if aspect_range is not None and not (aspect_range[0] <= w / h <= aspect_range[1]):
+            continue
+        if area / (w * h) < min_fill:
             continue
         m = cv2.moments(c)
         if m["m00"] == 0:
@@ -128,21 +152,30 @@ def _restrict(mask: np.ndarray, bar: tuple[int, int, int, int] | None,
     return out
 
 
-def find_fish(frame: np.ndarray, min_area: int = MIN_BLOB_AREA,
-              bar: tuple[int, int, int, int] | None = None) -> list[dict]:
-    """All detected fish as dicts {x, y, kind}. Kind is one of FISH_HSV
-    keys or 'megalodon'. Positions are play-region-relative. When `bar` (from
-    find_cast_bar) is given, detection is confined to the track — strongly
-    recommended live, or world scenery floods the masks. Empty list when
-    nothing matches."""
+def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
+              bar: tuple[int, int, int, int] | None = None,
+              include_megalodon: bool = False) -> list[dict]:
+    """All detected fish as dicts {x, y, kind}. Kind is one of FISH_HSV keys.
+    Positions are play-region-relative. When `bar` (from find_cast_bar) is
+    given, detection is confined to the track. A square+fill shape gate keeps
+    the fish sprites and rejects the tan-scenery edges / score-text glyphs that
+    share the warm hues (#63). Empty list when nothing matches.
+
+    Megalodon detection is OFF by default — its red hue is shared by the mine
+    cores and the (always-present) red bobber, so routine detection is just
+    noise; it's a rare trophy. Enable include_megalodon once a real one can be
+    distinguished (e.g. by size)."""
     hsv = _to_hsv(frame)
     fish: list[dict] = []
     for kind, (low, high) in FISH_HSV.items():
-        for x, y in _blob_centroids(_restrict(_mask(hsv, low, high), bar), min_area):
+        mask = _restrict(_mask(hsv, low, high), bar)
+        for x, y in _blob_centroids(mask, min_area, FISH_ASPECT_RANGE, FISH_MIN_FILL):
             fish.append({"x": x, "y": y, "kind": kind})
-    meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
-    for x, y in _blob_centroids(_restrict(meg, bar), min_area):
-        fish.append({"x": x, "y": y, "kind": "megalodon"})
+    if include_megalodon:
+        meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
+        for x, y in _blob_centroids(_restrict(meg, bar), min_area,
+                                    FISH_ASPECT_RANGE, FISH_MIN_FILL):
+            fish.append({"x": x, "y": y, "kind": "megalodon"})
     return fish
 
 

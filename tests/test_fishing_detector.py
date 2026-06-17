@@ -47,6 +47,20 @@ def test_find_cast_bar_ignores_narrow_blue():
     assert find_cast_bar(img) is None
 
 
+def test_shape_filter_rejects_thin_scenery_edge():
+    # The fish is a square solid sprite; the tan-scenery / bar-edge false
+    # positives are thin and wide. A square fish is kept, a thin green strip
+    # (same hue) is rejected by the aspect gate (#63).
+    img = _bgra()
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)      # bar
+    _fill(img, 96, 108, 300, 320, _GREEN_HSV)    # square fish ON the bar (kept)
+    _fill(img, 100, 104, 130, 260, _GREEN_HSV)   # thin wide green strip (rejected)
+    bar = find_cast_bar(img)
+    xs = [d["x"] for d in find_fish(img, bar=bar) if d["kind"] == "green"]
+    assert any(290 <= x <= 332 for x in xs)          # square fish kept
+    assert all(not (175 <= x <= 215) for x in xs)    # thin strip (~x195) dropped
+
+
 def test_bar_restriction_keeps_on_bar_fish_drops_scenery():
     img = _bgra()
     _fill(img, 95, 109, 100, 600, _BAR_HSV)      # bar
