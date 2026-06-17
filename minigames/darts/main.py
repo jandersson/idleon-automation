@@ -88,6 +88,13 @@ SCORE_CHANGE_THRESHOLD = 1.0
 STEAM_SCREENSHOT_ON_NINE_DART = False
 NINE_DART_STREAK = 9
 
+# Consecutive red/bullseye hits that grant +1 life (#56, Throwy Darts:
+# "Red | +5 | 3 consecutive hits grant +1 life"). Tracked distinctly from
+# the any-hit streak above. Instrumentation only — the bot does not bias
+# aim toward red to bank lives (the mechanic is effectively dormant: ~1
+# three-red chain in 993 throws; see docs/darts_lives_analysis.md).
+RED_CHAIN_FOR_LIFE = 3
+
 # Wait after throwing for: dart to land, score/animation to settle, new dart to
 # load, and the player+platform to teleport to a new spawn position.
 POST_THROW_COOLDOWN = 1.5
@@ -210,6 +217,30 @@ def _is_upswing_fire(arm_centroid_vy: int | None) -> bool:
     """True when the centroid-vy signal says this match is the up-swing
     pass (skip it); False fires — including when vy is unavailable."""
     return arm_centroid_vy is not None and arm_centroid_vy > VY_GATE_MAX
+
+
+# Motion-mask noise ceiling (logs 2026-06-17). The arm centroid at a real
+# release pass moves slowly: every one of 574 logged fires has |vy| <=
+# 112 px/s (p99.5), with the bulk near 30-60. But the motion mask
+# occasionally latches a different bright moving object (a score flash,
+# the dart in flight, UI) and reports a physically impossible centroid
+# jump — one such spike (vy=-1303 px/s, ~326px of travel in a 0.25s diff)
+# passed the vy<=0 release gate and fired, breaking a 31-hit streak. Treat
+# any |vy| beyond this ceiling as "not a trustworthy release sample" and
+# skip the pass; the next poll (~250ms later) gives a clean read, and the
+# aim-skip fallback still fires within budget if needed. 200 px/s leaves
+# every observed sane fire untouched (1.8x the p100 sane value of 112) and
+# sits 6.5x below the noise spike, so there is no historical false reject.
+VY_NOISE_MAX_PX_S = 200
+
+
+def _is_noise_vy(arm_centroid_vy: int | None) -> bool:
+    """True when the centroid-vy magnitude is implausibly large — a
+    motion-mask spike/dropout, not a real arm sweep. These passes are
+    skipped: firing on a noise frame samples the wrong moment. None (no
+    centroid this poll) is not noise — that path is handled by the
+    aim-skip budget in _aim_fire_decision."""
+    return arm_centroid_vy is not None and abs(arm_centroid_vy) > VY_NOISE_MAX_PX_S
 
 
 # vy-band aim (#41 step 1): WITHIN the release pass, where the click
@@ -490,6 +521,17 @@ def _log_shot_result(stats: dict, before, after) -> None:
         print(f"  [score] miss (diff={diff:.1f}) | session {stats['makes']}/{stats['attempts']}")
 
 
+def _next_red_streak(prev: int, bullseye: int | None) -> int:
+    """Consecutive-bullseye (red) counter for the +1-life chain (#56).
+    Increments only on a confirmed bullseye (score_increment == 5); any
+    other outcome — a non-red hit, a miss, or an unreadable score
+    (bullseye is None) — breaks the chain. Distinct from the any-hit
+    `streak`: Throwy Darts grants +1 life for RED_CHAIN_FOR_LIFE reds in a
+    row, not consecutive hits. An unconfirmed throw resets rather than risk
+    over-counting a chain we can't verify (score OCR drops ~10%)."""
+    return prev + 1 if bullseye == 1 else 0
+
+
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
@@ -735,6 +777,24 @@ def _run_inner(
             time.sleep(POLL_INTERVAL)
             continue
 
+        # Motion-mask noise gate (logs 2026-06-17). A physically impossible
+        # centroid velocity (|vy| > VY_NOISE_MAX_PX_S) is the mask latching a
+        # non-arm object, not a release pass — skip it like an up-swing
+        # rather than fire on garbage (a -1303 px/s spike once broke a
+        # 31-streak). Doesn't consume the aim-skip budget: a noise frame
+        # isn't a considered pass, so it shouldn't push toward fallback.
+        if _is_noise_vy(arm_centroid_vy):
+            log_poll(
+                throw_db, session_started, t_ms, conf, match_x, match_y, threw=0,
+                arm_centroid_y=arm_centroid_y, arm_pixel_count=arm_pixel_count,
+            )
+            last_pose_time = time.time()  # keep the game-over heuristic happy
+            overlay_probe_clicks = 0
+            print(f"  [skip] noise-gate: centroid_vy={arm_centroid_vy:+d} px/s "
+                  f"|vy|>{VY_NOISE_MAX_PX_S} — motion-mask spike, waiting for a clean pass")
+            time.sleep(POLL_INTERVAL)
+            continue
+
         # Swing-pass skip-gate (#26). Bot's about to fire but centroid-vy
         # says this match is the up-swing pass — a guaranteed +20° launch
         # into the bottom of the screen. Logs the candidate as threw=0 so
@@ -977,6 +1037,19 @@ def _run_inner(
             1 if score_increment == 5 else (0 if score_increment is not None else None)
         )
         stripe_color = STRIPE_COLOR_BY_INCREMENT.get(score_increment) if score_increment else None
+        # Consecutive-red chain (#56): Throwy Darts grants +1 life for
+        # RED_CHAIN_FOR_LIFE bullseyes in a row. Track it distinctly from
+        # the any-hit streak so a future life-banking aim policy (and the
+        # analysis in docs/darts_lives_analysis.md) can key on it. Updated
+        # here, where the bullseye flag exists, rather than in
+        # _log_shot_result (which runs before score_increment is known).
+        # Instrumentation only — no aim change.
+        shot_stats["red_streak"] = _next_red_streak(
+            shot_stats.get("red_streak", 0), bullseye
+        )
+        if shot_stats["red_streak"] and shot_stats["red_streak"] % RED_CHAIN_FOR_LIFE == 0:
+            print(f"  [red-chain] {shot_stats['red_streak']} consecutive bullseyes "
+                  f"— +1 life granted (Throwy Darts: {RED_CHAIN_FOR_LIFE} reds in a row)")
         log_throw(
             throw_db,
             session_started=session_started,
@@ -1002,6 +1075,7 @@ def _run_inner(
             hit=int(bool(diff_changed)) if diff_changed is not None else None,
             bullseye=bullseye,
             streak=shot_stats.get("streak", 0),
+            red_streak=shot_stats.get("red_streak", 0),
             throw_dir=str(flight_dir) if flight_dir is not None else None,
             window_w=int(width),
             window_h=int(height),

@@ -133,6 +133,13 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # tick-cost optimization. Convert legacy rows via each fire's
     # actual poll gap (see stripe_model.fetch_stripe_rows).
     ("arm_centroid_vy_at_fire", "INTEGER"),
+    # Consecutive-bullseye (red) chain length at log time (#56). Throwy
+    # Darts grants +1 life for 3 reds in a row; this counts score_increment
+    # ==5 hits in a row, resetting on any non-red outcome or unreadable
+    # score — distinct from the any-hit `streak` column. Instrumentation
+    # for the life mechanic, currently effectively dormant (~1 chain in 993
+    # throws, 2026-06-17 analysis; see docs/darts_lives_analysis.md).
+    ("red_streak", "INTEGER"),
 ]
 
 

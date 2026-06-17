@@ -8,10 +8,14 @@ accumulate under the same conditions.
 from minigames.darts.main import (
     CALM_WIND_MAX,
     MAX_AIM_SKIPS,
+    RED_CHAIN_FOR_LIFE,
     VY_AIM_HI,
     VY_AIM_LO,
+    VY_NOISE_MAX_PX_S,
     _aim_fire_decision,
     _calm_ab_arm,
+    _is_noise_vy,
+    _next_red_streak,
 )
 
 
@@ -137,3 +141,49 @@ def test_vy_none_consumes_skip_budget():
     # Same under an A/B arm — a None vy never produces an _ab tag.
     assert _aim_fire_decision(None, 0, False, band, "band") == (False, None)
     assert _aim_fire_decision(None, MAX_AIM_SKIPS, False, band, "model") == (True, "fallback")
+
+
+# --- _is_noise_vy: motion-mask spike rejection (logs 2026-06-17) ---
+
+def test_noise_vy_rejects_implausible_magnitudes_either_direction():
+    """A |vy| beyond the ceiling is the mask latching a non-arm object,
+    not a release pass — caught in both directions (the -1303 px/s spike
+    that broke a 31-streak fired because it passed the vy<=0 gate)."""
+    assert _is_noise_vy(-1303) is True
+    assert _is_noise_vy(VY_NOISE_MAX_PX_S + 1) is True
+    assert _is_noise_vy(-(VY_NOISE_MAX_PX_S + 1)) is True
+
+
+def test_noise_vy_passes_every_observed_sane_fire():
+    """All 574 logged fires sit at |vy| <= 112 px/s; the ceiling must not
+    reject any of them (no historical false reject), including the static
+    aim band and the p99.5 boundary."""
+    assert _is_noise_vy(VY_AIM_LO) is False        # -32
+    assert _is_noise_vy(VY_AIM_HI) is False         # -20
+    assert _is_noise_vy(-112) is False              # p99.5 sane max
+    assert _is_noise_vy(112) is False
+    assert _is_noise_vy(VY_NOISE_MAX_PX_S) is False  # boundary is inclusive-pass
+    # None (no centroid this poll) is not noise — handled by the skip budget.
+    assert _is_noise_vy(None) is False
+
+
+# --- _next_red_streak: consecutive-bullseye chain (#56) ---
+
+def test_red_streak_counts_only_consecutive_bullseyes():
+    """Increments on a confirmed bullseye, reaching the +1-life threshold
+    at RED_CHAIN_FOR_LIFE in a row."""
+    s = 0
+    for _ in range(RED_CHAIN_FOR_LIFE):
+        s = _next_red_streak(s, 1)
+    assert s == RED_CHAIN_FOR_LIFE
+
+
+def test_red_streak_breaks_on_non_red_hit_miss_or_unknown():
+    """A non-red hit (bullseye=0), a miss, or an unreadable score
+    (bullseye=None) all reset the chain — distinct from the any-hit
+    streak, and conservative when the score can't be confirmed."""
+    assert _next_red_streak(2, 0) == 0       # green/yellow/gray hit
+    assert _next_red_streak(2, None) == 0    # score OCR dropped
+    # Rebuilds cleanly after a break.
+    assert _next_red_streak(0, 1) == 1
+    assert _next_red_streak(1, 1) == 2
