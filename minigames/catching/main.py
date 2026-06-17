@@ -55,6 +55,12 @@ DEFAULT_HOVER_FRAC = 0.5
 # Flap once the fly has fallen this many px BELOW the target (screen y grows
 # downward). A small deadband so it oscillates around the target.
 FLAP_MARGIN = 6
+# Aim this many px ABOVE the hoop centre. The rate-limited flap lets the
+# avatar sag past the target before firing, so at the moment a hoop passes it
+# sits ~14px below the centre (measured run 8: fly_y 88-96 vs centre 81 as
+# gap_left_x crossed the avatar) and grazes the lower ring edge. Aiming high
+# by the sag re-centres the pass. Provisional — visual-tune.
+FLAP_LAG_PX = 14
 
 # Min seconds between flaps — caps the flap rate, which sets the avatar's max
 # reachable height (it flaps to rise, gravity pulls between flaps). History:
@@ -408,12 +414,18 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         # only until the first hoop is seen.
         if gap is not None:
             gap_top, gap_bottom, gap_left_x, gap_right_x = gap
-            target_y = (gap_top + gap_bottom) // 2
-            last_gap_center = target_y
+            detected_center = (gap_top + gap_bottom) // 2
+            last_gap_center = detected_center
         else:
             gap_top = gap_bottom = gap_left_x = gap_right_x = None
-            target_y = (last_gap_center if last_gap_center is not None
-                        else int(play_region["height"] * DEFAULT_HOVER_FRAC))
+            detected_center = None
+        # Aim FLAP_LAG_PX above the hoop centre (sag compensation), holding the
+        # last centre over detection gaps; default only until the first hoop.
+        aim = detected_center if detected_center is not None else last_gap_center
+        if aim is not None:
+            target_y = max(0, aim - FLAP_LAG_PX)
+        else:
+            target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
 
         # Flap when the fly has fallen below the target (screen y grows
         # downward), rate-limited so it oscillates rather than ceiling-slams.
@@ -441,7 +453,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
                 gap_bottom=gap_bottom,
                 gap_left_x=gap_left_x,
                 gap_right_x=gap_right_x,
-                gap_center=target_y if gap is not None else None,
+                gap_center=detected_center,
                 gap_height=(gap_bottom - gap_top) if gap is not None else None,
                 fly_offset_below_gap=(fly_y - gap_bottom) if gap is not None else None,
                 gap_lower_margin=FLAP_MARGIN,
