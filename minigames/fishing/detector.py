@@ -20,7 +20,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from common.templates import match_multiscale_center
+from common.templates import match_multiscale_center, match_multiscale_zncc_center
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -182,19 +182,41 @@ def find_lure(frame: np.ndarray, threshold: float = 0.7) -> tuple[int, int] | No
     return (cx, cy) if val >= threshold else None
 
 
-def find_play_button(frame: np.ndarray, threshold: float = 0.7) -> tuple[int, int] | None:
-    """Locate the 'play minigame' prompt (template). In-world prompts move
-    with the player, so this is matched visually, not coordinate-cached
-    (CLAUDE.md). None until assets/play_button.png exists."""
+# "PLAY GAME" entry prompt — the shared Idleon minigame button (same sprite
+# as catching/mining; reused with catching's mask). Matched by background-
+# invariant masked ZNCC (play_button_mask.png covers the rigid grey button,
+# excluding the count-badge corner) so it holds up over the fishing biome;
+# falls back to unmasked CCOEFF if the mask is absent. Thresholds mirror
+# catching (0.6 masked / 0.75 unmasked).
+PLAY_BUTTON_MATCH_THRESHOLD = 0.6
+PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD = 0.75
+
+
+def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
+    """Locate the 'PLAY GAME' entry prompt; return its (x, y) centre or None.
+    Search the FULL window — the prompt is anchored above the player, not in
+    the cast-bar play region. Masked ZNCC (play_button_mask.png) is the primary
+    path for background invariance; unmasked CCOEFF is the fallback."""
     path = ASSETS / "play_button.png"
     if not path.exists():
         return None
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     template = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if template is None:
         return None
-    (cx, cy), val, _scale = match_multiscale_center(bgr, template)
-    return (cx, cy) if val >= threshold else None
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
+        return None
+    mask_path = ASSETS / "play_button_mask.png"
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE) if mask_path.exists() else None
+    if mask is not None:
+        center, conf, _ = match_multiscale_zncc_center(bgr, template, mask)
+        if center is None or conf < PLAY_BUTTON_MATCH_THRESHOLD:
+            return None
+        return center
+    center, val, _ = match_multiscale_center(bgr, template)
+    if center is None or val < PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD:
+        return None
+    return center
 
 
 def find_game_over(frame: np.ndarray, threshold: float = 0.7) -> tuple[bool, float]:

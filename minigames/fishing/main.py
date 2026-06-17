@@ -7,12 +7,13 @@ the hold duration; its learned model is hold_ms <-> cast distance
 (cast_model), fitted at startup from logged casts and refined by
 exploration — the darts pattern.
 
-SCAFFOLD STATUS: structurally complete and runnable in observe mode, but
-detection (HSV ranges in detector.py) and the cast geometry (origin,
-hold<->distance) need live calibration before it actually scores. First
-steps: `fishing-pick-play-region`, then `fishing-observe` to verify
-detection, `fishing-calibrate` to tune the colour masks, and capture
-assets/lure.png so landings (and thus the cast model) can be measured.
+STATUS: auto-starts (clicks the PLAY GAME prompt, like catching/mining — the
+cast bar is the 'minigame active' signal), plays the picked cast-bar region
+with calibrated colour detection, and explores hold durations. Still needed to
+SCORE: assets/lure.png (capture via fishing-capture) so landings — and thus the
+hold<->distance cast model — can be measured, and the #63 detection refinement
+(eel/megalodon over-detect on score text / mine cores) so target selection is
+reliable. Until the model fits the bot casts random holds and logs them.
 """
 import random
 import sys
@@ -23,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
-from common.input import hold, random_delay, check_failsafe
+from common.input import hold, click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
@@ -31,6 +32,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
     find_fish, find_mines, find_lure, find_game_over, kind_at, find_cast_bar,
+    find_play_button,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -61,10 +63,18 @@ EXPLORE_EVERY_N = 10
 CAST_SETTLE_S = 0.7
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
-# Bail if no fish are seen this long — the minigame scene is gone (the
-# darts no-pose timeout analogue). Game-over template detection is primary
-# once assets/game_over.png exists.
-NO_FISH_TIMEOUT_S = 20.0
+# Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
+# minigame, play it, then STOP on game-over (no auto-replay). After a click,
+# wait this long before re-clicking (the minigame is loading).
+START_CLICK_COOLDOWN_S = 2.0
+# Give up after this many PLAY GAME clicks that don't produce a cast bar.
+MAX_START_ATTEMPTS = 3
+# Once playing, the cast bar being gone this long means the attempt ended
+# (rides out brief detection dropouts). The cast bar is the 'active' signal —
+# it only exists during play, unlike a fish/colour count that the entry scene
+# would false-trigger. Game-over template detection (game_over.png) is primary
+# when that asset exists.
+BAR_GONE_GAMEOVER_S = 3.0
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
@@ -139,8 +149,11 @@ def _run_inner(session_started, db, code_commit, model, stats):
           f"Move mouse to a corner to abort.")
     time.sleep(2)
 
+    game_running = False        # confirmed active: the cast bar is present
+    start_attempts = 0          # consecutive PLAY GAME clicks with no game started
+    last_start_click = 0.0
+    last_active_time = time.time()   # wall-clock the cast bar was last seen
     streak = 0
-    last_fish_time = time.time()
     while True:
         check_failsafe()
         try:
@@ -161,25 +174,67 @@ def _run_inner(session_started, db, code_commit, model, stats):
             play["width"], play["height"],
         )
 
+        # The cast bar is the 'minigame active' signal — it exists only during
+        # play (a fish/colour count would false-trigger on the entry scene).
+        bar = find_cast_bar(frame)
+
+        if bar is None:
+            if not game_running:
+                # --- Startup: click the PLAY GAME prompt (like catching/mining).
+                # The prompt sits above the player, not in the cast-bar region,
+                # so match it on the FULL window.
+                full = grab_region(win_left, win_top, win_w, win_h)
+                btn = find_play_button(full)
+                if btn is not None:
+                    if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
+                        time.sleep(POLL_INTERVAL)
+                        continue
+                    if start_attempts >= MAX_START_ATTEMPTS:
+                        stats["end_reason"] = "no_start"
+                        print(f"Clicked PLAY GAME {start_attempts}x with no minigame "
+                              f"starting — giving up.")
+                        return
+                    bx, by = btn
+                    start_attempts += 1
+                    last_start_click = time.time()
+                    print(f"PLAY GAME at ({bx},{by}) — starting minigame "
+                          f"(attempt {start_attempts}/{MAX_START_ATTEMPTS}).")
+                    click(win_left + bx, win_top + by)
+                    continue
+                # No prompt and no bar yet — the minigame is loading; wait.
+                time.sleep(POLL_INTERVAL)
+                continue
+            # Was playing and the bar vanished -> the attempt ended. STOP (one
+            # game per run, like catching — no auto-replay).
+            if time.time() - last_active_time > BAR_GONE_GAMEOVER_S:
+                stats["end_reason"] = "game_over"
+                print(f"Cast bar gone {BAR_GONE_GAMEOVER_S:.0f}s — minigame over. "
+                      f"Casts={stats['n_casts']} points={stats['points_total']}.")
+                return
+            time.sleep(POLL_INTERVAL)
+            continue
+
+        # --- Cast bar present: the minigame is active ---
+        if not game_running:
+            game_running = True
+            print(f"Minigame active (cast bar at {bar}) — casting.")
+        last_active_time = time.time()
+
         is_over, go_conf = find_game_over(frame)
         if is_over:
+            stats["end_reason"] = "game_over"
             print(f"Game over detected (conf={go_conf:.2f}). "
                   f"Casts={stats['n_casts']} points={stats['points_total']}.")
             return
 
         # Confine detection to the cast bar — over the raw frame the world
         # scenery (tan dock, shore plants) floods the colour masks (#63).
-        bar = find_cast_bar(frame)
         fish = find_fish(frame, bar=bar)
         mines = find_mines(frame, bar=bar)
         if not fish:
-            if time.time() - last_fish_time > NO_FISH_TIMEOUT_S:
-                print(f"No fish seen for {NO_FISH_TIMEOUT_S:.0f}s — assuming the "
-                      f"minigame ended. Casts={stats['n_casts']}.")
-                return
+            # Bar present but no fish this poll (detection gap / between spawns).
             time.sleep(POLL_INTERVAL)
             continue
-        last_fish_time = time.time()
 
         origin_x, origin_y = _cast_origin(play, bar)
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
