@@ -76,6 +76,12 @@ FLAP_CENTER_DROP_PX = 12
 LEAD_DIST_PX = 45
 COAST_S = 0.5
 COAST_RESCUE_PX = 6
+# Only fire the timed flap when the avatar is at least this far BELOW the hoop
+# centre (low in its bob). Firing at the centre over-lifts the avatar above
+# the hole (run 12 crashed firing at fly_y == centre); the timed flaps that
+# threaded fired from ~+6..+17 below centre. So the lift launches a consistent
+# slow descent through the hole.
+TIMED_LOW_OFFSET_PX = 6
 
 # Min seconds between flaps — caps the flap rate, which sets the avatar's max
 # reachable height (it flaps to rise, gravity pulls between flaps). History:
@@ -190,16 +196,17 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
 
 
-def timed_flap_due(fly_x, fly_y, gap_left_x, gap_center_y, lead_dist_px=LEAD_DIST_PX) -> bool:
+def timed_flap_due(fly_x, fly_y, gap_left_x, gap_center_y,
+                   lead_dist_px=LEAD_DIST_PX, low_offset_px=TIMED_LOW_OFFSET_PX) -> bool:
     """Fire the phase-timed flap: the hoop's leading edge is within
-    lead_dist_px of the avatar AND the avatar is at/below the hoop centre (low
-    in its bob), so the flap lifts it into the slow descent that carries it
-    through the hole as the hoop crosses. False with no hoop or while the
-    avatar is already high (a flap there would over-lift past the ring)."""
+    lead_dist_px of the avatar AND the avatar is well below the hoop centre
+    (low_offset_px down, i.e. low in its bob), so the flap launches a
+    consistent slow descent through the hole as the hoop crosses. False with no
+    hoop, or while the avatar is high (a flap there over-lifts past the ring)."""
     if gap_left_x is None or gap_center_y is None:
         return False
     dist = gap_left_x - fly_x
-    return 0 < dist <= lead_dist_px and fly_y >= gap_center_y
+    return 0 < dist <= lead_dist_px and fly_y >= gap_center_y + low_offset_px
 
 
 def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:

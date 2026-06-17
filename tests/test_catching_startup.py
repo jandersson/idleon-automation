@@ -100,3 +100,11 @@ def test_timed_flap_not_due_after_leading_edge_passes():
 
 def test_timed_flap_due_none_gap():
     assert timed_flap_due(256, 100, None, None) is False
+
+
+def test_timed_flap_not_due_at_or_just_below_centre():
+    # firing right at the centre over-lifts; require well below it (the run-12
+    # crash fired at fly_y == centre).
+    assert timed_flap_due(fly_x=256, fly_y=80, gap_left_x=286, gap_center_y=80) is False
+    assert timed_flap_due(fly_x=256, fly_y=85, gap_left_x=286, gap_center_y=80) is False  # +5 < +6
+    assert timed_flap_due(fly_x=256, fly_y=88, gap_left_x=286, gap_center_y=80) is True   # +8 >= +6
