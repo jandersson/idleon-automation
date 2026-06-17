@@ -10,7 +10,14 @@ read as a started game again.
 """
 from collections import deque
 
-from minigames.catching.main import fly_started_moving, START_MOTION_RANGE_PX
+from minigames.catching.main import (
+    fly_started_moving,
+    START_MOTION_RANGE_PX,
+    _anchored_play_region,
+    ANCHOR_PLAY_HALF_W,
+    ANCHOR_PLAY_TOP_DY,
+    ANCHOR_PLAY_HEIGHT,
+)
 
 
 def test_empty_or_single_detection_is_not_moving():
@@ -37,3 +44,34 @@ def test_bobbing_or_falling_fly_is_moving():
 def test_threshold_is_inclusive():
     assert fly_started_moving(deque([100, 100 + START_MOTION_RANGE_PX])) is True
     assert fly_started_moving(deque([100, 100 + START_MOTION_RANGE_PX - 1])) is False
+
+
+# --- prompt-anchored play region (#60) -------------------------------------
+
+def test_anchored_region_centred_on_prompt():
+    # The minigame band is at a fixed offset from the PLAY GAME prompt, so the
+    # crop centres on the prompt x and offsets down from the prompt y.
+    r = _anchored_play_region(670, 226, 959, 572)
+    assert r == {"left": 670 - ANCHOR_PLAY_HALF_W,
+                 "top": 226 + ANCHOR_PLAY_TOP_DY,
+                 "width": 2 * ANCHOR_PLAY_HALF_W,
+                 "height": ANCHOR_PLAY_HEIGHT}
+    # avatar (the real (666,170) in that run) lands inside the crop
+    assert r["left"] <= 666 <= r["left"] + r["width"]
+    assert r["top"] <= 170 <= r["top"] + r["height"]
+
+
+def test_anchored_region_clamps_to_window():
+    # Prompt near the top-left: region clamps without going negative.
+    r = _anchored_play_region(100, 50, 959, 572)
+    assert r["left"] == 0
+    assert r["top"] == 0
+    assert r["left"] + r["width"] <= 959
+    assert r["top"] + r["height"] <= 572
+
+
+def test_anchored_region_clamps_bottom_and_right():
+    r = _anchored_play_region(950, 560, 959, 572)
+    assert r["left"] + r["width"] <= 959
+    assert r["top"] + r["height"] <= 572
+    assert r["width"] > 0 and r["height"] > 0

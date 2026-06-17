@@ -99,8 +99,56 @@ STATIC_GAMEOVER_S = 2.0
 START_MOTION_RANGE_PX = 10
 START_MOTION_FRAMES = 8
 
+# --- Region anchoring to the PLAY GAME prompt (issue #60) -----------------
+# The catching minigame is a player-anchored overlay BAND (banner + avatar +
+# hoops) drawn over the local biome, not a fixed-position screen. The band
+# sits at a fixed offset from the PLAY GAME prompt (both are drawn above the
+# player), so deriving the play crop from the detected prompt centre tracks
+# the band across world regions — a fixed top-of-window rectangle misses it
+# when the player stands lower. Offsets measured from the desert run (prompt
+# at (670,226), avatar at (666,170)). The avatar is at the prompt's x, so
+# it's searched in a NARROW central strip: a wide dark-blob search latches
+# onto desert scenery instead of the (differently-coloured) avatar.
+ANCHOR_PLAY_HALF_W = 260       # play crop half-width about the prompt x
+ANCHOR_PLAY_TOP_DY = -135      # play crop top, relative to the prompt y
+ANCHOR_PLAY_HEIGHT = 185
+ANCHOR_AVATAR_DX = -4          # avatar x offset from the prompt x
+ANCHOR_AVATAR_HALF_W = 35      # avatar search half-width
+ANCHOR_AVATAR_BAND_H = 110     # avatar search height from the play-crop top
+
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
+
+
+def _anchored_play_region(bx, by, win_w, win_h):
+    """Play crop derived from the PLAY GAME prompt centre (bx, by), clamped to
+    the window. The minigame band is player-anchored at a fixed offset from
+    the prompt, so this follows the band across world regions (issue #60)."""
+    left = max(0, bx - ANCHOR_PLAY_HALF_W)
+    top = max(0, by + ANCHOR_PLAY_TOP_DY)
+    right = min(win_w, bx + ANCHOR_PLAY_HALF_W)
+    bottom = min(win_h, top + ANCHOR_PLAY_HEIGHT)
+    return {"left": left, "top": top, "width": right - left, "height": bottom - top}
+
+
+def _find_avatar(frame, play_region, anchor):
+    """Locate the avatar (fly / horseshoe / whatever the biome uses) in the
+    play frame. With a prompt anchor, search only a NARROW central x-strip at
+    the player's fixed x (= prompt x) — a whole-frame densest-dark-blob search
+    latches onto desert scenery, not the avatar (#60). Returns frame-relative
+    (x, y) or None. Without an anchor, falls back to the old whole-frame find."""
+    if anchor is None:
+        return find_fly(frame)
+    cx = anchor[0] + ANCHOR_AVATAR_DX - play_region["left"]  # avatar x in the frame
+    x0 = max(0, cx - ANCHOR_AVATAR_HALF_W)
+    x1 = min(frame.shape[1], cx + ANCHOR_AVATAR_HALF_W)
+    y1 = min(frame.shape[0], ANCHOR_AVATAR_BAND_H)
+    if x1 <= x0 or y1 <= 0:
+        return find_fly(frame)
+    found = find_fly(frame[0:y1, x0:x1])
+    if found is None:
+        return None
+    return (found[0] + x0, found[1])
 
 
 def _env_flag(name: str) -> bool:
@@ -220,6 +268,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     last_fly_time = 0.0       # wall-clock of the last fly detection (game-over bail)
     last_motion_time = 0.0    # wall-clock the sprite last moved (motionless game-over)
     game_running = False      # confirmed a REAL game (prompt gone + fly moving)
+    anchor = None             # PLAY GAME prompt centre; anchors the play crop (#60)
     start_attempts = 0        # consecutive PLAY-GAME clicks with no game starting
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
     last_score_sample = 0.0   # wall-clock of the last throttled score read
@@ -234,11 +283,17 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             time.sleep(1)
             continue
 
-        play_region = get_region(_HERE, "play", win_w, win_h)
-        if play_region is None:
-            print("No 'play' region in regions.json. Run catching-pick-play-region first.")
-            time.sleep(2)
-            continue
+        # Once a game has been started, anchor the play crop to the PLAY GAME
+        # prompt position (the band moves with the player across regions, #60).
+        # Before the first click, fall back to the picked/static play region.
+        if anchor is not None:
+            play_region = _anchored_play_region(anchor[0], anchor[1], win_w, win_h)
+        else:
+            play_region = get_region(_HERE, "play", win_w, win_h)
+            if play_region is None:
+                print("No 'play' region in regions.json. Run catching-pick-play-region first.")
+                time.sleep(2)
+                continue
 
         frame = grab_region(
             win_left + play_region["left"],
@@ -246,7 +301,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             play_region["width"],
             play_region["height"],
         )
-        fly_pos = find_fly(frame)
+        fly_pos = _find_avatar(frame, play_region, anchor)
 
         if not game_running:
             # --- Startup: the PLAY GAME prompt is authoritative ----------
@@ -271,6 +326,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
                           f"starting — giving up. Flaps: {stats['n_flaps']}.")
                     return
                 bx, by = btn
+                anchor = (bx, by)   # band is at a fixed offset from here (#60)
                 start_attempts += 1
                 last_start_click = time.time()
                 recent_fly_y.clear()
