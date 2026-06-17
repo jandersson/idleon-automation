@@ -1,5 +1,6 @@
 import sys
 import time
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 
@@ -70,8 +71,28 @@ MAX_START_ATTEMPTS = 3
 # promptly without re-clicking PLAY GAME.
 FLY_GONE_GAMEOVER_S = 2.0
 
+# Start confirmation: catching is entered from busy world maps whose dark
+# enemy/scenery sprites land in the sky-band play crop and false-trigger
+# find_fly as a STATIC blob at a fixed y (observed in a desert region:
+# 42 flaps all at fly_y=104, vy=0, PLAY GAME never clicked). A real fly
+# bobs/free-falls, so only treat a game as started once the detected fly's y
+# has spanned at least this many px over the last few detections — a static
+# false-positive never does. Until then the PLAY GAME button, not the fly,
+# drives the loop.
+START_MOTION_RANGE_PX = 10
+START_MOTION_FRAMES = 8
+
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
+
+
+def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
+    """True once the detected fly's y has spanned at least `min_range` px over
+    the buffered detections — i.e. a real bobbing/free-falling fly, not a
+    static scenery blob mistaken for the fly at the entry prompt. The gate
+    that stops a false fly from being read as a started game (see the desert-
+    region failure in START_MOTION_RANGE_PX's note)."""
+    return len(recent_ys) >= 2 and max(recent_ys) - min(recent_ys) >= min_range
 
 
 def _read_score(win_left, win_top, win_w, win_h):
@@ -151,11 +172,12 @@ def _run_inner(session_started, db, code_commit, stats):
     last_click_time = 0.0
     prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
     last_fly_time = 0.0       # wall-clock of the last fly detection (game-over bail)
-    first_fly_seen = False    # don't bail before the minigame has started
+    game_running = False      # confirmed a REAL game (prompt gone + fly moving)
     start_attempts = 0        # consecutive PLAY-GAME clicks with no game starting
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
     last_score_sample = 0.0   # wall-clock of the last throttled score read
     last_score = None         # most recent PTS read, logged per flap
+    recent_fly_y: deque[int] = deque(maxlen=START_MOTION_FRAMES)  # for the start-motion gate
     while True:
         check_failsafe()
         try:
@@ -178,45 +200,64 @@ def _run_inner(session_started, db, code_commit, stats):
             play_region["height"],
         )
         fly_pos = find_fly(frame)
-        if fly_pos is None:
-            # A game has already started and the fly is gone -> the attempt is
-            # over (it died / the prompt is back). STOP — do NOT re-click PLAY
-            # GAME to start another play. The grace rides out brief mid-play
-            # detection dropouts.
-            if first_fly_seen:
-                if time.time() - last_fly_time > FLY_GONE_GAMEOVER_S:
-                    stats["end_reason"] = "game_over"
-                    print(f"Fly gone {FLY_GONE_GAMEOVER_S:.0f}s — attempt over. "
-                          f"Flaps: {stats['n_flaps']}.")
-                    return
-                time.sleep(POLL_INTERVAL)
-                continue
-            # No game started yet. If we just clicked PLAY GAME, poll fast for
-            # the fly without re-clicking (don't sleep through the load).
-            if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
-                time.sleep(POLL_INTERVAL)
-                continue
-            # At the entry prompt — click PLAY GAME to start the game. The
-            # prompt is anchored to the player, so search the FULL window.
+
+        if not game_running:
+            # --- Startup: the PLAY GAME prompt is authoritative ----------
+            # Don't trust find_fly here. On busy world maps a dark enemy /
+            # scenery sprite in the sky-band crop false-triggers it as a
+            # static blob, which used to make the bot "play" a phantom and
+            # never click PLAY GAME. Drive off the button instead, and only
+            # hand control to the fly once it's confirmed to be MOVING.
             full = grab_region(win_left, win_top, win_w, win_h)
             btn = find_play_button(full)
-            if btn is None:
+            if btn is not None:
+                # At the entry prompt. If we just clicked, wait it out rather
+                # than spamming plays; else click PLAY GAME (attempt-capped so
+                # we give up if no game ever starts). Prompt is player-
+                # anchored, so the match searched the FULL window.
+                if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                if start_attempts >= MAX_START_ATTEMPTS:
+                    stats["end_reason"] = "no_start"
+                    print(f"Clicked PLAY GAME {start_attempts}x with no game "
+                          f"starting — giving up. Flaps: {stats['n_flaps']}.")
+                    return
+                bx, by = btn
+                start_attempts += 1
+                last_start_click = time.time()
+                recent_fly_y.clear()
+                print(f"PLAY GAME at ({bx},{by}) — starting game "
+                      f"(attempt {start_attempts}/{MAX_START_ATTEMPTS})")
+                click(win_left + bx, win_top + by)
+                continue
+            # No prompt on screen: the minigame is loading or has started.
+            # Confirm only once a fly is present AND its y has moved enough —
+            # a real fly bobs/free-falls; a leftover static blob (or a one-
+            # frame button-match dropout at the prompt) does not.
+            if fly_pos is not None:
+                recent_fly_y.append(fly_pos[1])
+            if fly_pos is None or not fly_started_moving(recent_fly_y):
                 time.sleep(POLL_INTERVAL)
                 continue
-            if start_attempts >= MAX_START_ATTEMPTS:
-                stats["end_reason"] = "no_start"
-                print(f"Clicked PLAY GAME {start_attempts}x with no game "
-                      f"starting — giving up. Flaps: {stats['n_flaps']}.")
+            game_running = True
+            last_fly_time = time.time()
+            print(f"Game started — fly moving at {fly_pos}. Playing.")
+            # fall through to flap this frame
+
+        # --- In a confirmed game --------------------------------------
+        if fly_pos is None:
+            # The fly is gone -> the attempt is over (it died / the prompt is
+            # back). STOP — do NOT re-click PLAY GAME. The grace rides out
+            # brief mid-play detection dropouts.
+            if time.time() - last_fly_time > FLY_GONE_GAMEOVER_S:
+                stats["end_reason"] = "game_over"
+                print(f"Fly gone {FLY_GONE_GAMEOVER_S:.0f}s — attempt over. "
+                      f"Flaps: {stats['n_flaps']}.")
                 return
-            bx, by = btn
-            start_attempts += 1
-            last_start_click = time.time()
-            print(f"PLAY GAME at ({bx},{by}) — starting game "
-                  f"(attempt {start_attempts}/{MAX_START_ATTEMPTS})")
-            click(win_left + bx, win_top + by)
+            time.sleep(POLL_INTERVAL)
             continue
         fly_x, fly_y = fly_pos
-        first_fly_seen = True
         last_fly_time = time.time()
 
         # Fly vertical velocity at this frame, px/SECOND (+ = descending).
