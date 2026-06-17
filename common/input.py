@@ -52,31 +52,34 @@ def hold(x: int, y: int, duration_ms: int, jitter: int = 3):
         pyautogui.mouseUp()
 
 
-def _charge_step(charge: int, elapsed_s: float, seen_positive: bool,
+def _charge_step(charge: int, elapsed_s: float, seen_charging: bool,
                  target_charge: int, ready_grace_s: float,
                  max_hold_s: float) -> str:
     """Closed-loop charge decision for one poll of charge_and_release. Pure.
 
     Returns one of:
       'release' — the charge reached target_charge, or max_hold_s elapsed: cast.
-      'abort'   — the rod isn't ready (the fill stayed 0 past ready_grace_s,
-                  e.g. the previous lure is still reeling in): don't cast.
+      'abort'   — the rod isn't ready (never started charging within
+                  ready_grace_s, e.g. the previous lure is still reeling in):
+                  don't cast.
       'hold'    — keep charging.
 
-    `seen_positive` is sticky: True once any poll has read charge > 0, so a rod
-    that IS charging never trips the not-ready abort on a transient 0 read."""
+    `seen_charging` is sticky: True once the fill has crossed the ready floor
+    (set by the caller, not a lone red pixel), so a rod that IS charging never
+    trips the not-ready abort on a transient low/zero read."""
     if charge >= target_charge:
         return "release"
     if elapsed_s >= max_hold_s:
         return "release"
-    if not seen_positive and elapsed_s >= ready_grace_s:
+    if not seen_charging and elapsed_s >= ready_grace_s:
         return "abort"
     return "hold"
 
 
 def charge_and_release(x: int, y: int, target_charge: int, read_charge,
                        poll_s: float = 0.025, ready_grace_s: float = 0.3,
-                       max_hold_s: float = 1.5, jitter: int = 3) -> tuple[int, bool]:
+                       max_hold_s: float = 1.5, ready_floor: int = 2,
+                       jitter: int = 3) -> tuple[int, bool]:
     """Closed-loop cast for the fishing minigame: press and hold LMB at (x, y),
     poll read_charge() each ~poll_s while the button is down, and RELEASE when
     the charge-bar fill reaches target_charge (or max_hold_s elapses).
@@ -91,10 +94,17 @@ def charge_and_release(x: int, y: int, target_charge: int, read_charge,
 
     Returns (actual_charge, ready):
       actual_charge — the bar fill at release (the model's training feature).
-      ready — False when the rod wasn't ready: the fill stayed 0 through
-        ready_grace_s, so the cast was aborted early. The caller should SKIP it
-        (don't log it as a cast, don't count it) and retry after a beat — this
-        is the previous lure still reeling in, the cast-too-soon waste (#58).
+      ready — False when the rod wasn't ready: the fill never reached
+        ready_floor through ready_grace_s, so the cast was aborted early. The
+        caller should SKIP it (don't log it as a cast, don't count it) and retry
+        after a beat — this is the previous lure still reeling in, the
+        cast-too-soon waste (#58).
+
+    ready_floor: the fill must cross this (px) before the rod counts as
+    charging. A floor of >1 means a single stray red pixel-row in the narrow
+    x<10 charge strip — the reeling bobber is itself a red object, or animation
+    residue — can't latch 'charging' and suppress the not-ready abort. A real
+    charging rod blows past it within a poll or two, well inside the grace.
 
     mouseUp runs in a finally so an abort/crash never leaves the button down.
     check_failsafe() runs each poll so a corner-slam aborts mid-charge."""
@@ -103,14 +113,14 @@ def charge_and_release(x: int, y: int, target_charge: int, read_charge,
     pyautogui.moveTo(x, y)
     pyautogui.mouseDown()
     charge = 0
-    seen_positive = False
+    seen_charging = False
     start = time.time()
     try:
         while True:
             check_failsafe()
             charge = read_charge()
-            seen_positive = seen_positive or charge > 0
-            step = _charge_step(charge, time.time() - start, seen_positive,
+            seen_charging = seen_charging or charge >= ready_floor
+            step = _charge_step(charge, time.time() - start, seen_charging,
                                 target_charge, ready_grace_s, max_hold_s)
             if step == "release":
                 return charge, True
