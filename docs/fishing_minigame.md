@@ -140,6 +140,36 @@ The lure shares the warm-red hues, so it's matched by **template**
 `fishing-capture` (a wiki sprite won't match the live pipeline — the catching
 play-button lesson).
 
+## Next session: aim off the charge bar (2026-06-17, after 7 live runs)
+
+State: the bot auto-starts (clicks PLAY GAME), detects the green fish cleanly
+(#63), casts open-loop via `hold_ms`, and measures the landing by the bobber's
+MAX x over a poll (`_measure_landing` — the bobber reels in after landing, so
+max-x is the landing, not the last read). Landings are now reproducible, but it
+barely scores: the bobber-distance model **undershoots** near a distance **cap
+(~267px)** where the charge bar fills up, plus far casts land off-crop (noise).
+
+Key finding — the **red charge bar** (left edge) is a far better signal than
+the bobber: `find_charge_level` (red fill height, x<10) maps cleanly and
+**reproducibly** to landing distance (36→181, 59→294 both exact; ~4.9
+px-distance per px-fill), and it's always in-crop + stable after release.
+`casts.charge_level` is now logged every cast (even when the bobber lands
+off-crop). Anomaly to explain: ~half of run 7's casts logged `charge_level=0`
+AND no bobber — likely cast too soon after the previous (reel-in not done →
+no charge); check `CAST_COOLDOWN_S` / sequencing.
+
+Plan:
+1. From a fresh run's `fishing.db`, fit `charge_level → landed_dist` (clean) and
+   check `hold_ms → charge_level` (is open-loop hold deterministic, or does the
+   bar overshoot/oscillate?). Investigate the `charge_level=0` casts.
+2. Switch the cast feedback to the charge bar: measure distance from
+   `charge_level` (robust, in-crop) instead of the off-crop bobber, so the cast
+   model fits on clean data. If `hold_ms → charge_level` is too noisy, go
+   closed-loop (charge while polling the bar, release at the target level — a
+   new charge-and-release primitive, vs the open-loop `hold()`).
+3. Model the distance CAP (linear-up-to-cap, then flat) so aiming doesn't
+   over-hold for far fish.
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
