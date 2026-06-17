@@ -36,7 +36,12 @@ def open_log_db(
     for table, cols in late_columns.items():
         for name, decl in cols:
             try:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                # Quote the column name so SQL keywords work as column names
+                # (insert_row quotes them too — e.g. "offset", "where").
+                # Without the quotes the ALTER raises a *syntax* error that the
+                # except below swallows as if the column already existed, so
+                # the migration silently never runs.
+                conn.execute(f'ALTER TABLE {table} ADD COLUMN "{name}" {decl}')
             except sqlite3.OperationalError:
                 pass  # already exists — duplicate column error
     conn.commit()
