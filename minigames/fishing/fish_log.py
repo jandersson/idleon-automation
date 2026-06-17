@@ -88,6 +88,12 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # The charge fill the closed-loop cast aimed to release at (charge_level is
     # what it actually got). Aim error = charge_level - target_charge_level.
     ("target_charge_level", "INTEGER"),
+    # Catch geometry: the lure's landing y, and its offset to the nearest fish
+    # that was there just before (lure - fish). A catch doesn't track the x gap
+    # alone, so log dx AND dy to find the 2D catch condition (#58).
+    ("landed_y", "INTEGER"),
+    ("catch_dx", "INTEGER"),
+    ("catch_dy", "INTEGER"),
 ]
 # Rod-not-ready aborts this run: closed-loop casts skipped because the bar
 # stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now

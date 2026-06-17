@@ -495,7 +495,8 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         lure, post, pre_frame = _measure_landing(win_left, win_top, play,
                                                  CAST_SETTLE_S, LANDING_POLL_S,
                                                  frames_dir, stats["n_casts"])
-        landed_x = landed_dist = landed_kind = points = made = None
+        landed_x = landed_y = landed_dist = landed_kind = points = made = None
+        catch_dx = catch_dy = None
         if lure is not None:
             landed_x, landed_y = lure
             # Catch = a fish near the landing JUST BEFORE the lure arrives is gone
@@ -505,6 +506,12 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             landed_kind, made = _classify_catch(pre_fish, post_fish, landed_x)
             points = FISH_VALUE.get(landed_kind, 0)
             landed_dist = abs(landed_x - origin_x)
+            # Catch-geometry telemetry: lure offset to the nearest pre-cast fish
+            # (lure - fish). made doesn't track the x gap alone, so log dx AND dy.
+            nearest = min(pre_fish, key=lambda f: abs(f["x"] - landed_x), default=None)
+            if nearest is not None:
+                catch_dx = landed_x - nearest["x"]
+                catch_dy = landed_y - nearest["y"]
             stats["points_total"] += points
             # Streak: any fish catch extends it; a Whale catch resets to 1
             # (wiki); a miss breaks it.
@@ -513,11 +520,14 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         set_outcome(
             db, row_id,
             landed_x=landed_x,
+            landed_y=landed_y,
             landed_dist_px=landed_dist,
             landed_kind=landed_kind,
             points=points,
             made=made,
             charge_level=charge or None,
+            catch_dx=catch_dx,
+            catch_dy=catch_dy,
         )
 
         random_delay(int(CAST_COOLDOWN_S * 1000), int(CAST_COOLDOWN_S * 1000) + 200)
