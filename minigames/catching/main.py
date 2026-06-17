@@ -17,7 +17,7 @@ from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
-from minigames.catching.detector import find_fly, find_next_gap, find_play_button
+from minigames.catching.detector import find_fly, find_avatar, find_next_gap, find_play_button
 from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
 
@@ -114,7 +114,9 @@ ANCHOR_PLAY_TOP_DY = -135      # play crop top, relative to the prompt y
 ANCHOR_PLAY_HEIGHT = 185
 ANCHOR_AVATAR_DX = -4          # avatar x offset from the prompt x
 ANCHOR_AVATAR_HALF_W = 35      # avatar search half-width
-ANCHOR_AVATAR_BAND_H = 110     # avatar search height from the play-crop top
+ANCHOR_AVATAR_BAND_H = 150     # avatar search height from the play-crop top
+                               # (tall enough that a falling avatar isn't lost
+                               # before the bot flaps it; excludes the banner)
 
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
@@ -136,16 +138,16 @@ def _find_avatar(frame, play_region, anchor):
     play frame. With a prompt anchor, search only a NARROW central x-strip at
     the player's fixed x (= prompt x) — a whole-frame densest-dark-blob search
     latches onto desert scenery, not the avatar (#60). Returns frame-relative
-    (x, y) or None. Without an anchor, falls back to the old whole-frame find."""
+    (x, y) or None. Without an anchor, falls back to the whole-frame find."""
     if anchor is None:
-        return find_fly(frame)
+        return find_avatar(frame)
     cx = anchor[0] + ANCHOR_AVATAR_DX - play_region["left"]  # avatar x in the frame
     x0 = max(0, cx - ANCHOR_AVATAR_HALF_W)
     x1 = min(frame.shape[1], cx + ANCHOR_AVATAR_HALF_W)
     y1 = min(frame.shape[0], ANCHOR_AVATAR_BAND_H)
     if x1 <= x0 or y1 <= 0:
-        return find_fly(frame)
-    found = find_fly(frame[0:y1, x0:x1])
+        return find_avatar(frame)
+    found = find_avatar(frame[0:y1, x0:x1])
     if found is None:
         return None
     return (found[0] + x0, found[1])

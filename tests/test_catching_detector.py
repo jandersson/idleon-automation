@@ -8,7 +8,7 @@ tall-narrow aspect filter that isolates the hoop from the wide desert/HUD.
 import cv2
 import numpy as np
 
-from minigames.catching.detector import find_fly, find_next_gap, find_play_button, ASSETS
+from minigames.catching.detector import find_fly, find_avatar, find_next_gap, find_play_button, ASSETS
 
 
 def _sky(h=183, w=400):
@@ -105,3 +105,23 @@ def test_find_play_button_none_when_absent():
     img = np.full((300, 959, 4), 200, np.uint8)
     img[:, :, 3] = 255
     assert find_play_button(img) is None
+
+
+# ---- find_avatar (colour-cue: cyan body, dark-fly fallback) ----------------
+
+def test_find_avatar_detects_cyan_blob():
+    box = np.full((150, 70, 3), 130, np.uint8)        # gray bg (S~0, not cyan)
+    cv2.circle(box, (35, 40), 8, (220, 220, 30), -1)  # cyan (BGR) blob, H~90
+    pos = find_avatar(box)
+    assert pos is not None
+    assert abs(pos[0] - 35) <= 4 and abs(pos[1] - 40) <= 4
+
+
+def test_find_avatar_falls_back_to_dark_fly():
+    box = np.full((60, 70, 3), 200, np.uint8)  # bright bg, no cyan
+    box[20:32, 30:42] = 20                     # dark fly-like square
+    assert find_avatar(box) is not None
+
+
+def test_find_avatar_none_on_uniform():
+    assert find_avatar(np.full((60, 70, 3), 150, np.uint8)) is None

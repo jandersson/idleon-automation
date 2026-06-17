@@ -118,6 +118,47 @@ def _find_fly_template(bgr: np.ndarray) -> tuple[int, int] | None:
     return (max_loc[0] + tw // 2, max_loc[1] + th // 2)
 
 
+# Avatar colour cues. The catching avatar is biome-coloured — a dark fly in
+# the original region, a CYAN horseshoe in the desert — so detection tries a
+# colour cue and falls back to the dark blob. The cyan body is a dense, stable
+# ~95px blob (sampled H 93-100), cleanly separated from the blue sky (H ~109)
+# and orange cliffs (H ~20); the horseshoe's thin dark OUTLINE, by contrast,
+# is sparse and the find_fly fill filter drops it, so dark-blob detection of
+# it is intermittent and can't keep it flapped alive (#60).
+AVATAR_CYAN_LOWER = np.array([88, 50, 110])
+AVATAR_CYAN_UPPER = np.array([104, 255, 255])
+AVATAR_CYAN_MIN_AREA = 15
+
+
+def _largest_blob_center(mask: np.ndarray, min_area: int) -> tuple[int, int] | None:
+    """Centre of the largest connected component in `mask` at least
+    `min_area` px, or None."""
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best, best_area = None, float(min_area)
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < best_area:
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        best_area = area
+        best = (x + w // 2, y + h // 2)
+    return best
+
+
+def find_avatar(box: np.ndarray) -> tuple[int, int] | None:
+    """Locate the avatar in `box` — a crop already restricted to a narrow
+    strip at the player's fixed x (main.py does the anchoring). Tries the cyan
+    body (desert horseshoe) first, then the dark-blob fly (original region).
+    Returns the blob centre (x, y) in box coords, or None."""
+    bgr = _to_bgr(box)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    cyan = _largest_blob_center(
+        cv2.inRange(hsv, AVATAR_CYAN_LOWER, AVATAR_CYAN_UPPER), AVATAR_CYAN_MIN_AREA)
+    if cyan is not None:
+        return cyan
+    return find_fly(box)
+
+
 def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
     """Locate the "PLAY GAME" entry button. Returns its (x, y) centre
     (clicking there starts a play) or None when it isn't on screen / the
