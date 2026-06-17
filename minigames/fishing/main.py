@@ -35,7 +35,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
     find_fish, find_mines, find_lure, find_game_over, kind_at, find_cast_bar,
-    find_play_button,
+    find_play_button, find_charge_level,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -107,6 +107,7 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
     find_lure x (or NA) in the name — for debugging which moment the landing
     read latches onto (the same hold landing at wildly different x, #58)."""
     best, best_frame = None, None   # (x, y) at the FARTHEST x = the landing
+    charge = 0                      # max charge-bar fill over the poll (stable)
     seen = False
     deadline = time.time() + settle_s
     j = 0
@@ -116,6 +117,7 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
             play["width"], play["height"],
         )
         lure = find_lure(post)
+        charge = max(charge, find_charge_level(post))
         if frames_dir is not None:
             lx = lure[0] if lure is not None else "NA"
             save_frame(frames_dir / f"cast{cast_idx:02d}_p{j:02d}_x{lx}.png", post)
@@ -129,7 +131,7 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
         elif seen:
             break                  # bobber vanished after landing -> done
         time.sleep(poll_s)
-    return best, best_frame
+    return best, best_frame, charge
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
@@ -363,33 +365,36 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             source="bot",
         )
 
-        # Measure the landing by polling for the bobber over the settle window
-        # (a single grab missed it mid-arc). Returns the landed position + the
-        # frame, so kind_at classifies what it landed on.
-        lure, post = _measure_landing(win_left, win_top, play,
-                                      CAST_SETTLE_S, LANDING_POLL_S,
-                                      frames_dir, stats["n_casts"])
+        # Measure the cast. The bobber landing (max-x poll) classifies what was
+        # hit, but the CHARGE-BAR fill (charge) is the robust distance signal —
+        # always in-crop and stable, logged every cast even when the bobber
+        # lands off-crop (then landed_* are NULL but charge_level still
+        # captures the cast power, #58). The charge<->distance model + aiming
+        # off it is the next step once enough charge data is logged.
+        lure, post, charge = _measure_landing(win_left, win_top, play,
+                                              CAST_SETTLE_S, LANDING_POLL_S,
+                                              frames_dir, stats["n_casts"])
+        landed_x = landed_dist = landed_kind = points = made = None
         if lure is not None:
             landed_x, landed_y = lure
-            landed_kind = kind_at(post, landed_x, landed_y)
-            points = FISH_VALUE.get(landed_kind, 0) if landed_kind else 0
-            made = 1 if landed_kind in FISH_VALUE and points > 0 else 0
-            set_outcome(
-                db, row_id,
-                landed_x=landed_x,
-                landed_dist_px=abs(landed_x - origin_x),
-                landed_kind=landed_kind or "miss",
-                points=points,
-                made=made,
-            )
+            landed_kind = kind_at(post, landed_x, landed_y) or "miss"
+            points = FISH_VALUE.get(landed_kind, 0)
+            made = 1 if points > 0 else 0
+            landed_dist = abs(landed_x - origin_x)
             stats["points_total"] += points
             # Streak: any fish landing extends it; a Whale catch resets to 1
             # (wiki); a miss breaks it.
-            if made:
-                streak = 1 if landed_kind == "whale" else streak + 1
-            else:
-                streak = 0
+            streak = (1 if landed_kind == "whale" else streak + 1) if made else 0
             stats["max_streak"] = max(stats["max_streak"], streak)
+        set_outcome(
+            db, row_id,
+            landed_x=landed_x,
+            landed_dist_px=landed_dist,
+            landed_kind=landed_kind,
+            points=points,
+            made=made,
+            charge_level=charge or None,
+        )
 
         random_delay(int(CAST_COOLDOWN_S * 1000), int(CAST_COOLDOWN_S * 1000) + 200)
 

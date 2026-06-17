@@ -77,7 +77,12 @@ CREATE TABLE IF NOT EXISTS runs (
 
 
 # Append-only late columns; open_db ALTERs them in on existing DBs.
-_LATE_COLUMNS: list[tuple[str, str]] = []
+_LATE_COLUMNS: list[tuple[str, str]] = [
+    # Charge-bar fill height at release (px) — the robust cast-power signal
+    # (always in-crop, stable), logged even when the bobber lands off-crop.
+    # The basis for a charge<->distance model + charge-based aiming (#58).
+    ("charge_level", "INTEGER"),
+]
 _RUNS_LATE_COLUMNS: list[tuple[str, str]] = []
 
 

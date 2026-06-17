@@ -8,7 +8,7 @@ LOGIC: that the bar is found and that off-bar blobs are excluded.
 import cv2
 import numpy as np
 
-from minigames.fishing.detector import find_cast_bar, find_fish
+from minigames.fishing.detector import find_cast_bar, find_fish, find_charge_level
 
 
 def _bgra(h=200, w=700):
@@ -45,6 +45,19 @@ def test_find_cast_bar_ignores_narrow_blue():
     img = _bgra()
     _fill(img, 95, 109, 100, 140, _BAR_HSV)
     assert find_cast_bar(img) is None
+
+
+def test_find_charge_level_measures_left_red_bar():
+    # the charge bar is a thin red strip at the far-left edge; its fill height
+    # is the cast-power signal (#58). Empty -> 0.
+    img = _bgra()
+    _fill(img, 70, 100, 0, 3, [3, 220, 230])     # red bar, bottom 30 rows, x<3
+    assert 28 <= find_charge_level(img) <= 32
+    assert find_charge_level(_bgra()) == 0
+    # a red object further right (e.g. the beach umbrella, x>=12) must NOT count
+    img2 = _bgra()
+    _fill(img2, 70, 100, 20, 30, [3, 220, 230])
+    assert find_charge_level(img2) == 0
 
 
 def test_shape_filter_rejects_thin_scenery_edge():

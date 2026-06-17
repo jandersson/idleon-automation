@@ -225,6 +225,27 @@ PLAY_BUTTON_MATCH_THRESHOLD = 0.6
 PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD = 0.75
 
 
+# Charge (power) bar — the red vertical strip at the far-left edge that fills
+# while holding and sets the cast distance. It's always in-crop and stable
+# after release, so its fill height is a far more robust distance signal than
+# tracking the bobber (which arcs off-crop and reels in). Measured live: fill
+# height correlates ~linearly with landing distance (~4.9 px-distance per px,
+# reproducible). Restricted to x < CHARGE_BAR_X_MAX so the red-white beach
+# umbrella (a bit further right) doesn't leak in.
+CHARGE_BAR_X_MAX = 10
+CHARGE_RED_LOW = ((0, 120, 90), (10, 255, 255))
+CHARGE_RED_HIGH = ((170, 120, 90), (179, 255, 255))
+
+
+def find_charge_level(frame: np.ndarray) -> int:
+    """Fill height (px) of the left-edge red charge bar — 0 when empty. The
+    cast-power signal: maps ~linearly to landing distance, robustly (in-crop,
+    stable post-release), unlike the off-crop bobber landing."""
+    hsv = _to_hsv(frame)[:, :CHARGE_BAR_X_MAX]
+    red = cv2.bitwise_or(_mask(hsv, *CHARGE_RED_LOW), _mask(hsv, *CHARGE_RED_HIGH))
+    return int(np.count_nonzero((red > 0).any(axis=1)))   # rows with any red = fill height
+
+
 def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
     """Locate the 'PLAY GAME' entry prompt; return its (x, y) centre or None.
     Search the FULL window — the prompt is anchored above the player, not in
