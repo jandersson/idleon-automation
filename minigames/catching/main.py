@@ -461,9 +461,9 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         # is low in its bob, fire ONE timed flap, then suppress hover flaps for
         # COAST_S so the slow descent carries it through the hole (flapping only
         # to stay off the bottom edge). Between rings, hover the centred bob.
-        if timed_flap_due(fly_x, fly_y, gap_left_x, detected_center) and now >= coast_until:
+        is_timed = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center) and now >= coast_until
+        if is_timed:
             do_flap, where = True, "timed"
-            coast_until = now + COAST_S
         elif now < coast_until:
             floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
                 else (play_region["height"] - 25)
@@ -479,6 +479,11 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             cy = play_region["top"] + play_region["height"] // 2
             click(win_left + cx, win_top + cy)
             last_click_time = time.time()
+            # Start the coast ONLY when the timed flap actually fired — setting
+            # it on a rate-limited (blocked) timed flap coasts with no lift and
+            # the avatar sinks below the hole.
+            if is_timed:
+                coast_until = last_click_time + COAST_S
             stats["n_flaps"] += 1
             print(f"fly y={fly_y} vy={fly_vy} target={target_y} {where} — flap #{stats['n_flaps']}")
             log_flap(
