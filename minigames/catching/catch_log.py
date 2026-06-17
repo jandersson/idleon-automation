@@ -77,7 +77,12 @@ CREATE TABLE IF NOT EXISTS runs (
 
 # New columns added after the original schema; open_db ALTERs them in on
 # existing DBs. Keep append-only — same pattern as the other bots' logs.
-_LATE_COLUMNS: list[tuple[str, str]] = []
+_LATE_COLUMNS: list[tuple[str, str]] = [
+    # PTS score read (throttled OCR) most recently before this flap; NULL
+    # until score templates exist / the first read lands. Lets flap state be
+    # correlated with score progression. See minigames/catching/score.py.
+    ("score", "INTEGER"),
+]
 _RUNS_LATE_COLUMNS: list[tuple[str, str]] = []
 
 

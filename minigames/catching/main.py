@@ -8,20 +8,34 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.regions import get_region
+from common.score_diff import score_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.catching.detector import find_fly, find_next_gap, find_play_button
 from minigames.catching.catch_log import open_db, log_flap, log_run
+from minigames.catching.score import make_pts_reader
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 CATCH_DB_PATH = _HERE / "assets" / "catching.db"
+DIGIT_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
 REPO_ROOT = _HERE.parent.parent
 
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
+
+# Read the "N PTS" score this often (seconds) — NOT every poll. OCR (a small
+# grab + template match) is cheap but the flap loop must stay fast, and the
+# score only ticks on a hoop pass-through, so ~2 Hz captures every change.
+# Sampled AFTER the flap block so it never sits between a flap decision and
+# the click (the CLAUDE.md click-timing rule).
+SCORE_SAMPLE_INTERVAL = 0.5
+# Built once: a read_pts(score_crop) -> int | None bound to the digit
+# template library. Returns None for uncaptured digits, so max-tracking
+# never records a false-high (grow the library with catching-capture-digits).
+_read_pts = make_pts_reader(DIGIT_TEMPLATES_DIR)
 
 # Flap policy. Aim the fly at the next hoop's CENTRE when one is visible,
 # else hover at this fraction of the play-region height so it never
@@ -60,6 +74,26 @@ FLY_GONE_GAMEOVER_S = 2.0
 # anywhere in the play region). Center of the 'play' region by default.
 
 
+def _read_score(win_left, win_top, win_w, win_h):
+    """Grab the score region and OCR the "N PTS" number, or None.
+
+    Separate small grab (the score HUD sits just below the play-region crop),
+    so it doesn't disturb the flap loop's frame. Returns None when the region
+    isn't picked, nothing's readable, or the digit isn't in the template
+    library yet."""
+    region = get_region(_HERE, "score", win_w, win_h)
+    if region is None:
+        return None
+    frame = grab_region(
+        win_left + region["left"],
+        win_top + region["top"],
+        region["width"],
+        region["height"],
+    )
+    crop = score_region(frame, 0, 0, region["width"], region["height"])
+    return _read_pts(crop)
+
+
 def run():
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
@@ -76,7 +110,8 @@ def run():
         started_at = time.time()
         # Mutable so the finally below sees the running count even though
         # _run_inner's loop only exits by exception (failsafe / Ctrl-C).
-        stats = {"n_flaps": 0, "end_reason": "process_exit"}
+        # final_score is the max PTS read during the run (None if unread).
+        stats = {"n_flaps": 0, "end_reason": "process_exit", "final_score": None}
         try:
             _run_inner(session_started, db, code_commit, stats)
         except KeyboardInterrupt:
@@ -94,6 +129,7 @@ def run():
                 n_flaps=stats["n_flaps"],
                 duration_s=round(time.time() - started_at, 1),
                 end_reason=stats["end_reason"],
+                final_score=stats["final_score"],
                 code_commit=code_commit,
             )
             db.close()
@@ -115,6 +151,8 @@ def _run_inner(session_started, db, code_commit, stats):
     first_fly_seen = False    # don't bail before the minigame has started
     start_attempts = 0        # consecutive PLAY-GAME clicks with no game starting
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
+    last_score_sample = 0.0   # wall-clock of the last throttled score read
+    last_score = None         # most recent PTS read, logged per flap
     while True:
         check_failsafe()
         try:
@@ -232,10 +270,23 @@ def _run_inner(session_started, db, code_commit, stats):
                 gap_lower_margin=FLAP_MARGIN,
                 window_w=win_w,
                 window_h=win_h,
+                score=last_score,
                 code_commit=code_commit,
                 source="bot",
             )
             random_delay(5, 20)
+
+        # Throttled score sample — AFTER any flap above, so OCR never sits
+        # between a flap decision and its click. Tracks the running max as
+        # the run's final_score (the score only climbs, so max == score at
+        # death; max guards against a misread-low on the final frame).
+        if now - last_score_sample >= SCORE_SAMPLE_INTERVAL:
+            last_score_sample = now
+            pts = _read_score(win_left, win_top, win_w, win_h)
+            if pts is not None:
+                last_score = pts
+                if stats["final_score"] is None or pts > stats["final_score"]:
+                    stats["final_score"] = pts
 
         time.sleep(POLL_INTERVAL)
 
