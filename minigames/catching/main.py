@@ -79,6 +79,15 @@ MAX_START_ATTEMPTS = 3
 # promptly without re-clicking PLAY GAME.
 FLY_GONE_GAMEOVER_S = 2.0
 
+# Game over (motionless sprite): a live avatar bobs/free-falls continuously,
+# so if the tracked sprite holds |vy| below this for STATIC_GAMEOVER_S it's a
+# static blob left after the attempt ended (the minigame closed and find_fly
+# latched onto scenery) — end the run instead of flapping a phantom. Observed
+# desert failure: 94 flaps frozen at fly_y=104 vy=0, no game-over, run only
+# stopped by the corner-slam.
+FREEZE_VY_THRESHOLD = 8     # px/s; the blob sits at exactly 0, a live avatar well above
+STATIC_GAMEOVER_S = 2.0
+
 # Start confirmation: catching is entered from busy world maps whose dark
 # enemy/scenery sprites land in the sky-band play crop and false-trigger
 # find_fly as a STATIC blob at a fixed y (observed in a desert region:
@@ -209,6 +218,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     last_click_time = 0.0
     prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
     last_fly_time = 0.0       # wall-clock of the last fly detection (game-over bail)
+    last_motion_time = 0.0    # wall-clock the sprite last moved (motionless game-over)
     game_running = False      # confirmed a REAL game (prompt gone + fly moving)
     start_attempts = 0        # consecutive PLAY-GAME clicks with no game starting
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
@@ -279,6 +289,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
                 continue
             game_running = True
             last_fly_time = time.time()
+            last_motion_time = time.time()
             print(f"Game started — fly moving at {fly_pos}. Playing.")
             # fall through to flap this frame
 
@@ -308,6 +319,18 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             if 0 < dt <= 0.2:
                 fly_vy = int(round((fly_y - prev_fly[0]) / dt))
         prev_fly = (fly_y, now)
+
+        # Motionless-sprite game over: a live avatar never holds still, so a
+        # sustained ~0 velocity means the attempt ended and find_fly is stuck
+        # on a static blob. (fly_vy None = a detection-gap frame; don't let it
+        # count as either motion or stillness.)
+        if fly_vy is not None and abs(fly_vy) > FREEZE_VY_THRESHOLD:
+            last_motion_time = now
+        elif fly_vy is not None and now - last_motion_time > STATIC_GAMEOVER_S:
+            stats["end_reason"] = "game_over"
+            print(f"Sprite motionless {STATIC_GAMEOVER_S:.0f}s — attempt over. "
+                  f"Flaps: {stats['n_flaps']}.")
+            return
 
         gap = find_next_gap(frame, fly_pos)
         # Aim at the next hoop's CENTRE when one is visible; otherwise hover
