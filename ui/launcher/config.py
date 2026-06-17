@@ -71,6 +71,7 @@ MINIGAMES = [
             ("Pick score region", "catching-pick-score-region"),
             ("Extract fly", "catching-extract-fly"),
             ("Capture digits", "catching-capture-digits"),
+            ("Fit dynamics", "catching-fit-dynamics"),
         ],
         "bot_options": [
             {
@@ -81,6 +82,24 @@ MINIGAMES = [
                 "env": "CATCHING_SAVE_FRAMES",
                 "values": ["on", "off"],
                 "default": "on",
+            },
+            {
+                # Dense per-poll trajectory CSV to assets/traces/ (gitignored)
+                # for fitting the flap model (#60). Sets CATCHING_TRACE. Turn on
+                # for a calibration run, then `catching-fit-dynamics`.
+                "label": "Trace",
+                "env": "CATCHING_TRACE",
+                "values": ["on", "off"],
+                "default": "off",
+            },
+            {
+                # Use the fitted predictive flap timer (needs assets/
+                # dynamics.json from Fit dynamics). Sets CATCHING_USE_MODEL;
+                # main.py falls back to the hand-tuned timing if unfit.
+                "label": "Use model",
+                "env": "CATCHING_USE_MODEL",
+                "values": ["on", "off"],
+                "default": "off",
             },
         ],
     },
