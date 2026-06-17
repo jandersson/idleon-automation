@@ -377,6 +377,13 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             if frames_dir is not None:
                 save_frame(frames_dir / f"charge{charge_dbg['attempt']:03d}_"
                            f"p{charge_dbg['polls']:02d}_c{c}.png", crop)
+                # The oscillating charge bar the player sees during the hold is
+                # NOT in the play crop (run 9: nothing in 342x66 sweeps up/down).
+                # Grab the FULL window each poll too, so we can locate where the
+                # bar actually renders and confirm the capture is live (#58).
+                full = grab_region(win_left, win_top, win_w, win_h)
+                save_frame(frames_dir / f"chargefull{charge_dbg['attempt']:03d}_"
+                           f"p{charge_dbg['polls']:02d}.png", full)
             charge_dbg["polls"] += 1
             return c
 
