@@ -120,6 +120,13 @@ ANCHOR_AVATAR_HALF_W = 35      # avatar search half-width
 ANCHOR_AVATAR_BAND_H = 150     # avatar search height from the play-crop top
                                # (tall enough that a falling avatar isn't lost
                                # before the bot flaps it; excludes the banner)
+# Score readout ("N PTS") position relative to the prompt — the banner is
+# player-anchored too, so the score crop follows it across regions. Offset
+# measured from the desert run (prompt (670,226), "1" digit at ~(610,268)).
+ANCHOR_SCORE_DX = -62          # score crop left, relative to the prompt x
+ANCHOR_SCORE_DY = 40           # score crop top, relative to the prompt y
+ANCHOR_SCORE_W = 50            # wide enough for ~3 digits before "PTS"
+ANCHOR_SCORE_H = 16
 
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
@@ -171,23 +178,22 @@ def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
     return len(recent_ys) >= 2 and max(recent_ys) - min(recent_ys) >= min_range
 
 
-def _read_score(win_left, win_top, win_w, win_h):
-    """Grab the score region and OCR the "N PTS" number, or None.
-
-    Separate small grab (the score HUD sits just below the play-region crop),
-    so it doesn't disturb the flap loop's frame. Returns None when the region
-    isn't picked, nothing's readable, or the digit isn't in the template
-    library yet."""
-    region = get_region(_HERE, "score", win_w, win_h)
-    if region is None:
+def _read_score(anchor, win_left, win_top, win_w, win_h):
+    """Grab the "N PTS" readout (anchored to the prompt, like the play crop)
+    and OCR it, or None. Separate small grab so it doesn't disturb the flap
+    loop's frame. Returns None with no anchor, nothing readable, or a digit
+    not in the template library yet."""
+    if anchor is None:
         return None
-    frame = grab_region(
-        win_left + region["left"],
-        win_top + region["top"],
-        region["width"],
-        region["height"],
-    )
-    crop = score_region(frame, 0, 0, region["width"], region["height"])
+    bx, by = anchor
+    left = max(0, bx + ANCHOR_SCORE_DX)
+    top = max(0, by + ANCHOR_SCORE_DY)
+    w = min(win_w - left, ANCHOR_SCORE_W)
+    h = min(win_h - top, ANCHOR_SCORE_H)
+    if w <= 0 or h <= 0:
+        return None
+    frame = grab_region(win_left + left, win_top + top, w, h)
+    crop = score_region(frame, 0, 0, w, h)
     return _read_pts(crop)
 
 
@@ -447,7 +453,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         # death; max guards against a misread-low on the final frame).
         if now - last_score_sample >= SCORE_SAMPLE_INTERVAL:
             last_score_sample = now
-            pts = _read_score(win_left, win_top, win_w, win_h)
+            pts = _read_score(anchor, win_left, win_top, win_w, win_h)
             if pts is not None:
                 last_score = pts
                 if stats["final_score"] is None or pts > stats["final_score"]:

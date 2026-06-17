@@ -42,10 +42,13 @@ from typing import Callable
 import cv2
 import numpy as np
 
-# Dark glyph outline vs light sky: pixels darker than this are foreground.
-# The sky sits ~225-240 and the outline ~0-90, so 140 sits clear between
-# with margin for sky variance (validated on the observe frames).
-SCORE_BINARIZE_THRESHOLD = 140
+# The digit is binarized with Otsu, keeping the MINORITY class as foreground.
+# This adapts to the background instead of a fixed threshold: on the light sky
+# the digit's dark OUTLINE is the minority (so it's the glyph); on the dark,
+# desert-tinted banner the bright FILL is the minority (so that's the glyph).
+# Either way the glyph is isolated cleanly — the two backgrounds rendered the
+# SAME font as opposite-polarity shapes, which a fixed threshold can't span.
+# (The differing shapes are handled by per-digit template variants, below.)
 
 # Connected-component filters. A digit glyph is ~6-10px wide, ~10px tall;
 # the merged "PTS" label is ~17px wide. Reject specks below the minima and
@@ -95,10 +98,16 @@ def _strip_horizontal_lines(binary: np.ndarray) -> np.ndarray:
     return binary
 
 
-def _binarize_dark(gray: np.ndarray) -> np.ndarray:
-    """Dark outline -> 255, light sky -> 0, with the platform line stripped."""
-    _, binary = cv2.threshold(gray, SCORE_BINARIZE_THRESHOLD, 255,
-                              cv2.THRESH_BINARY_INV)
+def _binarize_glyph(gray: np.ndarray) -> np.ndarray:
+    """Isolate the digit glyph as foreground, adapting to the background via
+    Otsu + minority-class selection (the digit — outline on a light bg, fill
+    on a dark bg — is always the minority of a tight score crop). Strips the
+    banner's platform line so it can't swallow the digits."""
+    if gray.size == 0:
+        return gray
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if float((binary > 0).mean()) > 0.5:   # foreground is the majority -> flip
+        binary = cv2.bitwise_not(binary)
     return _strip_horizontal_lines(binary)
 
 
@@ -112,7 +121,7 @@ def digit_components(crop: np.ndarray) -> list[tuple[np.ndarray, tuple[int, int,
     digit -- see module docstring), but absurdly wide blobs are dropped so
     they don't waste a match.
     """
-    binary = _binarize_dark(_to_gray(crop))
+    binary = _binarize_glyph(_to_gray(crop))
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     comps: list[tuple[np.ndarray, tuple[int, int, int, int]]] = []
     for label_id in range(1, num_labels):  # 0 is background
@@ -148,27 +157,31 @@ def _corr(a: np.ndarray, b: np.ndarray) -> float:
     return float((a * b).sum() / denom)
 
 
-def match_digit(patch: np.ndarray, canon_templates: dict[int, np.ndarray]) -> tuple[int | None, float]:
+def match_digit(patch: np.ndarray, canon_templates: dict[int, list[np.ndarray]]) -> tuple[int | None, float]:
     """Best-matching digit for a component patch, by canonical correlation.
 
-    Returns ``(digit, score)`` for the argmax template, or ``(None, score)``
-    when the best score is below ``DIGIT_MATCH_THRESHOLD`` (no template, an
-    uncaptured digit, or the "PTS" label / a letter).
+    ``canon_templates`` maps each digit to a LIST of canonical template
+    variants — the same digit renders as different shapes across backgrounds
+    (a dark outline on the sky, a bright fill on the banner), so each is kept
+    as a variant and the patch matches if ANY variant correlates. Returns
+    ``(digit, score)`` for the best variant, or ``(None, score)`` when below
+    ``DIGIT_MATCH_THRESHOLD`` (no template, an uncaptured digit, or "PTS").
     """
     if not canon_templates:
         return None, 0.0
     c = _canon(patch)
     best_digit, best_score = None, -1.0
-    for digit, tmpl in canon_templates.items():
-        s = _corr(c, tmpl)
-        if s > best_score:
-            best_digit, best_score = digit, s
+    for digit, variants in canon_templates.items():
+        for tmpl in variants:
+            s = _corr(c, tmpl)
+            if s > best_score:
+                best_digit, best_score = digit, s
     if best_score < DIGIT_MATCH_THRESHOLD:
         return None, best_score
     return best_digit, best_score
 
 
-def read_pts_from_crop(crop: np.ndarray, canon_templates: dict[int, np.ndarray]) -> int | None:
+def read_pts_from_crop(crop: np.ndarray, canon_templates: dict[int, list[np.ndarray]]) -> int | None:
     """Read the leading number from a score-region crop, or None.
 
     Walks the digit-height components left-to-right and matches each; the
@@ -202,29 +215,37 @@ def parse_pts(text: str | None) -> int | None:
     return int(m.group()) if m else None
 
 
-def load_digit_templates(template_dir: Path) -> dict[int, np.ndarray]:
-    """Load native binary digit patches from ``<dir>/<digit>.png``.
+def load_digit_templates(template_dir: Path) -> dict[int, list[np.ndarray]]:
+    """Load native binary digit patches, keyed by digit -> list of variants.
 
-    Missing digits are simply absent from the dict -- the reader returns
-    None on any input needing them until they're captured live.
+    A file ``<digit>.png`` is the primary variant; ``<digit>_<tag>.png`` adds
+    a background-specific variant (e.g. ``1_dark.png`` for the banner fill vs
+    ``1.png`` for the sky outline). Missing digits are absent from the dict --
+    the reader returns None on any input needing them until they're captured.
     """
-    templates: dict[int, np.ndarray] = {}
-    for digit in range(10):
-        path = template_dir / f"{digit}.png"
-        if not path.exists():
+    templates: dict[int, list[np.ndarray]] = {}
+    for path in sorted(template_dir.glob("*.png")):
+        digit_str = path.stem.split("_")[0]
+        if not digit_str.isdigit():
+            continue
+        digit = int(digit_str)
+        if not 0 <= digit <= 9:
             continue
         img = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if img is None:
             continue
         _, binary = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)
-        templates[digit] = binary
+        templates.setdefault(digit, []).append(binary)
     return templates
 
 
-def save_digit_template(template_dir: Path, digit: int, patch: np.ndarray) -> Path:
-    """Save a native binary digit patch to ``<dir>/<digit>.png``."""
+def save_digit_template(template_dir: Path, digit: int, patch: np.ndarray,
+                        tag: str | None = None) -> Path:
+    """Save a native binary digit patch to ``<dir>/<digit>.png``, or
+    ``<dir>/<digit>_<tag>.png`` for a background-specific variant."""
     template_dir.mkdir(parents=True, exist_ok=True)
-    path = template_dir / f"{digit}.png"
+    name = f"{digit}.png" if tag is None else f"{digit}_{tag}.png"
+    path = template_dir / name
     cv2.imwrite(str(path), patch)
     return path
 
@@ -234,7 +255,8 @@ def make_pts_reader(template_dir: Path) -> Callable[[np.ndarray | None], int | N
 
     Templates load and canonicalize once at make-time, not per call.
     """
-    canon = {d: _canon(t) for d, t in load_digit_templates(template_dir).items()}
+    canon = {d: [_canon(t) for t in variants]
+             for d, variants in load_digit_templates(template_dir).items()}
 
     def read_pts(crop: np.ndarray | None) -> int | None:
         if crop is None or crop.size == 0:

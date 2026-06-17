@@ -96,7 +96,7 @@ def test_digit_components_drops_wide_pts_blob():
 
 def test_reader_reads_multi_digit_and_excludes_pts():
     templates = {0: _digit_template(_ring), 1: _digit_template(_bar)}
-    canon = {d: S._canon(t) for d, t in templates.items()}
+    canon = {d: [S._canon(t)] for d, t in templates.items()}
     crop = _blank(w=160)
     _bar(crop, 10)             # "1"
     _ring(crop, 18)            # "0"
@@ -107,7 +107,7 @@ def test_reader_reads_multi_digit_and_excludes_pts():
 def test_reader_stops_at_uncaptured_digit():
     # Library has only "1"; a "0" it can't match must STOP the read, not be
     # guessed — "1" then unknown -> read "1" (leading run), never a wrong digit.
-    canon = {1: S._canon(_digit_template(_bar))}
+    canon = {1: [S._canon(_digit_template(_bar))]}
     crop = _blank(w=160)
     _bar(crop, 10)
     _ring(crop, 18)
@@ -115,14 +115,14 @@ def test_reader_stops_at_uncaptured_digit():
 
 
 def test_reader_returns_none_when_first_digit_unknown():
-    canon = {1: S._canon(_digit_template(_bar))}
+    canon = {1: [S._canon(_digit_template(_bar))]}
     crop = _blank()
     _ring(crop, 10)            # only an unmatchable "0"
     assert S.read_pts_from_crop(crop, canon) is None
 
 
 def test_match_digit_below_threshold_returns_none():
-    canon = {1: S._canon(_digit_template(_bar))}
+    canon = {1: [S._canon(_digit_template(_bar))]}
     # A solid block matches neither well — must be rejected, not coerced.
     block = np.full((11, 9), 255, np.uint8)
     digit, scoreval = S.match_digit(block, canon)
