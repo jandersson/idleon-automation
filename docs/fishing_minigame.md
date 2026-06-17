@@ -294,6 +294,36 @@ not `made`) — this fixes points/streak reporting and unlocking higher fish.
   similar fills — likely a cast-origin/player-position effect; adds noise to the
   fill→distance fit. Worth pinning the origin more robustly if it persists.
 
+## The "eels" were mine cores (#63, 2026-06-18)
+
+Surveying 1278 saved frames: the eel HSV fired 83 times, **every one in a run
+that never reached streak 3** — so no real eels were possible. It was catching
+two things, neither an eel:
+
+- **Dull warm scenery** — the tan dock, the red/white bobber, the score text —
+  all at S~121. A real eel is saturated (S~197). **Raising the eel S floor
+  60→150 cut 83→4.**
+- **Mine cores.** Mines are spiky balls with **red spikes and a bright orange
+  core**; the orange core (S>150) passed even the raised floor. The old
+  `MINE_HSV` looked for a *grey* body and matched ~0/1278, so mines were
+  invisible and their cores read as eels.
+
+Fix: detect mines off their **RED spikes** (an orange mask floods the frame —
+the bar overlays an orange sunset sky), with a compact size gate (~24–52px ball
+vs ~17px fish). `find_fish` then drops an eel/megalodon blob that sits inside a
+detected mine (the core), while **keeping** a green/squid/whale on a mine (those
+are catchable). Net on the corpus: green 1166 kept, eel false-positives **0**,
+mines detected in ~840 frames.
+
+Consequence for the cast-15 case: the `eel@129` was a mine core, now excluded —
+so that overlap no longer scores a phantom eel (it falls to a miss, since the
+green that was actually caught was fully occluded by the mine and isn't
+detectable from those frames). **Real eel detection is still unvalidated** —
+there is not one confirmed clean real-eel sample yet; the S≥150 floor is
+provisional until eels are seen un-occluded. Open: targeting eels for their 2
+points needs that calibration; mine *avoidance* (don't cast at a mine-only spot)
+is now possible since mines are detected.
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
