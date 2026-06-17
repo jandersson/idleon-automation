@@ -72,6 +72,17 @@ MINIGAMES = [
             ("Extract fly", "catching-extract-fly"),
             ("Capture digits", "catching-capture-digits"),
         ],
+        "bot_options": [
+            {
+                # Saves what the detectors saw to assets/captures/botrun_<stamp>/
+                # (gitignored) for offline diagnosis. Sets CATCHING_SAVE_FRAMES,
+                # which main.py reads (the GUI can't pass --save-frames).
+                "label": "Save frames",
+                "env": "CATCHING_SAVE_FRAMES",
+                "values": ["off", "on"],
+                "default": "off",
+            },
+        ],
     },
     {
         "name": "mining",

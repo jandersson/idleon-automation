@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 import time
 from collections import deque
@@ -93,6 +94,12 @@ START_MOTION_FRAMES = 8
 # anywhere in the play region). Center of the 'play' region by default.
 
 
+def _env_flag(name: str) -> bool:
+    """Truthy env var? Lets the launcher GUI (which passes per-bot options as
+    env vars, not CLI args) enable flags that the terminal sets via argparse."""
+    return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
+
+
 def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
     """True once the detected fly's y has spanned at least `min_range` px over
     the buffered detections — i.e. a real bobbing/free-falling fly, not a
@@ -129,9 +136,13 @@ def run():
         help="Save full-window + play-region snapshots to assets/captures/"
              "botrun_<stamp>/ (gitignored) for offline detector diagnosis — "
              "what the fly/ring detectors actually saw. Throttled and placed "
-             "after the flap, so it never delays a click.",
+             "after the flap, so it never delays a click. The launcher's "
+             "'Save frames' toggle sets CATCHING_SAVE_FRAMES instead.",
     )
     args = parser.parse_args()
+    # The GUI can't pass --save-frames (it launches with no CLI args), so also
+    # honour the CATCHING_SAVE_FRAMES env var its 'Save frames' toggle sets.
+    save_frames = args.save_frames or _env_flag("CATCHING_SAVE_FRAMES")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -151,7 +162,7 @@ def run():
         stats = {"n_flaps": 0, "end_reason": "process_exit", "final_score": None}
         try:
             _run_inner(session_started, db, code_commit, stats,
-                       save_frames=args.save_frames)
+                       save_frames=save_frames)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
