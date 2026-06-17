@@ -1,35 +1,85 @@
-"""Tests for minigames.catching.detector.find_next_gap (#47).
+"""Synthetic-image tests for the catching detector (fly + hoop), #47.
 
-find_next_gap returns the next gold ring's full bounding box
-(top_y, bottom_y, left_x, right_x) — the horizontal extent is logged so
-analysis can correlate flap timing with how far ahead the ring is.
+Mirrors the repo's CV-against-synthetic-images convention (no live frames).
+The calibrated thresholds are validated against real observe frames
+manually; these guard the detection LOGIC: blob-based fly, and the
+tall-narrow aspect filter that isolates the hoop from the wide desert/HUD.
 """
 import numpy as np
 
-from minigames.catching.detector import find_next_gap
+from minigames.catching.detector import find_fly, find_next_gap
 
 
-def _gold_ring_frame() -> np.ndarray:
-    """A BGRA frame with one gold square (in the ring HSV band) at
-    rows 30:70, cols 100:140 — large enough to clear RING_MIN_AREA."""
-    frame = np.zeros((100, 200, 4), dtype=np.uint8)
-    frame[30:70, 100:140] = (0, 200, 230, 255)  # B,G,R,A — saturated gold/orange
-    return frame
+def _sky(h=183, w=400):
+    """Bright BGRA 'sky' background (mss frames are BGRA)."""
+    img = np.empty((h, w, 4), np.uint8)
+    img[:, :, 0] = 220   # B
+    img[:, :, 1] = 210   # G
+    img[:, :, 2] = 190   # R
+    img[:, :, 3] = 255   # A
+    return img
 
 
-def test_find_next_gap_returns_full_bbox_ahead_of_fly():
-    frame = _gold_ring_frame()
-    gap = find_next_gap(frame, fly_pos=(10, 50))  # fly to the left of the ring
+def _dark_blob(img, cx, cy, s=6):
+    img[cy - s:cy + s, cx - s:cx + s, :3] = 25  # dark, solid (the fly)
+
+
+def _orange_rect(img, x, y, w, h):
+    img[y:y + h, x:x + w, 0] = 10    # B
+    img[y:y + h, x:x + w, 1] = 130   # G
+    img[y:y + h, x:x + w, 2] = 240   # R  -> saturated orange in HSV
+
+
+# ---- find_fly -------------------------------------------------------------
+
+def test_find_fly_locates_dark_blob():
+    img = _sky()
+    _dark_blob(img, 250, 90, s=6)
+    pos = find_fly(img)
+    assert pos is not None
+    assert abs(pos[0] - 250) <= 3 and abs(pos[1] - 90) <= 3
+
+
+def test_find_fly_none_on_empty_sky():
+    assert find_fly(_sky()) is None
+
+
+def test_find_fly_ignores_sparse_edge_noise():
+    # A thin (low-fill) dark streak must be rejected; the real fly chosen.
+    img = _sky()
+    img[5:7, 0:60, :3] = 25       # thin horizontal streak
+    _dark_blob(img, 250, 90, s=6)
+    pos = find_fly(img)
+    assert pos is not None and abs(pos[0] - 250) <= 3
+
+
+# ---- find_next_gap --------------------------------------------------------
+
+def test_find_next_gap_returns_tall_hoop_ahead():
+    img = _sky()
+    _orange_rect(img, 200, 60, 20, 60)   # tall-narrow hoop, ahead of the fly
+    gap = find_next_gap(img, fly_pos=(50, 100))
     assert gap is not None
-    top_y, bottom_y, left_x, right_x = gap  # must be a 4-tuple now
-    assert (top_y, bottom_y, left_x, right_x) == (30, 70, 100, 140)
+    top, bottom, left, right = gap
+    assert 55 <= top <= 65 and 115 <= bottom <= 125
+    assert 195 <= left <= 205
 
 
-def test_find_next_gap_ignores_rings_already_passed():
-    """A ring whose center is left of the fly has been passed — skip it."""
-    frame = _gold_ring_frame()  # ring center x = 120
-    assert find_next_gap(frame, fly_pos=(180, 50)) is None
+def test_find_next_gap_rejects_wide_ground_contour():
+    # A wide orange band (desert ground / HUD bar) shares the hue but is
+    # wider than tall -> rejected by the aspect filter.
+    img = _sky()
+    _orange_rect(img, 100, 150, 250, 18)
+    assert find_next_gap(img, fly_pos=(50, 100)) is None
+
+
+def test_find_next_gap_ignores_hoop_behind_fly():
+    img = _sky()
+    _orange_rect(img, 20, 60, 20, 60)    # hoop to the LEFT of the fly
+    assert find_next_gap(img, fly_pos=(200, 100)) is None
 
 
 def test_find_next_gap_none_without_fly():
-    assert find_next_gap(_gold_ring_frame(), fly_pos=None) is None
+    img = _sky()
+    _orange_rect(img, 200, 60, 20, 60)
+    assert find_next_gap(img, fly_pos=None) is None

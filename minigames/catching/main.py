@@ -32,6 +32,13 @@ GAP_LOWER_MARGIN = 8
 # overestimates how fast the fly is dropping).
 MIN_CLICK_INTERVAL = 0.05
 
+# Game-over bail (#47): the minigame ends back at the "PLAY GAME / JUST
+# IDLE" prompt, so the fly disappears. Once the fly has been seen at least
+# once (the game has started), a fly absent this long means the attempt is
+# over — exit cleanly so the run summary is logged (mirrors the darts
+# no-pose timeout). Generous enough to ride out brief detection dropouts.
+NO_FLY_BAIL_S = 8.0
+
 # Where to click in the play area (Flappy Bird usually accepts clicks
 # anywhere in the play region). Center of the 'play' region by default.
 
@@ -87,6 +94,8 @@ def _run_inner(session_started, db, code_commit, stats):
 
     last_click_time = 0.0
     prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
+    last_fly_time = 0.0       # wall-clock of the last fly detection (game-over bail)
+    first_fly_seen = False    # don't bail before the minigame has started
     while True:
         check_failsafe()
         try:
@@ -110,9 +119,18 @@ def _run_inner(session_started, db, code_commit, stats):
         )
         fly_pos = find_fly(frame)
         if fly_pos is None:
+            # Game over once the fly has vanished for a while (it's only
+            # absent between attempts, back at the PLAY GAME prompt).
+            if first_fly_seen and time.time() - last_fly_time > NO_FLY_BAIL_S:
+                stats["end_reason"] = "game_over"
+                print(f"No fly for {NO_FLY_BAIL_S:.0f}s — attempt over. "
+                      f"Flaps this run: {stats['n_flaps']}.")
+                return
             time.sleep(POLL_INTERVAL)
             continue
         fly_x, fly_y = fly_pos
+        first_fly_seen = True
+        last_fly_time = time.time()
 
         # Fly vertical velocity at this frame, px/SECOND (+ = descending).
         # Wall-clock dt keeps it cadence-invariant (the darts vy lesson); a
