@@ -20,6 +20,7 @@ CALIBRATION: the thresholds below are derived from those frames; verify
 against a live run (fishing-style observe) and adjust if the fly/hoop are
 missed. assets/fly.png is a template fallback for find_fly.
 """
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -45,16 +46,73 @@ ASSETS = Path(__file__).parent / "assets"
 PLAY_BUTTON_MATCH_THRESHOLD = 0.6
 PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD = 0.75
 
-# Golden hoops — saturated orange/yellow. (Other hoop colours score more —
-# wiki #52: orange/green/gold/lava — but the observe frames only had
-# orange; colour-aware scoring is a follow-up once those are captured.)
-RING_HSV_LOWER = np.array([10, 110, 130])
-RING_HSV_UPPER = np.array([35, 255, 255])
+# Hoop colours -> score (#52). idleon.wiki/Catching confirms: orange 1,
+# green 2, gold 3, lava 10, and "the smaller the hoop the bigger the score".
+#
+# Detecting EVERY colour matters for survival: an orange-only mask is blind to
+# a green-hoop biome (issue #60's desert) and the avatar flies into an
+# undetected ring. So find_next_gap masks the UNION of all bands; the score is
+# read separately by classify_hoop_color.
+#
+# HSV ranges: `orange` is the live-validated range. `green`/`gold`/`lava` are
+# derived from the clean wiki hoop sprites (Hoop_1..4.png — orange H~2-22,
+# green H~41-68, gold H~14-29, lava H~0-21 & dark) and widened a little; they
+# are PROVISIONAL for the unseen biomes and want a live-frame recalibration
+# when first encountered (#52). gold's hue sits inside orange's range, so a
+# gold hoop is detected already (it may classify as orange until tuned); lava
+# is dark red (low V) reaching below orange's hue.
+@dataclass(frozen=True)
+class HoopColor:
+    name: str
+    score: int
+    lower: np.ndarray
+    upper: np.ndarray
+    provisional: bool = False
+
+
+HOOP_COLORS: list[HoopColor] = [
+    HoopColor("orange", 1, np.array([10, 110, 130]), np.array([35, 255, 255])),
+    HoopColor("green", 2, np.array([38, 90, 90]), np.array([78, 255, 255])),
+    HoopColor("gold", 3, np.array([16, 80, 170]), np.array([32, 255, 255]), True),
+    HoopColor("lava", 10, np.array([0, 90, 70]), np.array([9, 255, 170]), True),
+]
+
 RING_MIN_AREA = 200    # ignore noise (small particles, distant rings)
 RING_MAX_AREA = 50000  # ignore very-large gold UI elements
 # The hoop is a vertical oval (taller than wide); requiring h >= w rejects
 # the wide desert-ground / HUD-bar contours that share the orange hue.
 RING_MIN_ASPECT = 1.0  # min height/width
+
+
+def _hoop_mask(hsv: np.ndarray) -> np.ndarray:
+    """Union mask over every hoop colour band — so no hoop colour is missed."""
+    mask = cv2.inRange(hsv, HOOP_COLORS[0].lower, HOOP_COLORS[0].upper)
+    for c in HOOP_COLORS[1:]:
+        mask = cv2.bitwise_or(mask, cv2.inRange(hsv, c.lower, c.upper))
+    return mask
+
+
+def classify_hoop_color(
+    frame: np.ndarray, gap: tuple[int, int, int, int]
+) -> tuple[str, int]:
+    """Classify a detected hoop's colour -> (name, score), by which colour
+    band claims the most pixels in the hoop's bounding box. `gap` is the
+    (top, bottom, left, right) returned by find_next_gap. Defaults to
+    ('orange', 1) when nothing matches. The scoring primitive for the #52
+    'which hoop to chase' policy; find_next_gap does not depend on it, so a
+    provisional gold/lava range can't break threading."""
+    top, bottom, left, right = gap
+    bgr = _to_bgr(frame)
+    crop = bgr[max(0, top):bottom, max(0, left):right]
+    if crop.size == 0:
+        return ("orange", 1)
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    best, best_count = HOOP_COLORS[0], -1
+    for c in HOOP_COLORS:
+        count = int((cv2.inRange(hsv, c.lower, c.upper) > 0).sum())
+        if count > best_count:
+            best, best_count = c, count
+    return (best.name, best.score)
 
 # Fly: a small dark sprite in the bright sky. Blob detection (densest small
 # dark blob) is more robust than template-matching a ~10px animated sprite.
@@ -198,11 +256,13 @@ def find_next_gap(
     horizontal span is how far ahead the hoop is (logged so flap timing
     can be correlated with the hoop's approach).
 
-    HSV-masks orange hoop pixels, keeps tall-narrow components (RING_MIN_
-    ASPECT — the vertical-oval hoop, not the wide desert/HUD), and picks
-    the leftmost whose centre is right of the fly (the next one in scroll
-    order). Assumes `frame` is the play-region crop (so the desert ground
-    below is already excluded).
+    HSV-masks hoop pixels of ANY colour (orange/green/gold/lava — see
+    HOOP_COLORS; an orange-only mask was blind to green-hoop biomes), keeps
+    tall-narrow components (RING_MIN_ASPECT — the vertical-oval hoop, not the
+    wide desert/HUD), and picks the leftmost whose centre is right of the fly
+    (the next one in scroll order). Assumes `frame` is the play-region crop (so
+    the desert ground below is already excluded). The hoop's colour/score is
+    read separately by classify_hoop_color.
     """
     if fly_pos is None:
         return None
@@ -210,7 +270,7 @@ def find_next_gap(
 
     bgr = _to_bgr(frame)
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, RING_HSV_LOWER, RING_HSV_UPPER)
+    mask = _hoop_mask(hsv)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates = []

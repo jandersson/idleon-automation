@@ -8,7 +8,10 @@ tall-narrow aspect filter that isolates the hoop from the wide desert/HUD.
 import cv2
 import numpy as np
 
-from minigames.catching.detector import find_fly, find_avatar, find_next_gap, find_play_button, ASSETS
+from minigames.catching.detector import (
+    find_fly, find_avatar, find_next_gap, find_play_button, ASSETS,
+    classify_hoop_color,
+)
 
 
 def _sky(h=183, w=400):
@@ -29,6 +32,13 @@ def _orange_rect(img, x, y, w, h):
     img[y:y + h, x:x + w, 0] = 10    # B
     img[y:y + h, x:x + w, 1] = 130   # G
     img[y:y + h, x:x + w, 2] = 240   # R  -> saturated orange in HSV
+
+
+def _green_rect(img, x, y, w, h):
+    # saturated green: H~60 in OpenCV HSV (BGR with G dominant).
+    img[y:y + h, x:x + w, 0] = 40    # B
+    img[y:y + h, x:x + w, 1] = 210   # G
+    img[y:y + h, x:x + w, 2] = 40    # R
 
 
 # ---- find_fly -------------------------------------------------------------
@@ -84,6 +94,33 @@ def test_find_next_gap_none_without_fly():
     img = _sky()
     _orange_rect(img, 200, 60, 20, 60)
     assert find_next_gap(img, fly_pos=None) is None
+
+
+def test_find_next_gap_detects_green_hoop():
+    # The colour-aware mask (#52/#60) must see a green hoop — the orange-only
+    # mask was blind to it, flying the avatar into an undetected ring.
+    img = _sky()
+    _green_rect(img, 200, 60, 20, 60)
+    gap = find_next_gap(img, fly_pos=(50, 100))
+    assert gap is not None
+    top, bottom, left, right = gap
+    assert 55 <= top <= 65 and 195 <= left <= 205
+
+
+# ---- classify_hoop_color (#52 scoring primitive) --------------------------
+
+def test_classify_orange_hoop_scores_1():
+    img = _sky()
+    _orange_rect(img, 200, 60, 20, 60)
+    gap = find_next_gap(img, fly_pos=(50, 100))
+    assert classify_hoop_color(img, gap) == ("orange", 1)
+
+
+def test_classify_green_hoop_scores_2():
+    img = _sky()
+    _green_rect(img, 200, 60, 20, 60)
+    gap = find_next_gap(img, fly_pos=(50, 100))
+    assert classify_hoop_color(img, gap) == ("green", 2)
 
 
 # ---- find_play_button (auto-start) ---------------------------------------
