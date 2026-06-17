@@ -56,12 +56,15 @@ DEFAULT_HOVER_FRAC = 0.5
 # downward). A small deadband so it oscillates around the target.
 FLAP_MARGIN = 6
 
-# Min seconds between flaps — caps the flap rate. First live run (60 flaps)
-# at 0.12 left the fly stuck low: fly_y median 145 vs a ~91 target (gravity
-# beat 8/s flapping), so it survived but flew below the hoop band and didn't
-# score. Lowered to lift it into the band. Still PROVISIONAL — retune from
-# the DB (fly_y/vy per flap) if it now over-flaps high or still sinks.
-MIN_CLICK_INTERVAL = 0.08
+# Min seconds between flaps — caps the flap rate, which sets the avatar's max
+# reachable height (it flaps to rise, gravity pulls between flaps). History:
+# 0.12 left it stuck low; 0.08 lifted it but the first ring-threading run
+# (#60) showed it PEAKING at y~92 while ring centres sit at y~80 — i.e. at
+# 0.08 it can't climb high enough and clips the ring's lower edge. Lowered to
+# 0.05 so it can reach the ring centres. Still PROVISIONAL — visual-tune
+# (threads vs slams the top); a per-shot fly_y/ring-centre fit needs the
+# score-on-banner read (#60) for an objective signal.
+MIN_CLICK_INTERVAL = 0.05
 
 # Auto-start (#47): the bot clicks "PLAY GAME" to start ONE game, plays it,
 # then STOPS when the fly dies — it does NOT auto-replay the next daily play
