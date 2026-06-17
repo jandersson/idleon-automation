@@ -59,8 +59,12 @@ EXPLORE_HOLD_MAX_MS = 1200
 # so the hold->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
 EXPLORE_EVERY_N = 10
 
-# Time for the lure to fly + land before measuring the outcome. PLACEHOLDER.
-CAST_SETTLE_S = 0.7
+# Landing measurement: POLL find_lure over this window after a cast and take
+# the detection lowest on the bar (largest y) as the landing — a single grab
+# at a fixed delay missed the bobber mid-arc (run 2: only 3/24 casts measured).
+# The window must cover the longest cast's flight + settle.
+CAST_SETTLE_S = 1.6
+LANDING_POLL_S = 0.1
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -75,6 +79,25 @@ MAX_START_ATTEMPTS = 3
 # would false-trigger. Game-over template detection (game_over.png) is primary
 # when that asset exists.
 BAR_GONE_GAMEOVER_S = 3.0
+
+
+def _measure_landing(win_left, win_top, play, settle_s, poll_s):
+    """Poll find_lure over settle_s; return (landed (x, y), the frame it was
+    in) for the LANDED bobber — the detection lowest on the bar (largest y),
+    since mid-flight the bobber arcs high (small y / off the crop). (None,
+    None) if it's never seen (the cast landed off the play region)."""
+    best, best_frame = None, None
+    deadline = time.time() + settle_s
+    while time.time() < deadline:
+        post = grab_region(
+            win_left + play["left"], win_top + play["top"],
+            play["width"], play["height"],
+        )
+        lure = find_lure(post)
+        if lure is not None and (best is None or lure[1] > best[1]):
+            best, best_frame = lure, post
+        time.sleep(poll_s)
+    return best, best_frame
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
@@ -290,15 +313,11 @@ def _run_inner(session_started, db, code_commit, model, stats):
             source="bot",
         )
 
-        # Measure the landing after the lure settles. Needs assets/lure.png;
-        # until that template exists find_lure returns None and the outcome
-        # stays unmeasured (the cast model then can't train — see docs).
-        time.sleep(CAST_SETTLE_S)
-        post = grab_region(
-            win_left + play["left"], win_top + play["top"],
-            play["width"], play["height"],
-        )
-        lure = find_lure(post)
+        # Measure the landing by polling for the bobber over the settle window
+        # (a single grab missed it mid-arc). Returns the landed position + the
+        # frame, so kind_at classifies what it landed on.
+        lure, post = _measure_landing(win_left, win_top, play,
+                                      CAST_SETTLE_S, LANDING_POLL_S)
         if lure is not None:
             landed_x, landed_y = lure
             landed_kind = kind_at(post, landed_x, landed_y)
