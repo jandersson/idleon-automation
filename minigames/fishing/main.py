@@ -30,7 +30,7 @@ from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
-    find_fish, find_mines, find_lure, find_game_over, kind_at,
+    find_fish, find_mines, find_lure, find_game_over, kind_at, find_cast_bar,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -67,11 +67,15 @@ CAST_COOLDOWN_S = 0.6
 NO_FISH_TIMEOUT_S = 20.0
 
 
-def _cast_origin(play_region: dict) -> tuple[int, int]:
-    """Lure cast origin (play-region-relative). PLACEHOLDER: horizontal
-    centre, lower third — the rod tip. Calibrate from a captured frame; the
-    target distance is measured from here, so it must be right for the cast
-    model to mean anything."""
+def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
+    """Lure cast origin (play-region-relative) — distance is measured from
+    here, so it anchors the cast model. The lure is cast RIGHTWARD along the
+    cast bar, so the origin is the bar's LEFT edge at its mid-height (the track
+    start near the player). Falls back to the play-region centre when the bar
+    isn't detected."""
+    if bar is not None:
+        x, y, w, h = bar
+        return (x, y + h // 2)
     return (play_region["width"] // 2, int(play_region["height"] * 0.66))
 
 
@@ -163,8 +167,11 @@ def _run_inner(session_started, db, code_commit, model, stats):
                   f"Casts={stats['n_casts']} points={stats['points_total']}.")
             return
 
-        fish = find_fish(frame)
-        mines = find_mines(frame)
+        # Confine detection to the cast bar — over the raw frame the world
+        # scenery (tan dock, shore plants) floods the colour masks (#63).
+        bar = find_cast_bar(frame)
+        fish = find_fish(frame, bar=bar)
+        mines = find_mines(frame, bar=bar)
         if not fish:
             if time.time() - last_fish_time > NO_FISH_TIMEOUT_S:
                 print(f"No fish seen for {NO_FISH_TIMEOUT_S:.0f}s — assuming the "
@@ -174,7 +181,7 @@ def _run_inner(session_started, db, code_commit, model, stats):
             continue
         last_fish_time = time.time()
 
-        origin_x, origin_y = _cast_origin(play)
+        origin_x, origin_y = _cast_origin(play, bar)
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
 
         if explore:

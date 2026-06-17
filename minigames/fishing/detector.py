@@ -25,24 +25,47 @@ from common.templates import match_multiscale_center
 ASSETS = Path(__file__).parent / "assets"
 
 # OpenCV HSV: H in [0,179], S/V in [0,255]. Red wraps -> two ranges.
-# PLACEHOLDER ranges — calibrate against real frames (see module note).
+# Calibrated 2026-06-17 from the wiki minigame sprites (MGgreenfish/yellow/
+# purple/blue/red, MGfsh5 mine) + a live observe session (960x572). `green`
+# is verified in-game (H77-82); the rest are sprite-derived and still want a
+# live check when they appear (the streak gates eel@3 / squid@6 / whale@13).
+# Detection is restricted to the cast bar (find_cast_bar) — over the raw frame
+# the tan dock reads as `eel` and shore plants as `green` (heavy false
+# positives). See docs/fishing_minigame.md.
 FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
-    "green": ((40, 80, 80), (80, 255, 255)),     # Green Fish
-    "eel": ((20, 90, 90), (35, 255, 255)),       # Eel (yellow-ish)
-    "squid": ((125, 70, 70), (155, 255, 255)),   # Squid (purple)
-    "whale": ((90, 80, 80), (120, 255, 255)),    # Whale (blue)
+    "green": ((70, 100, 110), (90, 255, 255)),    # Green Fish (in-game H77-82)
+    "eel": ((13, 90, 120), (30, 255, 255)),       # Eel (yellow; sprite H18-24)
+    "squid": ((132, 70, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
+    # Whale (blue) overlaps the blue bar background (H~109) — the bar is high
+    # saturation (S~186), the whale much lower (sprite S~79), so cap S to
+    # separate them. Provisional until a whale is seen live.
+    "whale": ((100, 35, 100), (120, 130, 255)),
 }
-# Red wraps the hue circle; Megalodon (red behemoth) + some mines.
-MEGALODON_HSV_LOW = ((0, 120, 90), (10, 255, 255))
-MEGALODON_HSV_HIGH = ((170, 120, 90), (179, 255, 255))
-# Mines (MGfsh5) — dark/low-value spiky sprites. Placeholder: low value,
-# low saturation. Calibrate; mines may instead key off the sprite via a
-# template if colour proves unreliable.
-MINE_HSV = ((0, 0, 0), (179, 80, 70))
+# Red wraps the hue circle; Megalodon (red behemoth, sprite H6-10 S~81 V255).
+MEGALODON_HSV_LOW = ((3, 90, 150), (12, 255, 255))
+MEGALODON_HSV_HIGH = ((172, 90, 150), (179, 255, 255))
+# Mines (MGfsh5) render as a grey/low-saturation spiky ball with a red core
+# (in-game body H~9-19 S~30-45 V~86-130). Key off the low-saturation grey
+# body; the blue bar (S~186) and the colour fish (S>100) don't match it.
+# Spiky shape / template is the fallback if colour proves unreliable live.
+MINE_HSV = ((0, 0, 45), (179, 62, 150))
 
 # A detected blob must cover at least this many mask pixels to count as a
 # target (filters speckle). Scale with capture resolution during calibration.
 MIN_BLOB_AREA = 40
+
+# --- Cast bar (the play track) ------------------------------------------
+# The minigame is a horizontal blue bar drawn over the world (player-
+# anchored), with fish/mines positioned along it; the lure is cast rightward
+# to a position on the bar. Detection MUST be confined to the bar or world
+# scenery floods the colour masks. The bar is a solid, high-saturation blue
+# strip — distinct from the lighter, less-saturated sky/water.
+BAR_HSV = ((102, 150, 90), (118, 255, 205))
+BAR_MIN_WIDTH = 250          # the track spans a wide strip
+BAR_MIN_ASPECT = 6.0         # much wider than tall
+# Fish/mines sit ON the bar but extend above/below its thin saturated core,
+# so the detection window is the bar's x-extent and its y +/- this pad.
+BAR_VPAD = 20
 
 
 def _to_hsv(frame: np.ndarray) -> np.ndarray:
@@ -70,27 +93,67 @@ def _blob_centroids(mask: np.ndarray, min_area: int = MIN_BLOB_AREA) -> list[tup
     return [(x, y) for x, y, _ in out]
 
 
-def find_fish(frame: np.ndarray, min_area: int = MIN_BLOB_AREA) -> list[dict]:
+def find_cast_bar(frame: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Locate the cast bar (the blue play track) as (x, y, w, h), or None.
+
+    The bar is a solid, high-saturation blue horizontal strip; the sky/water
+    are lighter / less saturated, so a saturation floor + a wide-aspect filter
+    isolate it. Used to confine fish/mine detection to the track (the world
+    scenery shares the fish hues otherwise). Only the bar's saturated core is
+    matched; callers pad vertically (BAR_VPAD) for the fish that sit on it."""
+    hsv = _to_hsv(frame)
+    mask = _mask(hsv, *BAR_HSV)
+    # bridge the gaps the fish/mines punch in the strip so it stays one contour
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 25), np.uint8))
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best, best_w = None, 0
+    for c in contours:
+        x, y, w, h = cv2.boundingRect(c)
+        if w >= BAR_MIN_WIDTH and w / max(1, h) >= BAR_MIN_ASPECT and w > best_w:
+            best, best_w = (x, y, w, h), w
+    return best
+
+
+def _restrict(mask: np.ndarray, bar: tuple[int, int, int, int] | None,
+              vpad: int = BAR_VPAD) -> np.ndarray:
+    """Zero the mask outside the cast bar's x-extent and y +/- vpad, so only
+    targets on the track survive. No-op when bar is None (whole-frame)."""
+    if bar is None:
+        return mask
+    x, y, w, h = bar
+    out = np.zeros_like(mask)
+    y0, y1 = max(0, y - vpad), min(mask.shape[0], y + h + vpad)
+    x0, x1 = max(0, x), min(mask.shape[1], x + w)
+    out[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+    return out
+
+
+def find_fish(frame: np.ndarray, min_area: int = MIN_BLOB_AREA,
+              bar: tuple[int, int, int, int] | None = None) -> list[dict]:
     """All detected fish as dicts {x, y, kind}. Kind is one of FISH_HSV
-    keys or 'megalodon'. Positions are play-region-relative. Empty list
-    when nothing matches (or, pre-calibration, when the ranges are off)."""
+    keys or 'megalodon'. Positions are play-region-relative. When `bar` (from
+    find_cast_bar) is given, detection is confined to the track — strongly
+    recommended live, or world scenery floods the masks. Empty list when
+    nothing matches."""
     hsv = _to_hsv(frame)
     fish: list[dict] = []
     for kind, (low, high) in FISH_HSV.items():
-        for x, y in _blob_centroids(_mask(hsv, low, high), min_area):
+        for x, y in _blob_centroids(_restrict(_mask(hsv, low, high), bar), min_area):
             fish.append({"x": x, "y": y, "kind": kind})
     meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
-    for x, y in _blob_centroids(meg, min_area):
+    for x, y in _blob_centroids(_restrict(meg, bar), min_area):
         fish.append({"x": x, "y": y, "kind": "megalodon"})
     return fish
 
 
-def find_mines(frame: np.ndarray, min_area: int = MIN_BLOB_AREA) -> list[dict]:
+def find_mines(frame: np.ndarray, min_area: int = MIN_BLOB_AREA,
+               bar: tuple[int, int, int, int] | None = None) -> list[dict]:
     """Detected mines as dicts {x, y}. Mines never end the game if you land
     on a fish (wiki), but landing on a mine-only spot does — so the bot
-    avoids casting where only a mine sits."""
+    avoids casting where only a mine sits. Confined to the bar when given."""
     hsv = _to_hsv(frame)
-    return [{"x": x, "y": y} for x, y in _blob_centroids(_mask(hsv, *MINE_HSV), min_area)]
+    return [{"x": x, "y": y}
+            for x, y in _blob_centroids(_restrict(_mask(hsv, *MINE_HSV), bar), min_area)]
 
 
 def kind_at(frame: np.ndarray, x: int, y: int, radius: int = 12) -> str | None:

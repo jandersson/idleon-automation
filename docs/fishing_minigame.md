@@ -38,8 +38,10 @@ Consecutive fish landings escalate which fish appear:
 - +7 more consecutive landings → **Whale** appears
 - **Catching the Whale resets the streak to 1.**
 
-Megalodon (the trophy): catch two Whales in a row, then spawn a third
-Whale but catch a *different* fish → the behemoth appears.
+Megalodon (the trophy): catch two Whales in a row, then **miss** the third
+cast → the "behemoth" appears; catching it gives the Megalodon trophy.
+(Wiki-confirmed 2026-06-17; an earlier note here said "catch a different
+fish" — it's a *miss*, not a catch.)
 
 ## Control model — hold_ms ↔ cast distance
 
@@ -99,7 +101,48 @@ landings can't be measured, so the cast model can't train.
 5. Run `fishing` — it explores holds, logs `(hold_ms, landed_dist_px)`;
    after `MIN_SAMPLES` the cast model fits and aiming switches to `model`.
 
+## Observed structure (first observe session, 2026-06-17)
+
+27 frames (960x572). The minigame is a **horizontal cast bar drawn over the
+world**, player-anchored (like catching) — NOT a separate screen:
+
+- A solid **blue bar** is the cast track; the lure is cast **rightward** along
+  it. `N PTS` (current) sits at the left end, `N BEST` at the right.
+- **Fish and mines are positioned along the bar.** Green fish is a green blob;
+  mines are grey spiky balls with a red core.
+- So the geometry is **1-D horizontal**: distance = target x − track start, and
+  the **cast origin is the bar's left edge** (resolves open question 1).
+  `find_cast_bar` detects the bar; `_cast_origin` now anchors there.
+
+### Detection is confined to the bar (and still needs work — #63)
+
+The bar overlays the world, so colour masks over the raw frame are flooded by
+scenery: the **tan dock reads as `eel`** (H~13-30) and **shore plants as
+`green`**. `find_fish`/`find_mines` now take the `find_cast_bar` bbox and mask
+outside it. That fixes green (verified in-game H77-82) and squid, but inside
+the bar the **score text** (`N PTS`/`N BEST`) still fires `eel` and the **mine
+red-cores** fire `megalodon`, and blobs merge — the warm-hued fish need a
+text-zone exclusion or template/shape match (tracked in **#63**).
+
+### HSV (calibrated from the wiki sprites; green verified live)
+
+| fish | pts | hue | note |
+|---|---|---|---|
+| green | 1 | H72-90 | verified in-game (H77-82) |
+| eel | 2 | H13-30 | yellow; collides with score text |
+| squid | 3 | H132-150, dark V | purple |
+| whale | 5 | H100-120, **low S** | blue; S-capped to split from the blue bar |
+| megalodon | — | H3-12 / 172-179 | red; collides with mine cores |
+| mine | fail | low-sat grey body + red core | spiky |
+
+The lure shares the warm-red hues, so it's matched by **template**
+(`find_lure`), not HSV — `assets/lure.png` must be captured live via
+`fishing-capture` (a wiki sprite won't match the live pipeline — the catching
+play-button lesson).
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
+  (sprites: MGgreenfish/MGyellowfish/MGpurplefish/MGbluefish/MGredfish,
+  MGfsh5 mine, MGlure)
 - IdleOn Wiki — Fishing (skill), "Fishing Minigame" section: https://idleon.wiki/wiki/Fishing
