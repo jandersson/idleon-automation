@@ -21,6 +21,7 @@ from common.auto_commit import commit_file_if_changed
 from minigames.catching.detector import find_avatar, find_next_gap, find_play_button
 from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
+from minigames.catching.controller import load_dynamics, should_flap_now
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -30,6 +31,11 @@ DIGIT_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
 # they're regenerable bulk like captures/. Each run writes one CSV; the fit in
 # controller.py reads them to estimate the avatar's vertical dynamics (#60).
 TRACES_DIR = _HERE / "assets" / "traces"
+# Fitted vertical dynamics for the predictive flap timer (controller.py, #60).
+# Committed (it's the model, not regenerable bulk); written by fitting a
+# --trace CSV. When present and --model/CATCHING_USE_MODEL is set, the timed
+# flap is decided by the model instead of the hand-tuned constants below.
+DYNAMICS_PATH = _HERE / "assets" / "dynamics.json"
 TRACE_COLUMNS = [
     "t", "fly_x", "fly_y", "fly_vy",
     "gap_top", "gap_bottom", "gap_left_x", "gap_right_x", "gap_center",
@@ -265,11 +271,20 @@ def run():
              "(controller.py, #60). Cheap (no image encode); pairs well with "
              "--save-frames. The launcher's toggle sets CATCHING_TRACE.",
     )
+    parser.add_argument(
+        "--model", action="store_true",
+        help="Use the fitted predictive flap timer (controller.py, #60) for "
+             "the phase-timed launch instead of the hand-tuned constants — "
+             "needs assets/dynamics.json (fit a --trace run first). Falls back "
+             "to the hand-tuned timing if the file is missing. The launcher's "
+             "toggle sets CATCHING_USE_MODEL.",
+    )
     args = parser.parse_args()
     # The GUI can't pass --save-frames (it launches with no CLI args), so also
     # honour the CATCHING_SAVE_FRAMES env var its 'Save frames' toggle sets.
     save_frames = args.save_frames or _env_flag("CATCHING_SAVE_FRAMES")
     trace = args.trace or _env_flag("CATCHING_TRACE")
+    use_model = args.model or _env_flag("CATCHING_USE_MODEL")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -290,7 +305,7 @@ def run():
                  "_trace_file": None}
         try:
             _run_inner(session_started, db, code_commit, stats,
-                       save_frames=save_frames, trace=trace)
+                       save_frames=save_frames, trace=trace, use_model=use_model)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
@@ -324,9 +339,20 @@ def run():
 
 
 def _run_inner(session_started, db, code_commit, stats, save_frames=False,
-               trace=False):
+               trace=False, use_model=False):
     print(f"Catching bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
+
+    # Predictive flap timer (#60): only active when --model is set AND a fitted
+    # dynamics file exists, else the hand-tuned timed_flap_due drives the launch
+    # (so a missing/half-baked model can't regress the working ~2-hoop play).
+    dyn = load_dynamics(DYNAMICS_PATH) if use_model else None
+    if use_model and dyn is None:
+        print(f"--model set but no fitted dynamics at {DYNAMICS_PATH.name} — "
+              "using the hand-tuned phase timing. Fit a --trace run first.")
+    elif dyn is not None:
+        print(f"Predictive flap timer ON: g={dyn.gravity:.0f} "
+              f"flap_vy={dyn.flap_vy:.0f} approach={dyn.approach_speed:.0f}")
 
     frames_dir = None
     last_frame_save = 0.0
@@ -507,9 +533,19 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
         # is low in its bob, fire ONE timed flap, then suppress hover flaps for
         # COAST_S so the slow descent carries it through the hole (flapping only
         # to stay off the bottom edge). Between rings, hover the centred bob.
-        is_timed = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center) and now >= coast_until
+        # The launch-flap decision: the fitted model when active, else the
+        # hand-tuned phase-timing heuristic. Both gate on the coast window so a
+        # launch isn't re-fired mid-coast.
+        if dyn is not None:
+            launch_due = should_flap_now(
+                fly_x, fly_y, gap_left_x, gap_right_x, gap_top, gap_bottom, dyn)
+            timed_tag = "model"
+        else:
+            launch_due = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center)
+            timed_tag = "timed"
+        is_timed = launch_due and now >= coast_until
         if is_timed:
-            do_flap, where = True, "timed"
+            do_flap, where = True, timed_tag
         elif now < coast_until:
             floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
                 else (play_region["height"] - 25)
