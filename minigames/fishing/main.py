@@ -58,11 +58,12 @@ POLL_INTERVAL = 0.05
 
 # Exploration charge range (fill px): random target charge levels within this
 # span sample the charge->distance curve until the cast model is fitted.
-# Offline on the run-7 frames the bar fills to ~60 (saturated) and landing is
-# ~linear over [~8, ~60]; cap exploration just under saturation so the lure
-# lands in-crop (measurable) and we never sit holding at a full bar.
+# The charge thermometer ramps 0->~56 over the up-sweep then turns DOWN (it's a
+# release-timing oscillation, #58). Keep explore targets safely below the peak
+# so they're always reached on the up-sweep — a target above the peak would
+# never trigger the release and the cast would fall to the max-hold backstop.
 EXPLORE_CHARGE_MIN = 10
-EXPLORE_CHARGE_MAX = 58
+EXPLORE_CHARGE_MAX = 50
 # Fire an exploration cast every Nth cast even after the model is fitted, so
 # the charge->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
 EXPLORE_EVERY_N = 10
@@ -73,15 +74,15 @@ EXPLORE_EVERY_N = 10
 # never hold longer than this (the bar saturates ~750ms, so this bounds a
 # stuck hold and the wait on an over-cap target).
 CHARGE_POLL_S = 0.025
-# The charge bar has a STARTUP DEADZONE: run-7's open-loop holds only ever
-# charged at >=500ms (500->32, 540->36, ...); there's no evidence the bar fills
-# in under that. The grace must clear the deadzone, or the abort fires while the
-# bar still reads 0 and EVERY cast is (wrongly) called not-ready — exactly the
-# 0-cast run 8 (#58). Holding longer is free for a charging rod (it latches the
-# instant the fill crosses ready_floor and proceeds), and only delays the abort
-# for a genuinely-reeling rod.
-CHARGE_READY_GRACE_S = 0.8
-CHARGE_MAX_HOLD_S = 1.5
+# With the thermometer read correctly (find_charge_fill), the fill rises from 0
+# within ~2-3 polls of a real hold, so the not-ready grace can be short; a
+# genuinely-reeling rod leaves it at 0 and aborts here. (The old 0.8s was a
+# band-aid for the wrong reading — x<10 read 0 forever, runs 8-10, #58.)
+CHARGE_READY_GRACE_S = 0.4
+# Backstop for a target the up-sweep never reaches: release near the up-sweep
+# PEAK (~780ms) rather than holding into the down-sweep, which would cast at an
+# unpredictable (low) fill. So cap just past the peak.
+CHARGE_MAX_HOLD_S = 0.95
 # After a not-ready abort, wait this long before retrying (the rod recovers
 # over ~a cast cycle; the aborts are cheap — they poll for ready without
 # burning a cast, unlike the old fixed-cooldown open-loop hold).
