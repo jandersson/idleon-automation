@@ -1,38 +1,43 @@
-"""Tests for the fishing cast model + target selection (pure logic)."""
+"""Tests for the fishing cast model + target selection (pure logic).
+
+The model is charge_level -> landing-distance (the closed-loop cast releases
+at a target charge fill); the distance cap falls out of the charge support.
+"""
 from minigames.fishing.cast_model import (
     CastModel,
     MIN_SAMPLES,
     fit_cast_model,
-    distance_for_hold,
-    hold_for_distance,
+    distance_for_charge,
+    charge_for_distance,
     reachable,
     choose_target,
 )
 
 
-def _linear_samples(slope=2.0, intercept=50.0, n=MIN_SAMPLES):
-    return [(h, slope * h + intercept) for h in range(100, 100 + 10 * n, 10)]
+def _linear_samples(slope=5.0, intercept=-20.0, n=MIN_SAMPLES):
+    # charge fills span ~10..60 live; sample that range
+    return [(c, slope * c + intercept) for c in range(10, 10 + 4 * n, 4)]
 
 
 def test_fit_recovers_linear_relationship():
-    m = fit_cast_model(_linear_samples(slope=2.0, intercept=50.0))
+    m = fit_cast_model(_linear_samples(slope=5.0, intercept=-20.0))
     assert m is not None
-    assert abs(m.slope - 2.0) < 1e-6
-    assert abs(m.intercept - 50.0) < 1e-6
-    assert m.hold_min_ms == 100
+    assert abs(m.slope - 5.0) < 1e-6
+    assert abs(m.intercept - (-20.0)) < 1e-6
+    assert m.charge_min == 10
     assert m.n >= MIN_SAMPLES
 
 
 def test_fit_is_robust_to_landing_outliers():
-    # Real landing measurement is noisy: the bobber poll sometimes catches a
-    # launch/mid-arc position, giving a long-hold / tiny-distance outlier. The
-    # Theil-Sen fit must recover the true slope despite a couple of those.
-    pts = _linear_samples(slope=0.2, intercept=10.0, n=MIN_SAMPLES)
-    pts[3] = (pts[3][0], 5.0)      # long hold, tiny distance (bad landing)
+    # The bobber landing (the y) is still noisy even though charge (x) is clean:
+    # an off-crop / mis-latched landing gives an outlier. Theil-Sen recovers the
+    # true slope despite a couple of those.
+    pts = _linear_samples(slope=5.0, intercept=-20.0, n=MIN_SAMPLES)
+    pts[3] = (pts[3][0], 5.0)      # clean charge, garbage landing
     pts[7] = (pts[7][0], 8.0)
     m = fit_cast_model(pts)
     assert m is not None
-    assert abs(m.slope - 0.2) < 0.03   # least-squares would be dragged well below
+    assert abs(m.slope - 5.0) < 0.3   # least-squares would be dragged well off
 
 
 def test_fit_none_below_min_samples():
@@ -40,48 +45,49 @@ def test_fit_none_below_min_samples():
 
 
 def test_fit_none_on_nonpositive_slope():
-    # Holding longer must cast farther; a flat/decreasing fit is noise.
-    assert fit_cast_model([(h, 500.0) for h in range(100, 100 + 10 * MIN_SAMPLES, 10)]) is None
-    assert fit_cast_model([(h, -2.0 * h) for h in range(100, 100 + 10 * MIN_SAMPLES, 10)]) is None
+    # More charge must cast farther; a flat/decreasing fit is noise.
+    assert fit_cast_model([(c, 200.0) for c in range(10, 10 + 4 * MIN_SAMPLES, 4)]) is None
+    assert fit_cast_model([(c, -5.0 * c) for c in range(10, 10 + 4 * MIN_SAMPLES, 4)]) is None
 
 
-def test_fit_none_on_identical_holds():
-    assert fit_cast_model([(300, float(d)) for d in range(MIN_SAMPLES + 5)]) is None
+def test_fit_none_on_identical_charges():
+    assert fit_cast_model([(40, float(d)) for d in range(MIN_SAMPLES + 5)]) is None
 
 
-def test_hold_for_distance_inverts_and_clamps():
-    m = CastModel(slope=2.0, intercept=50.0, hold_min_ms=100, hold_max_ms=1000, n=20)
-    assert hold_for_distance(m, 450) == 200          # (450-50)/2
-    assert distance_for_hold(m, 200) == 450
-    assert hold_for_distance(m, 100) == 100          # below reach -> clamp to hold_min
-    assert hold_for_distance(m, 99_999) == 1000      # above reach -> clamp to hold_max
+def test_charge_for_distance_inverts_and_clamps():
+    m = CastModel(slope=5.0, intercept=0.0, charge_min=10, charge_max=60, n=20)
+    assert charge_for_distance(m, 200) == 40          # 200/5
+    assert distance_for_charge(m, 40) == 200
+    assert charge_for_distance(m, 10) == 10           # below reach -> clamp to charge_min
+    assert charge_for_distance(m, 99_999) == 60       # above reach (bar saturated) -> charge_max
 
 
 def test_reachable():
-    m = CastModel(slope=2.0, intercept=50.0, hold_min_ms=100, hold_max_ms=1000, n=20)
-    # reach = [250, 2050]
-    assert reachable(m, 400)
-    assert not reachable(m, 100)
-    assert not reachable(m, 5000)
-    assert reachable(None, 99_999)  # no model -> exploration reaches by trying
+    m = CastModel(slope=5.0, intercept=0.0, charge_min=10, charge_max=60, n=20)
+    # reach = [50, 300]
+    assert reachable(m, 200)
+    assert not reachable(m, 40)       # nearer than the min charge can place it
+    assert not reachable(m, 400)      # past the bar's saturation
+    assert reachable(None, 99_999)    # no model -> exploration reaches by trying
 
 
 def test_choose_target_prefers_value_then_nearest():
-    m = CastModel(slope=2.0, intercept=50.0, hold_min_ms=100, hold_max_ms=1000, n=20)
-    origin = 500
+    m = CastModel(slope=5.0, intercept=0.0, charge_min=10, charge_max=60, n=20)
+    origin = 0
+    # reach = [50, 300] px from origin
     fish = [
-        {"x": 900, "kind": "green"},   # dist 400, value 1
-        {"x": 700, "kind": "squid"},   # dist 200 (reachable? 200<250 -> NO)
-        {"x": 800, "kind": "eel"},     # dist 300, value 2 -> reachable, higher value
-        {"x": 3000, "kind": "whale"},  # dist 2500 -> unreachable (>2050)
+        {"x": 250, "kind": "green"},   # dist 250, value 1 (reachable)
+        {"x": 40, "kind": "squid"},    # dist 40 -> < 50, NOT reachable
+        {"x": 200, "kind": "eel"},     # dist 200, value 2 -> reachable, higher value
+        {"x": 900, "kind": "whale"},   # dist 900 -> unreachable (>300)
     ]
     chosen = choose_target(fish, m, origin)
     assert chosen is not None
-    assert chosen["kind"] == "eel" and chosen["target_dist"] == 300 and chosen["value"] == 2
+    assert chosen["kind"] == "eel" and chosen["target_dist"] == 200 and chosen["value"] == 2
 
 
 def test_choose_target_tie_break_nearest_value():
-    m = CastModel(slope=1.0, intercept=0.0, hold_min_ms=0, hold_max_ms=5000, n=20)
+    m = CastModel(slope=1.0, intercept=0.0, charge_min=0, charge_max=5000, n=20)
     origin = 0
     fish = [
         {"x": 800, "kind": "green"},
@@ -92,7 +98,7 @@ def test_choose_target_tie_break_nearest_value():
 
 
 def test_choose_target_none_when_unreachable_or_empty():
-    m = CastModel(slope=2.0, intercept=50.0, hold_min_ms=100, hold_max_ms=1000, n=20)
+    m = CastModel(slope=5.0, intercept=0.0, charge_min=10, charge_max=60, n=20)
     assert choose_target([], m, 0) is None
     assert choose_target([{"x": 10_000, "kind": "green"}], m, 0) is None
 

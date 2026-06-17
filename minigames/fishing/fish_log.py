@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS casts (
     target_kind TEXT,               -- chosen fish kind, or 'explore'
     target_x INTEGER,               -- chosen fish x at fire
     target_dist_px INTEGER,         -- |target_x - origin_x| the cast aimed for
-    predicted_dist_px INTEGER,      -- model's distance_for_hold(hold_ms); NULL when exploring
+    predicted_dist_px INTEGER,      -- model's distance_for_charge(target_charge); NULL when no model yet
     landed_x INTEGER,               -- measured lure x after the cast (NULL until lure template exists)
     landed_dist_px INTEGER,         -- |landed_x - origin_x|; the model's training y
     landed_kind TEXT,               -- fish kind under the lure, or NULL/'miss'
@@ -78,12 +78,20 @@ CREATE TABLE IF NOT EXISTS runs (
 
 # Append-only late columns; open_db ALTERs them in on existing DBs.
 _LATE_COLUMNS: list[tuple[str, str]] = [
-    # Charge-bar fill height at release (px) — the robust cast-power signal
-    # (always in-crop, stable), logged even when the bobber lands off-crop.
-    # The basis for a charge<->distance model + charge-based aiming (#58).
+    # Charge-bar fill height at release (px) — the cast-power signal and the
+    # charge<->distance model's training feature (in-crop, stable). With the
+    # closed-loop cast this is the ACTUAL fill the lure released at (#58).
     ("charge_level", "INTEGER"),
+    # The charge fill the closed-loop cast aimed to release at (charge_level is
+    # what it actually got). Aim error = charge_level - target_charge_level.
+    ("target_charge_level", "INTEGER"),
 ]
-_RUNS_LATE_COLUMNS: list[tuple[str, str]] = []
+# Rod-not-ready aborts this run: closed-loop casts skipped because the bar
+# stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now
+# detected + retried instead of burned as a dead cast (#58).
+_RUNS_LATE_COLUMNS: list[tuple[str, str]] = [
+    ("n_not_ready", "INTEGER"),
+]
 
 
 def open_db(path: Path) -> sqlite3.Connection:
@@ -111,16 +119,19 @@ def log_run(conn: sqlite3.Connection, **fields) -> int:
 
 
 def fetch_cast_samples(conn: sqlite3.Connection, source: str | None = None) -> list[tuple[int, float]]:
-    """(hold_ms, landed_dist_px) pairs for the cast-model fit. Only rows
-    with both measured are returned. `source=None` uses every row; pass
-    'bot' to exclude any future human-watch casts."""
-    where = ["hold_ms IS NOT NULL", "landed_dist_px IS NOT NULL"]
+    """(charge_level, landed_dist_px) pairs for the cast-model fit. Only rows
+    with both measured are returned — charge_level is the closed-loop release
+    fill (the clean predictor), landed_dist_px the bobber landing (the target).
+    `source=None` uses every row; pass 'bot' to exclude any future human-watch
+    casts. (Pre-charge rows have charge_level NULL and are excluded, so the
+    old hold-era landings don't pollute the charge fit.)"""
+    where = ["charge_level IS NOT NULL", "landed_dist_px IS NOT NULL"]
     params: list = []
     if source is not None:
         where.append("source = ?")
         params.append(source)
     rows = conn.execute(
-        f"SELECT hold_ms, landed_dist_px FROM casts WHERE {' AND '.join(where)}",
+        f"SELECT charge_level, landed_dist_px FROM casts WHERE {' AND '.join(where)}",
         params,
     ).fetchall()
-    return [(int(h), float(d)) for h, d in rows]
+    return [(int(c), float(d)) for c, d in rows]
