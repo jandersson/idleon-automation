@@ -73,7 +73,14 @@ EXPLORE_EVERY_N = 10
 # never hold longer than this (the bar saturates ~750ms, so this bounds a
 # stuck hold and the wait on an over-cap target).
 CHARGE_POLL_S = 0.025
-CHARGE_READY_GRACE_S = 0.3
+# The charge bar has a STARTUP DEADZONE: run-7's open-loop holds only ever
+# charged at >=500ms (500->32, 540->36, ...); there's no evidence the bar fills
+# in under that. The grace must clear the deadzone, or the abort fires while the
+# bar still reads 0 and EVERY cast is (wrongly) called not-ready — exactly the
+# 0-cast run 8 (#58). Holding longer is free for a charging rod (it latches the
+# instant the fill crosses ready_floor and proceeds), and only delays the abort
+# for a genuinely-reeling rod.
+CHARGE_READY_GRACE_S = 0.8
 CHARGE_MAX_HOLD_S = 1.5
 # After a not-ready abort, wait this long before retrying (the rod recovers
 # over ~a cast cycle; the aborts are cheap — they poll for ready without
@@ -245,7 +252,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
     last_start_click = 0.0
     last_active_time = time.time()   # wall-clock the cast bar was last seen
     streak = 0
-    not_ready_streak = 0   # consecutive rod-not-ready aborts (one print/episode)
+    charge_attempt = 0   # every charge_and_release call (ready or not) — frame tag
     while True:
         check_failsafe()
         try:
@@ -354,10 +361,24 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         cx = win_left + play["left"] + play["width"] // 2
         cy = win_top + play["top"] + play["height"] // 2
 
+        # The closure grabs the play crop and reads the left-edge fill each poll.
+        # It also tracks the PEAK fill (and, with --save-frames, dumps each poll
+        # frame named with the charge it read) so a not-ready run is diagnosable:
+        # peak 0 => the bar isn't filling at all (mechanic/region); peak >0 but
+        # below the target => it charges, the abort/target just needs tuning.
+        charge_attempt += 1
+        charge_dbg = {"peak": 0, "polls": 0, "attempt": charge_attempt}
+
         def _read_charge():
             crop = grab_region(win_left + play["left"], win_top + play["top"],
                                play["width"], play["height"])
-            return find_charge_level(crop)
+            c = find_charge_level(crop)
+            charge_dbg["peak"] = max(charge_dbg["peak"], c)
+            if frames_dir is not None:
+                save_frame(frames_dir / f"charge{charge_dbg['attempt']:03d}_"
+                           f"p{charge_dbg['polls']:02d}_c{c}.png", crop)
+            charge_dbg["polls"] += 1
+            return c
 
         charge, ready = charge_and_release(
             cx, cy, target_charge, _read_charge,
@@ -365,17 +386,16 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             max_hold_s=CHARGE_MAX_HOLD_S)
 
         if not ready:
-            # Rod not ready: the previous lure is still reeling in (the bar never
-            # left 0). Skip this cast entirely — don't log/count it — and retry
-            # after a beat. One print per waiting episode (reset on a real cast).
+            # Rod not ready: the fill never crossed the floor within the grace
+            # (previous lure still reeling, OR the bar didn't start charging in
+            # time). Skip the cast — don't log/count it — and retry after a beat.
+            # The peak/polls report makes the not-charging vs not-ready split
+            # visible without needing the saved frames.
             stats["n_not_ready"] += 1
-            if not_ready_streak == 0:
-                print("rod not ready (charge bar 0) — waiting for the lure to "
-                      "reel in")
-            not_ready_streak += 1
+            print(f"rod not ready: peak charge {charge_dbg['peak']} over "
+                  f"{charge_dbg['polls']} polls / {CHARGE_READY_GRACE_S}s — waiting")
             time.sleep(NOT_READY_RETRY_S)
             continue
-        not_ready_streak = 0
         stats["n_casts"] += 1
 
         tag = (f"{target['kind']}@{target['target_dist']}px" if target else "explore")
