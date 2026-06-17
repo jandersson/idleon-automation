@@ -33,6 +33,22 @@ def test_log_flap_round_trips(tmp_path):
     assert row == (1, 300, 140, 320, 400, 470, -20, "bot")
 
 
+def test_where_keyword_column_round_trips(tmp_path):
+    """`where` is a late column whose name is a SQL keyword. The migration
+    must quote the identifier in the ALTER (db_log) — an unquoted ALTER raises
+    a *syntax* error that the duplicate-column except swallows, so the column
+    silently never gets added and the flap branch tag is lost (#60)."""
+    conn = open_db(tmp_path / "catching.db")
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(flaps)")}
+    assert "where" in cols
+    rid = log_flap(conn, session_started="s", flap_idx=1, where="timed",
+                   source="bot")
+    val = conn.execute(
+        'SELECT "where" FROM flaps WHERE id=?', (rid,)).fetchone()[0]
+    conn.close()
+    assert val == "timed"
+
+
 def test_set_outcome_backfills(tmp_path):
     """outcome is NULL at insert (no game-over detection yet) and
     set_outcome fills it in — the scaffolding for the #47 follow-up."""

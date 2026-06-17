@@ -82,6 +82,12 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # until score templates exist / the first read lands. Lets flap state be
     # correlated with score progression. See minigames/catching/score.py.
     ("score", "INTEGER"),
+    # Which flap branch fired: 'timed' (phase-timed launch into a coast),
+    # 'coast' (rescue flap while coasting through a hole), 'hover'/'gap=[..]'
+    # (steady-state hover between rings), or 'model' (controller.py decision).
+    # The print already tags this (the `where` var); persisting it lets the
+    # threading flaps be separated from hover flaps in analysis (#60).
+    ("where", "TEXT"),
 ]
 # The flap-policy constants in effect for the run, so the 0.08-vs-0.12
 # MIN_CLICK_INTERVAL comparison (and any later flap tuning) can attribute

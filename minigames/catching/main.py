@@ -1,4 +1,5 @@
 import argparse
+import csv
 import os
 import sys
 import time
@@ -25,6 +26,15 @@ _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
 CATCH_DB_PATH = _HERE / "assets" / "catching.db"
 DIGIT_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
+# Dense per-poll trajectory traces (--trace / CATCHING_TRACE). Gitignored —
+# they're regenerable bulk like captures/. Each run writes one CSV; the fit in
+# controller.py reads them to estimate the avatar's vertical dynamics (#60).
+TRACES_DIR = _HERE / "assets" / "traces"
+TRACE_COLUMNS = [
+    "t", "fly_x", "fly_y", "fly_vy",
+    "gap_top", "gap_bottom", "gap_left_x", "gap_right_x", "gap_center",
+    "target_y", "fired", "where",
+]
 REPO_ROOT = _HERE.parent.parent
 
 WINDOW_TITLE = "Legends Of Idleon"
@@ -247,10 +257,19 @@ def run():
              "after the flap, so it never delays a click. The launcher's "
              "'Save frames' toggle sets CATCHING_SAVE_FRAMES instead.",
     )
+    parser.add_argument(
+        "--trace", action="store_true",
+        help="Write a dense per-poll trajectory CSV to assets/traces/ "
+             "(gitignored) — every poll's (t, fly_y, fly_vy, gap, fired, "
+             "where) for offline fitting of the avatar's vertical dynamics "
+             "(controller.py, #60). Cheap (no image encode); pairs well with "
+             "--save-frames. The launcher's toggle sets CATCHING_TRACE.",
+    )
     args = parser.parse_args()
     # The GUI can't pass --save-frames (it launches with no CLI args), so also
     # honour the CATCHING_SAVE_FRAMES env var its 'Save frames' toggle sets.
     save_frames = args.save_frames or _env_flag("CATCHING_SAVE_FRAMES")
+    trace = args.trace or _env_flag("CATCHING_TRACE")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -267,10 +286,11 @@ def run():
         # Mutable so the finally below sees the running count even though
         # _run_inner's loop only exits by exception (failsafe / Ctrl-C).
         # final_score is the max PTS read during the run (None if unread).
-        stats = {"n_flaps": 0, "end_reason": "process_exit", "final_score": None}
+        stats = {"n_flaps": 0, "end_reason": "process_exit", "final_score": None,
+                 "_trace_file": None}
         try:
             _run_inner(session_started, db, code_commit, stats,
-                       save_frames=save_frames)
+                       save_frames=save_frames, trace=trace)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
@@ -292,6 +312,8 @@ def run():
                 hover_frac=DEFAULT_HOVER_FRAC,
                 code_commit=code_commit,
             )
+            if stats.get("_trace_file") is not None:
+                stats["_trace_file"].close()  # flushes the buffered trace
             db.close()
             # Tracked DB — other machines get the data via `git pull`.
             commit_file_if_changed(
@@ -301,18 +323,35 @@ def run():
             )
 
 
-def _run_inner(session_started, db, code_commit, stats, save_frames=False):
+def _run_inner(session_started, db, code_commit, stats, save_frames=False,
+               trace=False):
     print(f"Catching bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
     frames_dir = None
     last_frame_save = 0.0
     frame_idx = 0
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if save_frames:
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         frames_dir = _HERE / "assets" / "captures" / f"botrun_{stamp}"
         frames_dir.mkdir(parents=True, exist_ok=True)
         print(f"Saving frames to {frames_dir} (--save-frames)")
+
+    # Dense trajectory trace (--trace): one CSV row per in-game poll, written
+    # at the end of the loop where the detector state + flap decision are all
+    # known. Buffered file writes; flushed by the finally on exit.
+    trace_writer = trace_file = None
+    trace_t0 = time.time()
+    if trace:
+        TRACES_DIR.mkdir(parents=True, exist_ok=True)
+        trace_path = TRACES_DIR / f"trace_{stamp}.csv"
+        trace_file = open(trace_path, "w", newline="")
+        trace_writer = csv.writer(trace_file)
+        trace_writer.writerow(TRACE_COLUMNS)
+        # run()'s finally closes this on EVERY exit path (return / Ctrl-C /
+        # failsafe), flushing the buffer — so no per-poll flush is needed.
+        stats["_trace_file"] = trace_file
+        print(f"Tracing trajectory to {trace_path} (--trace)")
 
     last_click_time = 0.0
     prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
@@ -478,6 +517,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         else:
             do_flap = fly_y > target_y + FLAP_MARGIN
             where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
+        fired = False  # whether a click actually fired this poll (vs blocked)
         if do_flap and now - last_click_time >= MIN_CLICK_INTERVAL:
             # Fire immediately on the decision (the fly is still falling) —
             # the hoops/darts click-timing rule; bookkeeping runs after.
@@ -491,6 +531,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             # the avatar sinks below the hole.
             if is_timed:
                 coast_until = last_click_time + COAST_S
+            fired = True
             stats["n_flaps"] += 1
             print(f"fly y={fly_y} vy={fly_vy} target={target_y} {where} — flap #{stats['n_flaps']}")
             log_flap(
@@ -513,10 +554,22 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
                 window_w=win_w,
                 window_h=win_h,
                 score=last_score,
+                where=where,
                 code_commit=code_commit,
                 source="bot",
             )
             random_delay(5, 20)
+
+        # Dense trajectory trace (--trace): one row per in-game poll, here in
+        # the bookkeeping section so it never sits between a flap decision and
+        # its click. `where` is the branch that WOULD fire; `fired` flags
+        # whether a click actually went out (vs rate-limited).
+        if trace_writer is not None:
+            trace_writer.writerow([
+                round(now - trace_t0, 4), fly_x, fly_y, fly_vy,
+                gap_top, gap_bottom, gap_left_x, gap_right_x, detected_center,
+                target_y, int(fired), where,
+            ])
 
         # Throttled score sample — AFTER any flap above, so OCR never sits
         # between a flap decision and its click. Tracks the running max as
