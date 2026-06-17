@@ -213,6 +213,93 @@ def _platform_velocity(
     return slope
 
 
+# 20-make oval phase (#59). After ~20 makes the shooting platform stops
+# being a fixed-x vertical bobber and traces a clockwise oval, so its
+# x-sample spread opens from ~0 to ~100px. make_prob (platform_y/vy, fixed
+# x) can't satisfy its 1-D target there (fire-window -> 0%), so the bot
+# stalls and false-bails at make ~20. These gate an oval "fire-to-collect"
+# mode that keeps firing (logging the full 2-D platform state) instead of
+# stalling, so the data for a 2-D aim model accrues.
+OVAL_X_RANGE_PX = 40        # platform x-spread above this = oval phase
+OVAL_FIRE_INTERVAL_MS = 1000  # min gap between collect-fires in the oval
+
+
+def _platform_velocity_x(
+    samples: list[tuple[float, int, int]],
+    window_s: float = 1.5,
+    min_span_s: float = 0.2,
+) -> float | None:
+    """Platform HORIZONTAL velocity (px/s, positive = rightward) at the
+    newest sample — the oval-phase counterpart of _platform_velocity, same
+    least-squares slope but over px instead of py. ~0 during the fixed-x
+    vertical bob; non-zero once the oval starts (#59)."""
+    if not samples:
+        return None
+    t_end = samples[-1][0]
+    recent = [(t, px) for t, px, _ in samples if t_end - t <= window_s]
+    if len(recent) < 2 or (recent[-1][0] - recent[0][0]) < min_span_s:
+        return None
+    n = len(recent)
+    mean_t = sum(t for t, _ in recent) / n
+    mean_x = sum(x for _, x in recent) / n
+    denom = sum((t - mean_t) ** 2 for t, _ in recent)
+    if denom == 0:
+        return None
+    return sum((t - mean_t) * (x - mean_x) for t, x in recent) / denom
+
+
+def _platform_x_range(range_samples) -> int:
+    """Horizontal spread (max-min) of the buffered platform x samples."""
+    xs = [p[1] for p in range_samples]
+    return (max(xs) - min(xs)) if xs else 0
+
+
+def _platform_recently_moving(
+    range_samples, n: int = 15, min_motion_px: int = 8
+) -> bool:
+    """Whether the platform has actually moved over the last `n` samples
+    (x OR y spread above `min_motion_px`, i.e. beyond detector jitter).
+
+    Guards oval-fire against an UNDETECTED game-over where find_platform
+    false-positives on a now-static screen: the 200-deep buffer still holds
+    real oval samples (wide spread) but nothing is moving, so without this
+    `oval_active` would stay True, fire-to-collect would keep refreshing
+    last_fired_at_ms, and the no-shot runaway bail would never arm (#59
+    review). A live oval always has recent motion, so this never blocks it.
+    Returns True when there aren't `n` samples yet (don't claim 'stuck')."""
+    recent = list(range_samples)[-n:]
+    if len(recent) < n:
+        return True
+    xs = [p[1] for p in recent]
+    ys = [p[2] for p in recent]
+    return (max(xs) - min(xs)) > min_motion_px or (max(ys) - min(ys)) > min_motion_px
+
+
+def _oval_active(range_samples, min_samples: int = 40) -> bool:
+    """True once the platform is tracing the post-20-make clockwise oval:
+    its x samples have a sustained spread exceeding OVAL_X_RANGE_PX (the
+    spread is ~0 during the fixed-x bob) AND the platform is still moving.
+
+    Uses the 10th-90th percentile spread, NOT raw max-min: a single
+    detector x-glitch (e.g. the 136->374 jump in the 2026-05-24 session)
+    would blow up max-min and falsely trip oval-fire mode during normal
+    play, since one outlier lingers in the 200-deep buffer. The real oval
+    moves the platform across the whole x-range continuously, so the
+    percentile spread is large; a lone outlier sits past the 90th pct and
+    barely moves it. The recent-motion gate (see _platform_recently_moving)
+    drops oval mode the moment the platform stops, so a stale buffer on an
+    undetected game-over can't hold off the runaway bail. Requires >=
+    min_samples (#59)."""
+    if len(range_samples) < min_samples:
+        return False
+    xs = sorted(p[1] for p in range_samples)
+    lo = xs[int(len(xs) * 0.1)]
+    hi = xs[int(len(xs) * 0.9)]
+    if (hi - lo) <= OVAL_X_RANGE_PX:
+        return False
+    return _platform_recently_moving(range_samples)
+
+
 # Sweep used to continue -48, 48, -64, 64, -80, 80 — trimmed 2026-06-09
 # (#37): across 269 logged shots every perturbed shot beyond ±32 landed
 # >120px from the hoop with zero makes. Combined with σ scaling (up to
@@ -1137,6 +1224,10 @@ def _record_shot_outcome(
     # sample that triggered the shot, so the window ends exactly at fire
     # time.
     platform_vy_value = _platform_velocity(list(range_samples))
+    # Horizontal velocity + oval-phase flag (#59): ~0/0 during the normal
+    # fixed-x bob, populated once the platform traces the post-20-make oval.
+    platform_vx_value = _platform_velocity_x(list(range_samples))
+    oval_active_value = _oval_active(range_samples)
     shot_row_id = log_shot(
         shot_db,
         session_started=session_started,
@@ -1178,6 +1269,8 @@ def _record_shot_outcome(
         bob_ymax=bob_ymax,
         bob_period_ms=bob_period_ms_value,
         platform_vy=platform_vy_value,
+        platform_vx=platform_vx_value,
+        oval_active=int(oval_active_value),
         prompt_up=int(bool(shot.prompt_visible_before)),
         target_source=shot.target.target_source,
     )
@@ -1366,6 +1459,7 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     last_shot: dict | None = None
     tick = 0  # for the every-Nth-tick game-over check
     go_nearmiss_saved = False  # one game-over near-miss frame saved per run
+    oval_announced = False  # print the 20-make oval transition once (#59)
 
     while True:
         check_failsafe()
@@ -1577,7 +1671,25 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
         )
         # Fire-window diagnostic counter (per-cycle, reset each 3s log).
         cycles_window += 1
-        if in_window or crossed:
+        # 20-make oval phase (#59): once the platform's x-spread opens up it's
+        # tracing the clockwise oval, where the fixed-x make_prob target is
+        # never satisfied (fire-window -> 0%) so the bot stalls and false-
+        # bails. Fire-to-collect: fire on a cooldown to log oval shots
+        # (platform_x/y/vx/vy + outcome) for the future 2-D aim, rather than
+        # stalling. Entirely gated on oval_active, so the validated pre-oval
+        # path is unchanged. (Aim here is still the bob target, so these
+        # mostly miss — the value is the logged 2-D state, not the make.)
+        oval_active = _oval_active(range_samples)
+        if oval_active and not oval_announced:
+            oval_announced = True
+            print(f"  [oval] platform x-spread {_platform_x_range(range_samples)}px "
+                  f"> {OVAL_X_RANGE_PX} — 20-make oval phase detected; firing to "
+                  f"collect 2-D state (aim model TODO, #59)")
+        oval_fire_due = oval_active and (
+            last_fired_at_ms is None
+            or time.time() * 1000.0 - last_fired_at_ms > OVAL_FIRE_INTERVAL_MS
+        )
+        if in_window or crossed or oval_fire_due:
             y_open_window += 1
             # Direction from the actual crossing if available, else from history.
             if crossed and prev_py is not None:
@@ -1586,11 +1698,15 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                 direction = _direction(platform_history)
             # When clamped, the platform only crosses the target at a bob extreme,
             # where direction is whatever-it-just-was → never matches. Bypass.
-            direction_ok = clamped or target.required_dir == "any" or direction == target.required_dir
+            # In the oval the y-direction gate is meaningless (2-D motion), so
+            # bypass it too — the collect-fire must not be blocked by it.
+            direction_ok = clamped or oval_active or target.required_dir == "any" or direction == target.required_dir
             if direction_ok:
                 tag = " [crossed]" if crossed and not in_window else ""
                 if clamped:
                     tag += " [clamped]"
+                if oval_active:
+                    tag += " [oval-collect]"
                 print(f"Platform at ({px},{py}) (target_y={target.target_y}, dir={direction}) — shooting{tag}")
                 # Fire immediately. Bookkeeping (disk writes, extra grabs,
                 # randomized delay) happens after the click — anything done

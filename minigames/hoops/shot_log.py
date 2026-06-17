@@ -134,6 +134,15 @@ _LATE_COLUMNS = [
     # exclude these so a synthetic shot can never train a model, belt-
     # and-suspenders on top of the clean_make filter.
     ("experiment_label", "TEXT"),
+    # Platform HORIZONTAL velocity (px/s, + = rightward) at fire — the
+    # oval-phase counterpart of platform_vy (#59). ~0 during the fixed-x
+    # vertical bob; non-zero once the post-20-make clockwise oval starts,
+    # where the ball also inherits the horizontal launch component.
+    ("platform_vx", "REAL"),
+    # 1 when the shot fired during the 20-make oval phase (platform x-spread
+    # opened up from ~0 to ~100px), else 0. Lets analysis isolate oval shots
+    # for the future 2-D aim model (#59).
+    ("oval_active", "INTEGER"),
 ]
 
 
