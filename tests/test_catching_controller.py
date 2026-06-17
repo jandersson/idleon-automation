@@ -16,6 +16,8 @@ from minigames.catching.controller import (
     predict_descent_window,
     crossing_window,
     should_flap_now,
+    hover_target_y,
+    floor_rescue_due,
     fit_gravity,
     fit_flap_vy,
     fit_approach_speed,
@@ -71,43 +73,75 @@ def test_crossing_window_arithmetic():
     assert t_exit == pytest.approx(1.65)
 
 
-# --- firing decision ------------------------------------------------------
+# --- firing decision (apex-threading) -------------------------------------
+# DYN: rise = 75px, time_to_apex = 0.5s, approach = 200px/s. With fly_x=0 the
+# apex lands within the crossing when the hoop spans gap_left<=100<=gap_right
+# (t_apex=0.5s in [gl/200, gr/200]); the apex lands in the hole when
+# fly_y-75 is inside [hole_top, hole_bottom].
 
-def test_should_flap_fires_when_hoop_near_not_far():
-    # descent-to-centre time T ~= 0.947s (from descent_time_to(100,85)).
-    # Far hoop (gap_left 300): t_mid 1.575s > T -> hold.
-    assert should_flap_now(0, 100, 300, 330, 60, 110, DYN) is False
-    # Near hoop (gap_left 150): t_mid 0.825s <= T -> fire.
-    assert should_flap_now(0, 100, 150, 180, 60, 110, DYN) is True
+def test_should_flap_fires_when_apex_lands_in_hole_at_crossing():
+    # hoop spanning the apex-time crossing (gl=90,gr=110), avatar at a launch
+    # height whose apex (160-75=85) is in the hole [60,140].
+    assert should_flap_now(0, 160, 90, 110, 60, 140, DYN) is True
 
 
-def test_should_flap_monotonic_crossover():
-    # As the hoop approaches (gap_left_x shrinks) the decision flips False->True
-    # exactly once and stays True until the hoop passes.
-    seen_true = False
-    for gl in range(300, 10, -5):
-        fire = should_flap_now(0, 100, gl, gl + 30, 60, 110, DYN)
-        if fire:
-            seen_true = True
-        # once it fires it must not flip back to False while the hoop is ahead
-        if seen_true and gl > 30:
-            assert fire or (gl + 30) / DYN.approach_speed <= 0
-    assert seen_true
+def test_should_flap_false_when_hoop_too_far():
+    # gl=200 -> t_enter=1.0s, apex(0.5s) lands BEFORE the hoop arrives.
+    assert should_flap_now(0, 160, 200, 220, 60, 140, DYN) is False
+
+
+def test_should_flap_false_when_hoop_nearly_passed():
+    # gr=30 -> t_exit=0.15s, apex(0.5s) lands AFTER the hoop is gone.
+    assert should_flap_now(0, 160, 10, 30, 60, 140, DYN) is False
+
+
+def test_should_flap_false_when_apex_overshoots_hole_top():
+    # right timing (gl=90,gr=110) but avatar too high: apex 100-75=25 is above
+    # the hole top -> the flap would carry the avatar over the ring.
+    assert should_flap_now(0, 100, 90, 110, 60, 140, DYN) is False
+
+
+def test_should_flap_false_when_apex_undershoots_hole():
+    # right timing but avatar too low: apex 230-75=155 is below the hole bottom.
+    assert should_flap_now(0, 230, 90, 110, 60, 140, DYN) is False
+
+
+def test_should_flap_fires_in_a_bounded_window_only():
+    # As the hoop approaches with the avatar held at launch height, the launch
+    # fires only in a bounded window (apex within the crossing), not forever.
+    fires = [gl for gl in range(220, 0, -5)
+             if should_flap_now(0, 160, gl, gl + 20, 60, 140, DYN)]
+    assert fires, "should fire somewhere"
+    # all firing gap_left_x are clustered where the apex-time lands in-crossing
+    assert max(fires) <= 105 and min(fires) >= 75
 
 
 def test_should_flap_false_without_hoop():
-    assert should_flap_now(0, 100, None, None, None, None, DYN) is False
+    assert should_flap_now(0, 160, None, None, None, None, DYN) is False
 
 
-def test_should_flap_false_when_hoop_passed():
-    # both edges already left of the avatar (negative crossing times).
-    assert should_flap_now(100, 100, 40, 70, 60, 110, DYN) is False
+# --- hover target + floor rescue ------------------------------------------
+
+def test_hover_target_is_bob_bottom():
+    # apex on the hole centre -> hover (bob bottom) one rise below it.
+    assert hover_target_y(85, DYN) == pytest.approx(85 + DYN.rise_height_px)
 
 
-def test_should_flap_false_when_flap_cannot_reach_hole():
-    # avatar at y=100, apex at 25; a hole centred at y=15 is above the apex,
-    # so a flap can't carry the descent into it.
-    assert should_flap_now(0, 100, 150, 180, 10, 20, DYN) is False
+def test_floor_rescue_fires_below_bound():
+    # bound = 0.70 * 185 = 129.5
+    assert floor_rescue_due(150, 0, 185) is True
+    assert floor_rescue_due(100, 0, 185) is False
+
+
+def test_floor_rescue_is_predictive_on_fast_descent():
+    # 120 < 129.5, but 120 + 300*0.1 = 150 crosses the bound within lookahead.
+    assert floor_rescue_due(120, 300, 185, lookahead_s=0.1) is True
+    # rising avatar never triggers it
+    assert floor_rescue_due(80, -200, 185) is False
+
+
+def test_floor_rescue_handles_missing_velocity():
+    assert floor_rescue_due(100, None, 185) is False
 
 
 # --- fit round-trip -------------------------------------------------------
@@ -151,12 +185,11 @@ def _synth_trace(dyn: Dynamics, dt=0.03, n=500, flap_period_s=0.55,
 def test_fit_recovers_known_dynamics():
     rows = _synth_trace(DYN)
     g = fit_gravity(rows)
-    fv = fit_flap_vy(rows)
+    fv = fit_flap_vy(rows, gravity=DYN.gravity)  # apex-rise needs g
     ap = fit_approach_speed(rows)
     assert g == pytest.approx(DYN.gravity, rel=0.05)
-    # observed launch velocity is the finite-diff average over the flap step,
-    # ~flap_vy + 0.5 g dt, so allow a small slack.
-    assert fv == pytest.approx(DYN.flap_vy, rel=0.08)
+    # apex-rise recovers the set velocity tightly on clean synthetic arcs.
+    assert fv == pytest.approx(DYN.flap_vy, rel=0.05)
     assert ap == pytest.approx(DYN.approach_speed, rel=0.05)
 
 

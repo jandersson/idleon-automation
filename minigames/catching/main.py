@@ -21,7 +21,9 @@ from common.auto_commit import commit_file_if_changed
 from minigames.catching.detector import find_avatar, find_next_gap, find_play_button
 from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
-from minigames.catching.controller import load_dynamics, should_flap_now
+from minigames.catching.controller import (
+    load_dynamics, should_flap_now, hover_target_y, floor_rescue_due,
+)
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -524,7 +526,11 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
         # default only until the first hoop is seen.
         aim = detected_center if detected_center is not None else last_gap_center
         if aim is not None:
-            target_y = aim + FLAP_CENTER_DROP_PX
+            # Model path hovers the bob's APEX on the hole centre (so the
+            # avatar is phase-ready for apex-threading and never sinks); the
+            # hand-tuned path drops below centre as before.
+            target_y = hover_target_y(aim, dyn) if dyn is not None \
+                else aim + FLAP_CENTER_DROP_PX
         else:
             target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
 
@@ -544,7 +550,13 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
             launch_due = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center)
             timed_tag = "timed"
         is_timed = launch_due and now >= coast_until
-        if is_timed:
+        # Floor backstop FIRST — beats coast suppression so a held coast or a
+        # detection gap can't let the avatar free-fall into the floor (the
+        # 2026-06-17 sink death). Predictive, so a fast descent is caught
+        # before it overshoots a position threshold.
+        if floor_rescue_due(fly_y, fly_vy, play_region["height"]):
+            do_flap, where = True, "floor"
+        elif is_timed:
             do_flap, where = True, timed_tag
         elif now < coast_until:
             floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \

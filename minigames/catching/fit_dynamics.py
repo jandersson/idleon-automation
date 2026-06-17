@@ -49,9 +49,10 @@ def run():
     print(f"  flaps fired: {n_fired}")
 
     # Per-parameter so a None is attributable to which segment was too thin.
+    # flap_vy is fit AFTER gravity (the apex-rise method needs g).
     g = fit_gravity(rows)
-    fv = fit_flap_vy(rows)
     ap = fit_approach_speed(rows)
+    fv = fit_flap_vy(rows, gravity=g) if g is not None else None
     print(f"  gravity:        {g if g is None else round(g, 1)} px/s^2")
     print(f"  flap_vy:        {fv if fv is None else round(fv, 1)} px/s (up)")
     print(f"  approach_speed: {ap if ap is None else round(ap, 1)} px/s")

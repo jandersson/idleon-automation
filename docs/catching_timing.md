@@ -1,107 +1,121 @@
 # Catching: the calibrated phase-timing model (#60)
 
-How the predictive flap timer (`minigames/catching/controller.py`) decides
-*when* to fire the launch flap, why it's structured that way, and how to fit
-and iterate it. The bot loop and the hover/coast fallback live in `main.py`;
-this doc is the model behind `catching --model`.
+How the catching bot decides *when* to flap, the dynamics fit from a dense
+trajectory trace, and the open control problem. The loop + fallback live in
+`main.py`; the model in `controller.py`; the offline fit in `fit_dynamics.py`;
+a closed-loop check in `sim.py`.
 
 ## The control problem
 
-The catching minigame is Flappy Bird with hoops: a bobbing avatar at a fixed
-screen-x, golden hoops scrolling in from the right, one click = one flap. The
-hard constraint, measured from saved frames:
+Flappy Bird with hoops: a bobbing avatar at a fixed screen-x, golden hoops
+scrolling in from the right, one click = one flap. "If the ground or the edge
+of a ring is hit, that game is over" (wiki) — so the avatar must thread *every*
+hoop; one clip ends the run. The hard constraint, measured:
 
-- A flap's impulse gives a **~55px peak-to-peak bob**.
+- A flap's impulse gives a **~44px** bob (peak-to-peak per flap).
 - A hoop's **passable hole is ~30px**.
 
-So the avatar is bigger than the hole's slack — it cannot *hover* inside a
-ring. It has to **coast through**: time a flap so the avatar's slow descent
-lines up with the moment the hoop crosses its x. The bob is asymmetric — a
-fast rise (~0.16s) then a long descent (~0.9s) — and that long descent is the
-threading window.
+So the bob is bigger than the hole's slack. The avatar can't hover inside the
+hole; it must cross at a moment its excursion stays within the hole.
 
-The old controller hand-picked three constants (`LEAD_DIST_PX`, `COAST_S`,
-`TIMED_LOW_OFFSET_PX`) and sat on a knife's edge: a ~9px change in the avatar's
-y when the timed flap fires flipped thread-vs-crash. This model replaces the
-guesswork with dynamics fit from a real trajectory.
+## Dynamics (fit + verified against the 2026-06-17 dense trace)
 
-## Physics model
+Screen y grows downward. Between flaps the avatar free-falls at constant
+gravity `g`. A flap is a **set-velocity impulse**: it sets vy to `flap_vy`
+(< 0 = up), independent of the incoming velocity. Hoops scroll left at constant
+`approach_speed`. Fit from one dense `--trace` run and adversarially verified
+(5 independent re-estimators):
 
-Screen y grows downward. Between flaps the avatar is in free fall under a
-constant gravity `g` (px/s²). A flap is a **set-velocity impulse**: it sets the
-vertical velocity to `flap_vy` (negative = upward), independent of the incoming
-velocity — standard Flappy physics. Hoops scroll left at a constant
-`approach_speed` (px/s). Three parameters: `(g, flap_vy, approach_speed)`.
+| param | value | how |
+|---|---|---|
+| gravity | **388 px/s²** | velocity-slope over free-fall arcs (= whole-run position-quadratic; both agree) |
+| flap_vy | **−185 px/s** | apex-rise: `-√(2·g·rise)`, rise ≈ 44px |
+| approach_speed | **78 px/s** | slope of `gap_left_x` over long monotonic runs |
 
-Position after a flap from `y0` (with `vy0 = flap_vy`):
+Self-consistent: `rise = flap_vy²/(2g) ≈ 44px`, `time_to_apex = |flap_vy|/g ≈
+0.48s`, full bob ≈ 0.95s.
 
-```
-y(t)  = y0 + vy0·t + ½·g·t²
-vy(t) = vy0 + g·t
-```
+**The bob is a SYMMETRIC ballistic arc** (~0.48s up, ~0.48s down). Earlier notes
+claimed "fast rise ~0.16s, slow descent ~0.9s" — that was an artifact of the
+double-tap hover flaps, *not* a single arc. The 0.9s was the full bob.
 
-- Apex (vy=0) at `t_apex = |flap_vy| / g`, height `flap_vy² / (2g)` above `y0`.
-- Descent time to a target `Y` (the later, descending root):
-  `t = (−flap_vy + √(flap_vy² − 2g(y0 − Y))) / g`,
-  real only when `Y ≥ apex` (the avatar actually descends that far).
+### Fitting (`catching-fit-dynamics`)
 
-## Firing rule
+Reads the newest `assets/traces/trace_*.csv` and writes `assets/dynamics.json`.
+- **gravity** — median of per-arc fits over free-fall runs.
+- **flap_vy** — apex-rise (`-√(2·g·rise)`). NOT the first post-flap finite
+  difference: at 37Hz / integer pixels that's a poll-AVERAGED velocity biased
+  toward zero by ~g·dt/2 (it read −131 for a true −185).
+- **approach_speed** — `−slope` of `gap_left_x` over the long monotonic runs
+  (`gap_left_x` saturates/clamps at fixed values when far; those plateaus are
+  excluded by the slope<0 filter).
 
-Let **T** = the time for a *flap-now* to descend to the hole centre
-(`descent_time_to`). T depends on the avatar's current y and the dynamics, and
-is roughly constant poll-to-poll. Let **t_mid** = the crossing midpoint — when
-the hoop's horizontal span `[gap_left_x, gap_right_x]` is centred on the
-avatar's fixed x. As the hoop approaches, t_mid shrinks while T stays put.
+## Firing rule — apex-threading
 
-**Fire the launch flap at the crossover `t_mid ≤ T`.** At that instant a
-flap-now lands the descent-centre arrival right as the hoop crosses; because
-the descent is slow, the avatar lingers in the hole across the brief crossing.
-Firing earlier would drop the avatar through the hole before the hoop arrives;
-later, after it's gone.
+The bob (~88px peak-to-peak of travel, ~44px each way) is bigger than the
+passable hole, so the avatar can only stay inside the hole through a crossing
+if it's near its **apex** (vy≈0, slowest) as the hoop passes — at mid-bob speed
+(~185px/s) it moves ~65px during the 0.31s crossing, far outside a 30px hole;
+near the apex it drifts only ~6px. So `should_flap_now` fires so the apex lands
+at the crossing midpoint: when the hoop is one apex-time away
+(`t_enter ≤ time_to_apex ≤ t_exit`) AND this flap's apex (`fly_y − rise`) lands
+inside the passable opening (the detected band inset by the rim thickness,
+`RING_INSET_PX`, then by the crossing excursion). Crossing **mid-descent** —
+the original `should_flap_now` — is wrong: the avatar zips through the hole and
+clips. `descent_time_to`/`predict_descent_window` remain only for analysis.
 
-`should_flap_now` returns False (deferring to `main.py`'s hover/coast) when
-there's no hoop, the approach speed isn't fit, the hoop has already passed, or
-a flap-now can't reach the hole on descent (`T` undefined — too weak a flap or
-the avatar too low). `main.py` keeps the coast-rescue and hover so the model
-can't regress below the working ~2-hoop behaviour.
+## The open problem: phase-locking (why threading isn't solved yet)
 
-## Fitting from a `--trace` CSV
+`sim.py` runs this exact policy against the fitted dynamics and threads **0**:
+the launch only fires when the avatar *happens* to be at launch height during
+the timing window, which rarely coincides. The root cause is structural:
 
-`catching --trace` writes one row per poll (t, fly_y, fly_vy, gap extent,
-fired, where) to `assets/traces/` (gitignored). `catching-fit-dynamics` reads
-the newest trace and recovers the three parameters (`controller.fit_dynamics`),
-writing `assets/dynamics.json`:
+> With a fixed-impulse flap, the bob **period is constant** (`P = 2·t_apex`,
+> ~0.95s) regardless of flap height. So you cannot independently set the apex
+> **height** (which needs launching from `launch_y = hole_center + rise`) and
+> the apex **time** (which needs the launch at `t_cross_mid − t_apex`).
 
-- **gravity** — median over free-fall runs (consecutive non-flap polls),
-  least-squares fitting `y(t) = c₀ + c₁t + ½g·t²` per run.
-- **flap_vy** — median of the most-negative `fly_vy` in the 0.25s after each
-  fired poll (the launch impulse). The observed value is the finite-difference
-  average over the flap step, ~`flap_vy + ½g·dt`, a few px shy of the true set
-  velocity — fine for timing.
-- **approach_speed** — median of `−slope` over within-hoop runs where
-  `gap_left_x` decreases monotonically (runs break when the detector drops the
-  hoop or the "next hoop" switches and `gap_left_x` jumps right).
+Aligning both requires **active multi-bob phase-locking**: absorb the phase
+residual `(t_cross_mid − t_apex − natural_bob_bottom) mod P` over several
+off-level bobs (off-center apexes between hoops are harmless), landing a
+`launch_y` bob-bottom exactly on `t_cross_mid − t_apex`. The apex region is
+forgiving (the avatar stays within ±15px of the apex for ~±0.28s, so the
+crossing must align within ~±0.12s), so the lock needn't be precise — but it
+must exist. Naive variants (passive gate, receding-horizon hold) either never
+fire or overshoot the ceiling/clip the top; see the sim.
 
-`fit_dynamics` returns None (and the bot keeps the hand-tuned fallback) if any
-parameter can't be recovered from the trace — better no model than a bad one.
+**This is best tuned with live data**, not blind sim-fitting: the real
+click→game-response latency and any dynamics drift shift the timing by tens of
+ms, which is inside the tolerance budget. Next step: run `catching --model
+--trace`, then check from the trace whether the launches land apexes near
+crossings, and fit the phase-lock gain to the live latency.
+
+## Floor safety (shipped, helps both paths)
+
+The 2026-06-17 trace run died by **sinking to the floor**: the avatar free-fell
+~100px over 1.1s and a position-threshold hover flap fired too late (the avatar
+crossed the threshold at ~450px/s and overshot to the floor in one poll).
+`floor_rescue_due` is a predictive backstop — flap if `fly_y` is below
+`frac·play_height` OR a fast descent is projected to cross it within a short
+lookahead. It runs FIRST (before coast/hover/model), so a held coast or a
+detection gap can't let the avatar sink. Pure kinematics, so it guards the
+hand-tuned default path too.
 
 ## What the model can and can't do
 
-The bob/hole ratio and the in-game **speed ramp** still cap every run — hoops
-arrive faster over time until one crosses inside a single bob period and can't
-be threaded. The model makes the **early** hoops reliable by removing the
-hand-tuned timing's knife-edge; it does **not** enable an unbounded score.
-Expect more consistent threading of the first hoops, not a different ceiling.
+The bob/hole ratio and the in-game **speed ramp** cap every run regardless. The
+corrected dynamics + apex-threading + floor safety remove the knife-edge and
+the floor sink; reliable threading of the early hoops waits on the phase-lock.
+Expect: survives the floor sink; threads opportunistically until the phase-lock
+lands. Don't expect an unbounded score.
 
 ## Iterating
 
-Validation is live — there's no game simulator. The loop:
-
-1. `catching --trace --save-frames` for one run.
-2. `catching-fit-dynamics` → inspect the printed `(g, flap_vy, approach_speed)`
-   and rise/apex against the frames; the trace CSV is the ground truth.
-3. `catching --model` and watch threading; cross-check the `where='model'`
-   flaps in `catching.db` and the dense trace.
-4. If a fit parameter looks off, the trace shows which segment was thin —
-   adjust the segment thresholds in `controller.py` or capture a longer trace.
-   Iterate on the trace, not single-pixel constant nudges.
+1. `catching --trace --save-frames` → `catching-fit-dynamics` (writes/refreshes
+   `dynamics.json`); eyeball the fit against the trace.
+2. `catching-sim` to check a controller change threads in-model before a live
+   run (compare variants; absolute counts are indicative — the geometry consts
+   are estimates).
+3. `catching --model --trace` live; inspect the `where='model'` flaps and the
+   dense trace to see whether apexes land on crossings. Tune the phase-lock to
+   the live latency. Iterate on the trace, not single-pixel constant nudges.

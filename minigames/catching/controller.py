@@ -11,20 +11,24 @@ Pure / IO-free and unit-tested (tests/test_catching_controller.py); main.py
 owns the capture/click loop and the hover + coast-rescue fallback.
 
 Physics model (screen y grows downward; see docs/catching_timing.md for the
-full derivation):
+full derivation, and the dynamics fit verified against a dense trace
+2026-06-17: g≈388 px/s², flap_vy≈-186 px/s, approach≈80 px/s):
   - Between flaps the avatar is in free fall: constant gravity `g` (px/s^2).
   - A flap is a set-velocity impulse: it sets vy to `flap_vy` (< 0 = upward),
     independent of the incoming velocity (standard Flappy physics).
+  - The bob is a SYMMETRIC ballistic arc (~0.48s up, ~0.48s down, ~44px) — NOT
+    the asymmetric "fast rise / slow descent" earlier notes claimed (that was
+    an artifact of double-tap hover flaps).
   - Hoops scroll left at a constant `approach_speed` (px/s).
 
-Firing rule — fire the launch flap when the hoop has approached close enough
-that flapping NOW lands the avatar's slow descent at the hole as the hoop
-crosses. Formally: let T be the time for a flap-now to descend to the hole
-centre, and t_mid the crossing midpoint (when the hoop's horizontal span is
-centred on the avatar's fixed x). T is ~constant; t_mid shrinks as the hoop
-nears. Fire at the crossover t_mid <= T, so the descent-centre arrival aligns
-with the crossing. The descent is slow, so the avatar lingers in the hole
-across the brief crossing.
+Firing rule — APEX-THREADING. The bob (~2*rise) is bigger than the passable
+hole, so the avatar can only stay inside the hole through a crossing if it's
+near its APEX (vy≈0, slowest) as the hoop passes — at mid-bob speed it moves
+far more than the hole width. So fire the launch flap so the apex lands at the
+crossing midpoint t_mid: when the hoop is one apex-time away (t_mid ≤
+time_to_apex) and this flap's apex (fly_y - rise) lands inside the hole.
+Between hoops main.py hovers with the apex on the hole centre, keeping the
+avatar phase-ready and off the floor.
 """
 from __future__ import annotations
 
@@ -32,6 +36,14 @@ import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+
+# The detector's gap_top/gap_bottom is the ring's OUTER bounding box; the
+# passable opening is narrower by the rim thickness. Inset the band by this
+# before aiming the apex, so the apex targets the true hole, not a rim.
+# Provisional from the wiki ring sprites (~24px wide rings); tune live if the
+# avatar clips the top/bottom edge.
+RING_INSET_PX = 12.0
 
 
 @dataclass(frozen=True)
@@ -119,11 +131,20 @@ def should_flap_now(fly_x: float, fly_y: float,
                     gap_left_x: float | None, gap_right_x: float | None,
                     hole_top: float | None, hole_bottom: float | None,
                     dyn: Dynamics) -> bool:
-    """Decide the phase-timed launch flap. True when the hoop has approached
-    close enough that flapping now drops the avatar's slow descent through the
-    hole centre as the hoop crosses (t_mid <= descent-to-centre time). False
-    with no hoop, an unfit approach speed, a hoop already past, or a flap that
-    can't reach the hole on descent — main.py's hover/coast handles those."""
+    """Decide the phase-timed launch flap — APEX-THREADING.
+
+    The bob (~2*rise ≈ 88px) is bigger than the passable hole, and at mid-bob
+    speed the avatar moves far more than the hole width during a crossing. Only
+    near the APEX (vy≈0) does it move slowly enough to stay inside the hole for
+    the whole crossing (excursion = ½·g·(crossing/2)² ≈ 6px). So fire so the
+    apex lands at the crossing midpoint: when the hoop is one apex-time away
+    (t_mid ≤ time_to_apex) AND this flap's apex (fly_y - rise) would land
+    inside the hole with room for the crossing excursion. False otherwise —
+    main.py's apex-centred hover re-phases the avatar until a flap aligns.
+
+    (descent_time_to / predict_descent_window remain for analysis; the firing
+    rule deliberately does NOT cross mid-descent — that was the original bug.)
+    """
     if gap_left_x is None or gap_right_x is None \
             or hole_top is None or hole_bottom is None:
         return False
@@ -133,12 +154,49 @@ def should_flap_now(fly_x: float, fly_y: float,
     t_enter, t_exit = win
     if t_exit <= 0:
         return False  # hoop already crossed
-    t_mid = 0.5 * (t_enter + t_exit)
-    hole_center = 0.5 * (hole_top + hole_bottom)
-    t_descent = descent_time_to(fly_y, hole_center, dyn)
-    if t_descent is None:
-        return False  # a flap now can't carry the descent into the hole
-    return t_mid <= t_descent
+    # A flap now reaches its apex time_to_apex from now. Fire only if that apex
+    # lands WITHIN the crossing window (the avatar is at its slowest exactly as
+    # the hoop passes) — bounded both ways, so it can't fire far-early (apex
+    # before the hoop arrives) or far-late (apex after it's gone).
+    t_apex = dyn.time_to_apex_s
+    if not (t_enter <= t_apex <= t_exit):
+        return False
+    # ...and only if THIS flap's apex lands inside the PASSABLE opening (the
+    # detected band inset by the rim thickness), with room for the small drift
+    # over half the crossing. Else the avatar is at the wrong launch height;
+    # main.py's apex-centred hover re-phases it.
+    inner_top = hole_top + RING_INSET_PX
+    inner_bottom = hole_bottom - RING_INSET_PX
+    if inner_bottom <= inner_top:
+        return False  # band too thin to commit a launch
+    apex_y = fly_y - dyn.rise_height_px
+    crossing = max(0.0, t_exit - t_enter)
+    excursion = 0.5 * dyn.gravity * (crossing / 2.0) ** 2
+    return inner_top + excursion <= apex_y <= inner_bottom - excursion
+
+
+def hover_target_y(hole_center: float, dyn: Dynamics) -> float:
+    """Between-hoop hover target for the model path: the bob BOTTOM (one rise
+    below the hole centre) so the avatar bobs with its slow apex ON the hole
+    centre — phase-ready for apex-threading, and never sinking toward the
+    floor. Flap when fly_y drops to/below this."""
+    return hole_center + dyn.rise_height_px
+
+
+def floor_rescue_due(fly_y: float, fly_vy: float | None, play_height: float,
+                     frac: float = 0.70, lookahead_s: float = 0.10) -> bool:
+    """Hard floor backstop: flap if the avatar is below frac*play_height, or a
+    fast descent is projected to cross that bound within lookahead_s. Catches
+    the free-fall-to-floor sink (the 2026-06-17 trace run's death) that a
+    position-only threshold misses at high descent speed — independent of the
+    hover/coast/model state, so it guards every path. Pure kinematics, so it
+    needs no fitted Dynamics and works on the hand-tuned path too."""
+    bound = frac * play_height
+    if fly_y >= bound:
+        return True
+    if fly_vy is not None and fly_vy > 0 and fly_y + fly_vy * lookahead_s >= bound:
+        return True
+    return False
 
 
 # --- Fitting the dynamics from a dense --trace CSV -------------------------
@@ -235,28 +293,38 @@ def fit_gravity(rows: list[dict], min_run: int = 4) -> float | None:
     return _median(gs)
 
 
-def fit_flap_vy(rows: list[dict], window_s: float = 0.25) -> float | None:
-    """Median peak upward velocity after a flap — the most-negative fly_vy in
-    the window_s following each fired poll. The launch impulse the model sets
-    vy to."""
-    peaks: list[float] = []
-    for i, row in enumerate(rows):
-        if not (_f(row, "fired") or 0) >= 1.0:
+def fit_flap_vy(rows: list[dict], gravity: float,
+                min_apex_s: float = 0.3) -> float | None:
+    """Flap impulse via the APEX-RISE method: for each clean flap, measure the
+    rise = (y at the flap) - (min y reached before the next flap), then
+    flap_vy = -sqrt(2*g*median_rise).
+
+    More robust than differencing the launch velocity: at the ~37Hz / integer-
+    pixel cadence the first post-flap finite difference is a poll-AVERAGED
+    velocity, biased toward zero by ~g*dt/2 (~36 px/s) — it read -131 for a
+    true ~-186 px/s (verified against this trace, 2026-06-17). The rise is a
+    position measurement and carries no such bias. Skips truncated arcs (apex
+    reached < min_apex_s after the flap — a rate-limited double-tap, not a full
+    bob)."""
+    flap_i = [i for i in range(len(rows)) if (_f(rows[i], "fired") or 0) >= 1.0]
+    rises: list[float] = []
+    for k, i in enumerate(flap_i):
+        j = flap_i[k + 1] if k + 1 < len(flap_i) else len(rows)
+        seg = [(_f(rows[s], "t"), _f(rows[s], "fly_y")) for s in range(i, j)]
+        seg = [(t, y) for t, y in seg if t is not None and y is not None]
+        if len(seg) < 3:
             continue
-        t0 = _f(row, "t")
-        if t0 is None:
-            continue
-        best = None
-        for row2 in rows[i:]:
-            t = _f(row2, "t")
-            if t is None or t - t0 > window_s:
-                break
-            vy = _f(row2, "fly_vy")
-            if vy is not None and (best is None or vy < best):
-                best = vy
-        if best is not None and best < 0:
-            peaks.append(best)
-    return _median(peaks)
+        t0, y0 = seg[0]
+        ymin = min(y for _, y in seg)
+        t_apex = next(t for t, y in seg if y == ymin) - t0
+        if t_apex < min_apex_s:
+            continue  # truncated double-tap arc, not a full bob
+        if y0 - ymin > 0:
+            rises.append(y0 - ymin)
+    rise = _median(rises)
+    if rise is None or rise <= 0:
+        return None
+    return -math.sqrt(2.0 * gravity * rise)
 
 
 def fit_approach_speed(rows: list[dict], min_run: int = 4) -> float | None:
@@ -302,11 +370,14 @@ def _linregress_slope(xs: list[float], ys: list[float]) -> float | None:
 def fit_dynamics(rows: list[dict]) -> Dynamics | None:
     """Fit a Dynamics from a list of trace rows (one per poll). Returns None
     when any of the three parameters can't be recovered (too little data) —
-    the caller keeps the hand-tuned fallback rather than fly on a bad fit."""
+    the caller keeps the hand-tuned fallback rather than fly on a bad fit.
+    flap_vy is fit AFTER gravity (the apex-rise method needs g)."""
     g = fit_gravity(rows)
-    fv = fit_flap_vy(rows)
     ap = fit_approach_speed(rows)
-    if g is None or fv is None or ap is None:
+    if g is None or ap is None:
+        return None
+    fv = fit_flap_vy(rows, gravity=g)
+    if fv is None:
         return None
     return Dynamics(gravity=g, flap_vy=fv, approach_speed=ap)
 
