@@ -140,35 +140,94 @@ The lure shares the warm-red hues, so it's matched by **template**
 `fishing-capture` (a wiki sprite won't match the live pipeline — the catching
 play-button lesson).
 
-## Next session: aim off the charge bar (2026-06-17, after 7 live runs)
+## Aim off the charge bar — implemented closed-loop (2026-06-17)
 
-State: the bot auto-starts (clicks PLAY GAME), detects the green fish cleanly
-(#63), casts open-loop via `hold_ms`, and measures the landing by the bobber's
-MAX x over a poll (`_measure_landing` — the bobber reels in after landing, so
-max-x is the landing, not the last read). Landings are now reproducible, but it
-barely scores: the bobber-distance model **undershoots** near a distance **cap
-(~267px)** where the charge bar fills up, plus far casts land off-crop (noise).
+The cast now runs **closed-loop on the charge bar** (`common.input.
+charge_and_release`): hold LMB while polling `find_charge_level`, release at a
+target fill. The model is `charge_level → landed_dist` (`cast_model`), aiming is
+in charge-space (`charge_for_distance`), and the rod-not-ready state is detected
+and skipped. This replaced the open-loop `hold_ms` cast that undershot near the
+saturation cap and fought off-crop bobber noise. See the decision record below.
 
-Key finding — the **red charge bar** (left edge) is a far better signal than
-the bobber: `find_charge_level` (red fill height, x<10) maps cleanly and
-**reproducibly** to landing distance (36→181, 59→294 both exact; ~4.9
-px-distance per px-fill), and it's always in-crop + stable after release.
-`casts.charge_level` is now logged every cast (even when the bobber lands
-off-crop). Anomaly to explain: ~half of run 7's casts logged `charge_level=0`
-AND no bobber — likely cast too soon after the previous (reel-in not done →
-no charge); check `CAST_COOLDOWN_S` / sequencing.
+### Offline validation (run-7 saved frames, reconstructed)
 
-Plan:
-1. From a fresh run's `fishing.db`, fit `charge_level → landed_dist` (clean) and
-   check `hold_ms → charge_level` (is open-loop hold deterministic, or does the
-   bar overshoot/oscillate?). Investigate the `charge_level=0` casts.
-2. Switch the cast feedback to the charge bar: measure distance from
-   `charge_level` (robust, in-crop) instead of the off-crop bobber, so the cast
-   model fits on clean data. If `hold_ms → charge_level` is too noisy, go
-   closed-loop (charge while polling the bar, release at the target level — a
-   new charge-and-release primitive, vs the open-loop `hold()`).
-3. Model the distance CAP (linear-up-to-cap, then flat) so aiming doesn't
-   over-hold for far fish.
+The 7 live runs predate the `find_charge_level` commit, so every DB
+`charge_level` is NULL — but `--save-frames` dumps from run 7
+(`assets/captures/botrun_20260617_212435/`) let the charge be reconstructed and
+paired with the logged `landed_x`. The relationship is clean and saturates:
+
+| charge | landed_x | x / charge |
+|---|---|---|
+| 32 | 165 | 5.16 |
+| 36 | 181 | 5.03 |
+| 44 | 221 | 5.02 |
+| 49 | 241 | 4.92 |
+| 53 | 264 | 4.98 |
+| 59 | 294 | 4.98 |
+| 60 | 301 | 5.02 |
+
+`landed_x ≈ 5.0·charge` (R²≈0.999); the per-cast reading is rock-steady (all
+~14 landing-poll frames of a cast read the identical fill). Holds of 754/780/859
+ms all plateau at charge ≈ 59–60 → `landed_x ≈ 301`, i.e. the **distance cap
+(~267px from the bar-left origin) is the bar saturating at charge ≈ 60** — so
+the cap is encoded by the model's charge support, not a separate term.
+
+### The `charge_level=0` anomaly, diagnosed
+
+Not random. Run 7's casts came in **pairs with identical `hold_ms`** (553,553 /
+754,754 / …): the first charged and landed, the second read **charge=0 with no
+bobber**. Cause — after a cast the lure is still out / reeling, so the next
+`hold()` fired into a **rod-not-ready** state and built no charge, a wasted
+cast; `choose_target` then re-picked the un-moved fish → same hold, hence the
+pairs. The closed-loop cast fixes this directly: a not-ready attempt reads 0
+through the grace window, aborts, and is retried — not burned as a logged cast.
+
+### Left to validate live (the one thing offline can't cover)
+
+The hold-while-polling **timing** is the only unproven part. On a fresh
+`uv run fishing`, confirm: casts actually fire (charge bar seen at the play
+crop's left edge — if the region's left edge isn't on the bar, every cast reads
+0 and aborts, as run 6's frames showed), `n_not_ready` is moderate (rod-recovery
+polling, not a stuck loop), and makes/points/streak climb. Then refit
+`charge_level → landed_dist` from the now-populated DB and check the slope
+matches the ~5.0 above.
+
+## Decision record: closed-loop vs open-loop charge (2026-06-17)
+
+**Decision.** Cast **closed-loop** — poll the charge bar while holding and
+release at a target fill (new `charge_and_release` primitive) — rather than
+keep the open-loop `hold(hold_ms)` and merely retrain the model on charge.
+
+**Why.**
+- The charge fill → distance map is clean, in-crop, and reproducible (table
+  above); charge is the right control/predictor regardless of mechanism.
+- Closed-loop is **robust to hold→charge drift**: it releases on the observed
+  fill, so it doesn't depend on a hold-duration calibration that can shift with
+  frame rate / game state.
+- It **inherently fixes the rod-not-ready waste** (the every-other-cast
+  `charge_level=0`): a not-ready cast reads 0 and aborts cheaply; open-loop
+  can't tell a dead cast from a live one and logs garbage.
+
+**Alternative considered — open-loop, retrain on charge.** Keep `hold(hold_ms)`;
+model `hold → charge → distance` and add an explicit rod-ready check before
+firing. Implications had it been chosen:
+- Smaller change, no timing-sensitive primitive holding the button while
+  grabbing frames.
+- Would rely on `hold → charge` staying as deterministic as run 7 suggested
+  (500→32, 610→44, 754→59, then flat at the cap) — untested across frame-rate /
+  late-game load, and a drift there silently biases every aim.
+- The rod-ready check (e.g. "no bobber visible and bar at 0") is **less direct**
+  than the closed-loop abort, which reads the actual charging state.
+- The offline finding that `hold → charge` *is* roughly deterministic means
+  this path is viable, not dead — it's the natural fallback.
+
+**Backtrack conditions** (when to revisit open-loop): if live runs show the
+closed-loop hold-while-polling is unstable — e.g. the per-poll `grab_region`
+adds too much latency so release overshoots the target charge badly, the button
+sticks, or the poll cadence can't keep up with the bar fill. In that case the
+data to switch back already exists: `hold → charge` was near-linear up to the
+cap (run 7), so an open-loop `hold_for_charge` calibration is a drop-in. The
+charge→distance model is mechanism-independent and stays either way.
 
 ## Sources
 
