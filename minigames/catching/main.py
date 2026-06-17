@@ -580,14 +580,17 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
             launch_due = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center)
             timed_tag = "timed"
         is_timed = launch_due and now >= coast_until
-        # Floor backstop FIRST — beats coast suppression so a held coast or a
-        # detection gap can't let the avatar free-fall into the floor (the
-        # 2026-06-17 sink death). Predictive, so a fast descent is caught
-        # before it overshoots a position threshold.
-        if floor_rescue_due(fly_y, fly_vy, play_region["height"]):
-            do_flap, where = True, "floor"
-        elif is_timed:
+        # The phase-timed LAUNCH wins first — it fires in the same low-in-the-
+        # bob zone as the floor rescue, and if floor preempts it (run 16: floor
+        # 22 vs model 2) the launch is starved and never sets the coast, so the
+        # avatar over-lifts into the next crossing and clips the top. The launch
+        # also flaps UP, so it's a floor-safe choice; floor backstops the polls
+        # where no launch is due (still beats coast, so a held coast / detection
+        # gap can't sink the avatar — the 2026-06-17 sink death).
+        if is_timed:
             do_flap, where = True, timed_tag
+        elif floor_rescue_due(fly_y, fly_vy, play_region["height"]):
+            do_flap, where = True, "floor"
         elif now < coast_until:
             floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
                 else (play_region["height"] - 25)

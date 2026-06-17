@@ -86,9 +86,42 @@ fire or overshoot the ceiling/clip the top; see the sim.
 
 **This is best tuned with live data**, not blind sim-fitting: the real
 click→game-response latency and any dynamics drift shift the timing by tens of
-ms, which is inside the tolerance budget. Next step: run `catching --model
---trace`, then check from the trace whether the launches land apexes near
-crossings, and fit the phase-lock gain to the live latency.
+ms, which is inside the tolerance budget.
+
+### Run 16 (first live `--model`, 2026-06-17): 23.8s, scored 2 — longest yet
+
+What worked: the startup fix held (no early sink), and the avatar's apexes
+clustered at **y≈86–91, right on the hole centre (gap midpoint ≈89)** — so the
+apex-hover puts the avatar at the correct *height*. Survival is real.
+
+Two bugs the trace exposed (both now fixed):
+- **Branch order starved the launch.** `floor_rescue` was checked before the
+  model launch, and both fire in the same low-in-the-bob zone — so floor won
+  22:2 over the model, and a floor flap sets no coast, so the avatar over-lifts
+  into the next crossing and clips the **top** (the death: an apex at y=44 vs a
+  hole top of 52). Fix: check the launch first (it also flaps up, so it's
+  floor-safe); floor backstops only the polls with no launch due.
+- **Floor lookahead too long.** The 0.1s predictive horizon fired floor ~18px
+  early (at y≈112, before the avatar reached the launch zone at 117+),
+  preempting the model. Cut to 0.05s (~1–2 polls at 37Hz); detection-gap falls
+  are caught by the position bound, not the lookahead.
+
+### Why the phase-lock is hard (sub-bob granularity)
+
+You can't hover tighter than the 44px bob: every flap imparts a fixed ~44px of
+rise, so the avatar always traverses ≥44px per cycle — apex-threading is
+mandatory, confirmed. To land an apex on a crossing you must shift the bob
+phase, but **one flap = one full period P (~0.95s)**, so a sub-P phase residual
+can't be absorbed by a single flap. Options (untried, for the next pass): a
+short off-period bob (let the avatar fall δ below `launch_y`, flapping late →
+apex slightly low but in-hole, delaying the bottom by a bounded amount), spread
+over 1–2 bobs; or a search-based planner over discrete flap decisions. Both are
+best validated against the next live trace (does the launch land the apex on
+the crossing under real latency?), not the sim alone.
+
+Next: run `catching --model --trace` again with the branch-order fix; from the
+trace, check whether the now-more-frequent model launches land apexes on
+crossings, and whether it threads past 2.
 
 ## Floor safety (shipped, helps both paths)
 

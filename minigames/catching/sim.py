@@ -64,14 +64,14 @@ def run_one(dyn, hole_centers, spacing_px, seed_phase=0.0, verbose=False,
             gl, gr = nxt["cx"] - RING_HALF_W, nxt["cx"] + RING_HALF_W
             gt, gb, dc = nxt["hc"] - DET_HALF, nxt["hc"] + DET_HALF, nxt["hc"]
 
-        # --- decision: mirrors main.py's model path ---
+        # --- decision: mirrors main.py's model path (launch before floor) ---
         launch = (nxt is not None
                   and should_flap_now(FLY_X, y, gl, gr, gt, gb, dyn)
                   and t >= coast_until)
-        if floor_rescue_due(y, vy, PLAY_H):
-            do, where = True, "floor"
-        elif launch:
+        if launch:
             do, where = True, "model"
+        elif floor_rescue_due(y, vy, PLAY_H):
+            do, where = True, "floor"
         elif t < coast_until:
             floor = (gb - M.COAST_RESCUE_PX) if gb is not None else PLAY_H - 25
             do, where = y > floor, "coast"

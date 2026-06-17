@@ -184,13 +184,17 @@ def hover_target_y(hole_center: float, dyn: Dynamics) -> float:
 
 
 def floor_rescue_due(fly_y: float, fly_vy: float | None, play_height: float,
-                     frac: float = 0.70, lookahead_s: float = 0.10) -> bool:
+                     frac: float = 0.70, lookahead_s: float = 0.05) -> bool:
     """Hard floor backstop: flap if the avatar is below frac*play_height, or a
     fast descent is projected to cross that bound within lookahead_s. Catches
     the free-fall-to-floor sink (the 2026-06-17 trace run's death) that a
     position-only threshold misses at high descent speed — independent of the
     hover/coast/model state, so it guards every path. Pure kinematics, so it
-    needs no fitted Dynamics and works on the hand-tuned path too."""
+    needs no fitted Dynamics and works on the hand-tuned path too.
+
+    lookahead_s is short (~1-2 polls at ~37Hz): a longer horizon fired it ~18px
+    early (run 16), preempting the model launch that fires in the same low zone.
+    Detection-gap falls are caught by the position bound, not the lookahead."""
     bound = frac * play_height
     if fly_y >= bound:
         return True
