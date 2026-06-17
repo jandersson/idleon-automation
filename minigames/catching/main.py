@@ -1,3 +1,4 @@
+import argparse
 import sys
 import time
 from collections import deque
@@ -8,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
+from common.monitor import save_frame
 from common.regions import get_region
 from common.score_diff import score_region
 from common.session_log import session_log
@@ -33,6 +35,11 @@ POLL_INTERVAL = 0.02
 # Sampled AFTER the flap block so it never sits between a flap decision and
 # the click (the CLAUDE.md click-timing rule).
 SCORE_SAMPLE_INTERVAL = 0.5
+
+# --save-frames debug capture cadence (seconds). Throttled and placed after
+# the flap so it never delays a click. Writes full-window + play-region
+# snapshots to a gitignored dir for offline detector diagnosis.
+FRAME_SAVE_INTERVAL = 0.3
 # Built once: a read_pts(score_crop) -> int | None bound to the digit
 # template library. Returns None for uncaptured digits, so max-tracking
 # never records a false-high (grow the library with catching-capture-digits).
@@ -116,6 +123,15 @@ def _read_score(win_left, win_top, win_w, win_h):
 
 
 def run():
+    parser = argparse.ArgumentParser(description="Catching (Flappy) minigame bot")
+    parser.add_argument(
+        "--save-frames", action="store_true",
+        help="Save full-window + play-region snapshots to assets/captures/"
+             "botrun_<stamp>/ (gitignored) for offline detector diagnosis — "
+             "what the fly/ring detectors actually saw. Throttled and placed "
+             "after the flap, so it never delays a click.",
+    )
+    args = parser.parse_args()
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -134,7 +150,8 @@ def run():
         # final_score is the max PTS read during the run (None if unread).
         stats = {"n_flaps": 0, "end_reason": "process_exit", "final_score": None}
         try:
-            _run_inner(session_started, db, code_commit, stats)
+            _run_inner(session_started, db, code_commit, stats,
+                       save_frames=args.save_frames)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
@@ -165,9 +182,18 @@ def run():
             )
 
 
-def _run_inner(session_started, db, code_commit, stats):
+def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     print(f"Catching bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
+
+    frames_dir = None
+    last_frame_save = 0.0
+    frame_idx = 0
+    if save_frames:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        frames_dir = _HERE / "assets" / "captures" / f"botrun_{stamp}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving frames to {frames_dir} (--save-frames)")
 
     last_click_time = 0.0
     prev_fly: tuple[int, float] | None = None  # (fly_y, wall_clock) of last detected frame, for velocity
@@ -331,6 +357,17 @@ def _run_inner(session_started, db, code_commit, stats):
                 last_score = pts
                 if stats["final_score"] is None or pts > stats["final_score"]:
                     stats["final_score"] = pts
+
+        # Optional debug capture (--save-frames): throttled snapshots AFTER the
+        # flap so it never delays a click. play_ is the exact detector input
+        # (find_fly / find_next_gap); full_ is the whole window for scene
+        # context (where the real rings are, the HUD). Both gitignored.
+        if frames_dir is not None and now - last_frame_save >= FRAME_SAVE_INTERVAL:
+            last_frame_save = now
+            save_frame(frames_dir / f"play_{frame_idx:04d}.png", frame)
+            save_frame(frames_dir / f"full_{frame_idx:04d}.png",
+                       grab_region(win_left, win_top, win_w, win_h))
+            frame_idx += 1
 
         time.sleep(POLL_INTERVAL)
 
