@@ -22,7 +22,8 @@ from common.capture import grab_region
 from common.regions import get_region
 from common.window import get_bounds, WindowNotFoundError
 from minigames.fishing.detector import (
-    FISH_HSV, MEGALODON_HSV_LOW, MEGALODON_HSV_HIGH, MINE_HSV, _to_hsv, _mask,
+    FISH_HSV, MEGALODON_HSV_LOW, MEGALODON_HSV_HIGH,
+    MINE_RED_LOW, MINE_RED_HIGH, _to_hsv, _mask,
 )
 from minigames.fishing.main import WINDOW_TITLE
 
@@ -64,10 +65,10 @@ def run():
         print(f"  {name}: {int((m > 0).sum())} px")
     meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
     cv2.imwrite(str(OUT_DIR / "megalodon.png"), _overlay(bgr, meg))
-    mine = _mask(hsv, *MINE_HSV)
+    mine = cv2.bitwise_or(_mask(hsv, *MINE_RED_LOW), _mask(hsv, *MINE_RED_HIGH))
     cv2.imwrite(str(OUT_DIR / "mine.png"), _overlay(bgr, mine))
-    print(f"  megalodon: {int((meg > 0).sum())} px | mine: {int((mine > 0).sum())} px")
-    print(f"Wrote overlays to {OUT_DIR}. Tune FISH_HSV / MINE_HSV in detector.py.")
+    print(f"  megalodon: {int((meg > 0).sum())} px | mine(red spikes): {int((mine > 0).sum())} px")
+    print(f"Wrote overlays to {OUT_DIR}. Tune FISH_HSV / MINE_RED_* in detector.py.")
 
 
 if __name__ == "__main__":

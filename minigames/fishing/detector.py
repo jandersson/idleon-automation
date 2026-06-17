@@ -38,7 +38,12 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # bar's cyan top-edge (H~98) so the fish doesn't merge into it. Verified on
     # the capture frames (one clean ~17x17 blob per frame).
     "green": ((70, 50, 130), (92, 255, 255)),
-    "eel": ((13, 60, 120), (28, 255, 255)),       # Eel (yellow; sprite H18-24)
+    # Eel (yellow/orange). S floor 150: the low-saturation warm SCENERY — the tan
+    # dock, the red/white bobber, the score text — all read S~121 and were firing
+    # 83 false eels in a no-streak run (#63); a real eel is saturated (S~197). S is
+    # the clean discriminator (V overlaps). PROVISIONAL: only 1 clean real-eel
+    # sample so far (cast 15, overlapping) — re-check the floors as eels recur.
+    "eel": ((13, 150, 140), (28, 255, 255)),
     "squid": ((132, 60, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
     # Whale (blue) overlaps the blue bar (H~109) — separated by saturation (bar
     # S~186, whale sprite S~79). Provisional until a whale is seen live.
@@ -53,11 +58,19 @@ FISH_MIN_AREA = 70
 # Red wraps the hue circle; Megalodon (red behemoth, sprite H6-10 S~81 V255).
 MEGALODON_HSV_LOW = ((3, 90, 150), (12, 255, 255))
 MEGALODON_HSV_HIGH = ((172, 90, 150), (179, 255, 255))
-# Mines (MGfsh5) render as a grey/low-saturation spiky ball with a red core
-# (in-game body H~9-19 S~30-45 V~86-130). Key off the low-saturation grey
-# body; the blue bar (S~186) and the colour fish (S>100) don't match it.
-# Spiky shape / template is the fallback if colour proves unreliable live.
-MINE_HSV = ((0, 0, 45), (179, 62, 150))
+# Mines render as a SPIKY ball whose SPIKES are RED (the core is orange). Key on
+# the RED spikes, NOT orange: the bar overlays an orange sunset sky (H~15-25),
+# so an orange mask floods the whole frame. Red (H<=10 / >=168) is just the mine
+# spikes + the red/white bobber. A mine is a compact ball ~24-52px wide (a fish
+# is ~17px; the bobber is round). The orange core inside reads as an 'eel'
+# (#63), so find_fish drops fish blobs inside a detected mine. Red wraps -> two
+# ranges.
+MINE_RED_LOW = ((0, 120, 90), (10, 255, 255))
+MINE_RED_HIGH = ((168, 120, 90), (179, 255, 255))
+MINE_MIN_AREA = 110
+MINE_MIN_WIDTH = 22      # a mine ball spans ~24-52px; a fish ~17px
+MINE_MAX_WIDTH = 60      # reject merged warm scenery (was detecting 137px-wide blobs)
+MINE_ASPECT = (0.55, 1.9)   # roughly round ball
 
 # A detected blob must cover at least this many mask pixels to count as a
 # target (filters speckle). Scale with capture resolution during calibration.
@@ -154,39 +167,80 @@ def _restrict(mask: np.ndarray, bar: tuple[int, int, int, int] | None,
 
 def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
               bar: tuple[int, int, int, int] | None = None,
-              include_megalodon: bool = False) -> list[dict]:
+              include_megalodon: bool = False,
+              mines: list[dict] | None = None) -> list[dict]:
     """All detected fish as dicts {x, y, kind}. Kind is one of FISH_HSV keys.
     Positions are play-region-relative. When `bar` (from find_cast_bar) is
     given, detection is confined to the track. A square+fill shape gate keeps
     the fish sprites and rejects the tan-scenery edges / score-text glyphs that
     share the warm hues (#63). Empty list when nothing matches.
 
+    A mine's bright ORANGE core reads as an 'eel' (#63). Pass `mines`
+    (find_mines output) — or leave None to detect them here — and any fish blob
+    centred inside a mine is dropped, so mine cores aren't mislabelled fish.
+
     Megalodon detection is OFF by default — its red hue is shared by the mine
     cores and the (always-present) red bobber, so routine detection is just
     noise; it's a rare trophy. Enable include_megalodon once a real one can be
     distinguished (e.g. by size)."""
+    if mines is None:
+        mines = find_mines(frame, bar=bar)
     hsv = _to_hsv(frame)
     fish: list[dict] = []
     for kind, (low, high) in FISH_HSV.items():
         mask = _restrict(_mask(hsv, low, high), bar)
         for x, y in _blob_centroids(mask, min_area, FISH_ASPECT_RANGE, FISH_MIN_FILL):
+            # Only the WARM eel collides with a mine's orange core; a green/squid/
+            # whale inside a mine is a real fish sitting ON it (catchable), keep it.
+            if kind == "eel" and _in_a_mine(x, y, mines):
+                continue          # mine's orange core, not an eel (#63)
             fish.append({"x": x, "y": y, "kind": kind})
     if include_megalodon:
         meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
         for x, y in _blob_centroids(_restrict(meg, bar), min_area,
                                     FISH_ASPECT_RANGE, FISH_MIN_FILL):
+            if _in_a_mine(x, y, mines):
+                continue          # mine's red core, not a megalodon
             fish.append({"x": x, "y": y, "kind": "megalodon"})
     return fish
 
 
-def find_mines(frame: np.ndarray, min_area: int = MIN_BLOB_AREA,
+def find_mines(frame: np.ndarray,
                bar: tuple[int, int, int, int] | None = None) -> list[dict]:
-    """Detected mines as dicts {x, y}. Mines never end the game if you land
-    on a fish (wiki), but landing on a mine-only spot does — so the bot
-    avoids casting where only a mine sits. Confined to the bar when given."""
+    """Detected mines as dicts {x, y, bbox=(x,y,w,h)}. A mine is a large
+    saturated red/orange blob (the spiky ball + core), distinct from the ~17px
+    fish and the dull tan scenery. Confined to the bar when given. The bbox lets
+    find_fish drop a mine's orange core, which else reads as an 'eel' (#63).
+
+    Mines never end the game if you land on a fish (wiki), but a mine-only spot
+    does — so the bot avoids casting where only a mine sits."""
     hsv = _to_hsv(frame)
-    return [{"x": x, "y": y}
-            for x, y in _blob_centroids(_restrict(_mask(hsv, *MINE_HSV), bar), min_area)]
+    red = cv2.bitwise_or(_mask(hsv, *MINE_RED_LOW), _mask(hsv, *MINE_RED_HIGH))
+    red = _restrict(red, bar)
+    # bridge the gaps between the spikes so the ball is one contour
+    red = cv2.morphologyEx(red, cv2.MORPH_CLOSE, np.ones((7, 7), np.uint8))
+    contours, _ = cv2.findContours(red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out: list[dict] = []
+    for c in contours:
+        if cv2.contourArea(c) < MINE_MIN_AREA:
+            continue
+        x, y, w, h = cv2.boundingRect(c)
+        if not (MINE_MIN_WIDTH <= w <= MINE_MAX_WIDTH):
+            continue
+        if not (MINE_ASPECT[0] <= w / max(1, h) <= MINE_ASPECT[1]):
+            continue
+        out.append({"x": x + w // 2, "y": y + h // 2, "bbox": (x, y, w, h)})
+    return out
+
+
+def _in_a_mine(x: int, y: int, mines: list[dict], pad: int = 5) -> bool:
+    """Whether (x, y) falls inside any detected mine's bbox (padded). Used to
+    drop a mine's orange core from fish detection (it else reads as an eel)."""
+    for m in mines:
+        mx, my, mw, mh = m["bbox"]
+        if mx - pad <= x <= mx + mw + pad and my - pad <= y <= my + mh + pad:
+            return True
+    return False
 
 
 def kind_at(frame: np.ndarray, x: int, y: int, radius: int = 12) -> str | None:
