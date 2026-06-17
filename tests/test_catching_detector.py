@@ -5,9 +5,10 @@ The calibrated thresholds are validated against real observe frames
 manually; these guard the detection LOGIC: blob-based fly, and the
 tall-narrow aspect filter that isolates the hoop from the wide desert/HUD.
 """
+import cv2
 import numpy as np
 
-from minigames.catching.detector import find_fly, find_next_gap
+from minigames.catching.detector import find_fly, find_next_gap, find_play_button, ASSETS
 
 
 def _sky(h=183, w=400):
@@ -83,3 +84,24 @@ def test_find_next_gap_none_without_fly():
     img = _sky()
     _orange_rect(img, 200, 60, 20, 60)
     assert find_next_gap(img, fly_pos=None) is None
+
+
+# ---- find_play_button (auto-start) ---------------------------------------
+
+def test_find_play_button_matches_pasted_template():
+    tpl = cv2.imread(str(ASSETS / "play_button.png"))  # BGR (the real template)
+    assert tpl is not None, "play_button.png template missing"
+    th, tw = tpl.shape[:2]
+    img = np.full((300, 959, 4), 200, np.uint8)
+    img[:, :, 3] = 255
+    y, x = 131, 600
+    img[y:y + th, x:x + tw, :3] = tpl
+    pos = find_play_button(img)
+    assert pos is not None
+    assert abs(pos[0] - (x + tw // 2)) <= 4 and abs(pos[1] - (y + th // 2)) <= 4
+
+
+def test_find_play_button_none_when_absent():
+    img = np.full((300, 959, 4), 200, np.uint8)
+    img[:, :, 3] = 255
+    assert find_play_button(img) is None
