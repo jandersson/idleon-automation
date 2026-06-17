@@ -686,6 +686,7 @@ def _log_shot_result(
     hoop_x: int | None = None,
     prompt_disappeared: bool = False,
     prompt_visible_before: bool = False,
+    oval_active: bool = False,
 ) -> tuple[bool | None, float | None, int | None]:
     """Print the score diff line and update stats. Returns
     (changed, diff, computed_increment) or (None, None, None) if either
@@ -741,7 +742,14 @@ def _log_shot_result(
     # bank shots come down further off-center than TRAJECTORY_MAKE_TOLERANCE
     # allows, or when ball_x_at_rim measured the upward crossing
     # (overshoot pattern from issue #17 prereqs).
-    changed = plausible_inc and (trajectory_plausible or prompt_disappeared)
+    #
+    # `oval_active` also overrides the trajectory check (#59): in the
+    # 20-make oval phase the platform launches the ball from a shifted x,
+    # so ball_x_at_rim is legitimately far from hoop_x even on makes — the
+    # fixed-x trajectory check then vetoes real makes (session 03:01:28:
+    # shots 19/20 scored 20->21->22 but were logged as misses). The score
+    # OCR is reliable there, so a clean +1/+2 increment IS the make signal.
+    changed = plausible_inc and (trajectory_plausible or prompt_disappeared or oval_active)
 
     # Always advance the session score anchor when sa is higher — even if
     # the per-shot increment is too big to attribute to this single shot.
@@ -754,7 +762,9 @@ def _log_shot_result(
     stats["attempts"] += 1
     if changed:
         stats["makes"] += 1
-        if prompt_disappeared and not trajectory_plausible:
+        if oval_active and not trajectory_plausible:
+            label = f"MAKE (+{inferred_increment}) [oval — score increment accepted]"
+        elif prompt_disappeared and not trajectory_plausible:
             label = f"MAKE (+{inferred_increment}) [prompt cleared — bank shot accepted]"
         else:
             label = f"MAKE (+{inferred_increment})"
@@ -1184,6 +1194,11 @@ def _record_shot_outcome(
         except Exception as e:
             print(f"  [trajectory] analysis failed (non-fatal): {e}")
     anchor_before = shot_stats.get("session_score", 0)
+    # Oval phase (#59): in the 20-make oval the ball launches from a shifted
+    # x, so the fixed-x trajectory check would veto real makes — let
+    # _log_shot_result trust the score increment there. Computed once and
+    # reused for the logged oval_active column below.
+    oval_active_value = _oval_active(range_samples)
     made, score_diff, score_increment = _log_shot_result(
         shot_stats, shot.score_before, score_after,
         score_before_int=score_before_int,
@@ -1192,6 +1207,7 @@ def _record_shot_outcome(
         hoop_x=shot.hoop_x,
         prompt_disappeared=prompt_disappeared,
         prompt_visible_before=shot.prompt_visible_before,
+        oval_active=oval_active_value,
     )
     # Clean-make filter for predictor training — see _classify_clean_make.
     # The prompt-disappeared signal deliberately plays no role here: it
@@ -1224,10 +1240,10 @@ def _record_shot_outcome(
     # sample that triggered the shot, so the window ends exactly at fire
     # time.
     platform_vy_value = _platform_velocity(list(range_samples))
-    # Horizontal velocity + oval-phase flag (#59): ~0/0 during the normal
-    # fixed-x bob, populated once the platform traces the post-20-make oval.
+    # Horizontal velocity (#59): ~0 during the normal fixed-x bob, populated
+    # once the platform traces the post-20-make oval. oval_active_value was
+    # computed above (it also gates the make-detection trajectory bypass).
     platform_vx_value = _platform_velocity_x(list(range_samples))
-    oval_active_value = _oval_active(range_samples)
     shot_row_id = log_shot(
         shot_db,
         session_started=session_started,

@@ -1,11 +1,22 @@
 """Tests for the hoops 20-make oval-phase helpers (#59) — pure logic."""
+import numpy as np
+
 from minigames.hoops.main import (
     OVAL_X_RANGE_PX,
     _platform_velocity_x,
     _platform_x_range,
     _platform_recently_moving,
     _oval_active,
+    _log_shot_result,
 )
+
+
+def _score_crop(cols):
+    """A tiny score-region crop with a mark in `cols` (so score_changed sees
+    a real, non-degenerate image)."""
+    a = np.zeros((10, 40), np.uint8)
+    a[2:7, cols[0]:cols[1]] = 200
+    return a
 
 
 def _samples(px_fn, py=400, n=11, dt=0.1):
@@ -76,3 +87,24 @@ def test_recently_moving_true_during_live_oval():
     # Continuous oval motion -> recent window always shows movement.
     s = _samples(lambda i: 86 + (i % 11) * 10, n=50)
     assert _platform_recently_moving(s) is True
+
+
+def test_oval_make_detection_trusts_score_increment():
+    # Oval make: score 20 -> 21 (+1), but the ball launched from the shifted
+    # oval x so ball_x_at_rim (300) is far from hoop_x (136) -> the fixed-x
+    # trajectory check would veto it. Without oval_active it's a miss; with
+    # oval_active the clean +1 increment is trusted as the make.
+    common = dict(
+        score_before_int=None, score_after_int=21,
+        ball_x_at_rim=300, hoop_x=136,
+    )
+    before, after = _score_crop((3, 8)), _score_crop((20, 26))
+
+    s_off = {"session_score": 20, "makes": 0, "attempts": 0}
+    changed_off, _, inc_off = _log_shot_result(s_off, before, after, oval_active=False, **common)
+    assert changed_off is False and s_off["makes"] == 0
+    assert inc_off == 1  # the increment was read; it was just vetoed
+
+    s_on = {"session_score": 20, "makes": 0, "attempts": 0}
+    changed_on, _, _ = _log_shot_result(s_on, before, after, oval_active=True, **common)
+    assert changed_on is True and s_on["makes"] == 1
