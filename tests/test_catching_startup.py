@@ -12,6 +12,7 @@ from collections import deque
 
 from minigames.catching.main import (
     fly_started_moving,
+    timed_flap_due,
     START_MOTION_RANGE_PX,
     _anchored_play_region,
     ANCHOR_PLAY_HALF_W,
@@ -75,3 +76,27 @@ def test_anchored_region_clamps_bottom_and_right():
     assert r["left"] + r["width"] <= 959
     assert r["top"] + r["height"] <= 572
     assert r["width"] > 0 and r["height"] > 0
+
+
+# --- timed_flap_due (phase-timing, #60) -------------------------------------
+
+def test_timed_flap_due_fires_when_near_and_low():
+    # leading edge 30px ahead (within LEAD_DIST), avatar below the hoop centre.
+    assert timed_flap_due(fly_x=256, fly_y=100, gap_left_x=286, gap_center_y=80) is True
+
+
+def test_timed_flap_not_due_when_hoop_far():
+    assert timed_flap_due(fly_x=256, fly_y=100, gap_left_x=356, gap_center_y=80) is False
+
+
+def test_timed_flap_not_due_when_avatar_high():
+    # avatar above the centre (smaller y) — a flap there over-lifts; wait.
+    assert timed_flap_due(fly_x=256, fly_y=60, gap_left_x=286, gap_center_y=80) is False
+
+
+def test_timed_flap_not_due_after_leading_edge_passes():
+    assert timed_flap_due(fly_x=256, fly_y=100, gap_left_x=250, gap_center_y=80) is False
+
+
+def test_timed_flap_due_none_gap():
+    assert timed_flap_due(256, 100, None, None) is False

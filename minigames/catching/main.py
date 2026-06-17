@@ -65,6 +65,18 @@ FLAP_MARGIN = 6
 # the rate-limit sag. Visual-tune: clips top -> raise; clips bottom -> lower.
 FLAP_CENTER_DROP_PX = 12
 
+# Phase-timing (#60). The avatar's bob is ~55px peak-to-peak (measured from
+# the saved frames) — bigger than the ring's passable hole — so it can't hover
+# THROUGH a ring; it has to COAST through, timed so its slow descent lines up
+# with the crossing. When a hoop's leading edge gets within LEAD_DIST_PX of the
+# avatar AND the avatar is low in its bob (so a flap lifts it), fire ONE timed
+# flap; then suppress hover flaps for COAST_S while it descends through the
+# hole, flapping only to stay off the bottom ring edge. Provisional — these
+# set the bob phase vs the crossing, so they're the knobs to visual-tune.
+LEAD_DIST_PX = 45
+COAST_S = 0.5
+COAST_RESCUE_PX = 6
+
 # Min seconds between flaps — caps the flap rate, which sets the avatar's max
 # reachable height (it flaps to rise, gravity pulls between flaps). History:
 # 0.12 left it stuck low; 0.08 lifted it but the first ring-threading run
@@ -176,6 +188,18 @@ def _env_flag(name: str) -> bool:
     """Truthy env var? Lets the launcher GUI (which passes per-bot options as
     env vars, not CLI args) enable flags that the terminal sets via argparse."""
     return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def timed_flap_due(fly_x, fly_y, gap_left_x, gap_center_y, lead_dist_px=LEAD_DIST_PX) -> bool:
+    """Fire the phase-timed flap: the hoop's leading edge is within
+    lead_dist_px of the avatar AND the avatar is at/below the hoop centre (low
+    in its bob), so the flap lifts it into the slow descent that carries it
+    through the hole as the hoop crosses. False with no hoop or while the
+    avatar is already high (a flap there would over-lift past the ring)."""
+    if gap_left_x is None or gap_center_y is None:
+        return False
+    dist = gap_left_x - fly_x
+    return 0 < dist <= lead_dist_px and fly_y >= gap_center_y
 
 
 def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
@@ -294,6 +318,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     last_score_sample = 0.0   # wall-clock of the last throttled score read
     last_score = None         # most recent PTS read, logged per flap
     last_gap_center = None     # last detected hoop centre; held over detection gaps
+    coast_until = 0.0          # suppress hover flaps until here (timed coast through a hole)
     recent_fly_y: deque[int] = deque(maxlen=START_MOTION_FRAMES)  # for the start-motion gate
     while True:
         check_failsafe()
@@ -431,9 +456,22 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         else:
             target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
 
-        # Flap when the avatar has fallen below the (below-centre) trigger,
-        # rate-limited so it can't ceiling-slam.
-        if fly_y > target_y + FLAP_MARGIN and now - last_click_time >= MIN_CLICK_INTERVAL:
+        # Flap policy (#60). The bob is bigger than the hole, so coast THROUGH a
+        # ring rather than hover: when a hoop's leading edge nears and the avatar
+        # is low in its bob, fire ONE timed flap, then suppress hover flaps for
+        # COAST_S so the slow descent carries it through the hole (flapping only
+        # to stay off the bottom edge). Between rings, hover the centred bob.
+        if timed_flap_due(fly_x, fly_y, gap_left_x, detected_center) and now >= coast_until:
+            do_flap, where = True, "timed"
+            coast_until = now + COAST_S
+        elif now < coast_until:
+            floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
+                else (play_region["height"] - 25)
+            do_flap, where = fly_y > floor, "coast"
+        else:
+            do_flap = fly_y > target_y + FLAP_MARGIN
+            where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
+        if do_flap and now - last_click_time >= MIN_CLICK_INTERVAL:
             # Fire immediately on the decision (the fly is still falling) —
             # the hoops/darts click-timing rule; bookkeeping runs after.
             clicked_at = datetime.now().isoformat(timespec="milliseconds")
@@ -442,7 +480,6 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             click(win_left + cx, win_top + cy)
             last_click_time = time.time()
             stats["n_flaps"] += 1
-            where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
             print(f"fly y={fly_y} vy={fly_vy} target={target_y} {where} — flap #{stats['n_flaps']}")
             log_flap(
                 db,
