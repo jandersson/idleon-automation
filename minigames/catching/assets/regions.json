@@ -4,5 +4,11 @@
     "top_frac": 0.0,
     "width_frac": 1.0,
     "height_frac": 0.32
+  },
+  "score": {
+    "left_frac": 0.5755995828988529,
+    "top_frac": 0.32867132867132864,
+    "width_frac": 0.13764337851929093,
+    "height_frac": 0.038461538461538464
   }
 }

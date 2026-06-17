@@ -68,7 +68,9 @@ MINIGAMES = [
             ("Observe (you play)", "catching-observe"),
             ("Capture", "catching-capture"),
             ("Pick play region", "catching-pick-play-region"),
+            ("Pick score region", "catching-pick-score-region"),
             ("Extract fly", "catching-extract-fly"),
+            ("Capture digits", "catching-capture-digits"),
         ],
     },
     {
