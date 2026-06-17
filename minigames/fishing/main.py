@@ -57,20 +57,27 @@ POLL_INTERVAL = 0.05
 # hold->distance curve until the cast model is fitted. PLACEHOLDER bounds —
 # widen/narrow once a real cast's hold-to-reach is observed.
 EXPLORE_HOLD_MIN_MS = 150
-EXPLORE_HOLD_MAX_MS = 1200
+# Holds beyond ~850ms overshoot the bar — the lure lands off the play-region
+# crop and find_lure never sees it (NA), wasting the cast. The bar's far end
+# is reached around here (max-x ~256 at hold ~730), so cap exploration to the
+# measurable in-bar range.
+EXPLORE_HOLD_MAX_MS = 850
 # Fire an exploration cast every Nth cast even after the model is fitted,
 # so the hold->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
 EXPLORE_EVERY_N = 10
 
-# Landing measurement: poll find_lure after a cast and STOP as soon as the
-# bobber settles (two consecutive detections within LANDING_STABLE_PX) — that
-# settled spot is the landing. Early-exit keeps the grab count (and thus the
-# screen-capture load that lags the game — each grab is ~13ms) low: a ~0.6s
-# flight exits in ~6 grabs, not the full window's worth. CAST_SETTLE_S is just
-# the cap for casts that never settle in-region (landed off the bar).
+# Landing measurement: the lure REELS IN after landing (the bobber's x
+# decreases poll-to-poll until it vanishes — confirmed in the --save-frames
+# trajectories, e.g. 161->126->62->15->gone). So the landing is the FARTHEST x
+# the bobber reaches (max x), NOT the last/settled read (that's the retraction
+# endpoint — the bug behind the same hold "landing" at 256 and 27). Poll,
+# track the max x, and early-exit once the bobber retracts past it
+# (x < max - LANDING_RETRACT_PX) or vanishes after being seen — keeping the
+# grab count (screen-capture lag) low. CAST_SETTLE_S caps the wait (the lure
+# arcs high / off-crop before landing on long casts).
 CAST_SETTLE_S = 1.6
 LANDING_POLL_S = 0.1
-LANDING_STABLE_PX = 6   # consecutive find_lure x within this = settled (landed)
+LANDING_RETRACT_PX = 25   # x dropped this far below the max = reeling in (landed)
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -99,8 +106,8 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
     When frames_dir is set (--save-frames), every poll frame is saved with the
     find_lure x (or NA) in the name — for debugging which moment the landing
     read latches onto (the same hold landing at wildly different x, #58)."""
-    prev = None
-    last, last_frame = None, None
+    best, best_frame = None, None   # (x, y) at the FARTHEST x = the landing
+    seen = False
     deadline = time.time() + settle_s
     j = 0
     while time.time() < deadline:
@@ -114,12 +121,15 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
             save_frame(frames_dir / f"cast{cast_idx:02d}_p{j:02d}_x{lx}.png", post)
         j += 1
         if lure is not None:
-            if prev is not None and abs(lure[0] - prev[0]) <= LANDING_STABLE_PX:
-                return lure, post          # settled -> landed; stop polling
-            prev = lure
-            last, last_frame = lure, post
+            seen = True
+            if best is None or lure[0] > best[0]:
+                best, best_frame = lure, post          # new farthest = landing
+            elif lure[0] < best[0] - LANDING_RETRACT_PX:
+                break              # reeling in past the landing -> done
+        elif seen:
+            break                  # bobber vanished after landing -> done
         time.sleep(poll_s)
-    return last, last_frame
+    return best, best_frame
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
