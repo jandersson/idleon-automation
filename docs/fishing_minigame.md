@@ -229,6 +229,40 @@ data to switch back already exists: `hold → charge` was near-linear up to the
 cap (run 7), so an open-loop `hold_for_charge` calibration is a drop-in. The
 charge→distance model is mechanism-independent and stays either way.
 
+## Correction: the charge bar is a thermometer LEFT of the cast bar (2026-06-17, runs 8–10)
+
+The first three closed-loop live runs (8, 9, 10) cast **0 times** — every poll
+read charge 0 and aborted, yet the bot visibly max-charged and flung the lure
+(the abort's `mouseUp` after the hold *is* a cast). Three things were wrong in
+the original model above, corrected here:
+
+- **The mechanic is release-TIMING, not hold-duration.** The charge bar
+  **oscillates** while held — up to max, back down, back up (player-reported,
+  confirmed by the fill ramp). Open-loop run 7 worked only because its holds
+  (500–780 ms) all landed on the **first up-sweep** (monotonic 0→max, peaking
+  ~780 ms); hold 859 → 294 < the 301 peak was the start of the down-sweep. So
+  "hold→distance clean" was just the first up-sweep.
+- **`find_charge_level` read the wrong thing.** It reads red rows at x<10 of the
+  *play crop*. The real meter is a **vertical red thermometer ~48px LEFT of the
+  cast bar** (full-window x386–412, y170–252 with the cast bar at (434,233)),
+  filling bottom-up. The play crop starts at window x432, so the thermometer is
+  **off its left edge** — x<10 never sees it live. The run-7 "charge→distance"
+  signal was a *post-release* left-edge bar that the player's position happened
+  to put in-crop; during the hold there's nothing at x<10. The clean
+  `landed_x ≈ 5.0·charge` was real numbers but a post-release proxy for the same
+  hold-driven distance, not a live signal.
+- **The capture was never stale.** A hold's 16 full-window frames are all unique
+  (frame-to-frame diffs 200k–2M); the bar simply wasn't in the captured crop.
+
+Fix (`find_charge_fill`, commit reading the thermometer): grab the **full
+window** each poll and read the thermometer's red-fill height anchored to the
+detected cast bar (`CHARGE_BAR_DX/DY` offsets, tuned on run-10 frames →
+empty=0, full=56, clean monotonic ramp). The closed loop releases at a target
+fill on the up-sweep — the right control for a timing game. `find_charge_level`
+is kept for the post-release read / back-compat. The fill→distance model still
+needs fresh data: runs 8–10 logged no real casts, so the bot explores target
+fills and logs `(charge_level=fill_at_release, landed_dist)` until it fits.
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
