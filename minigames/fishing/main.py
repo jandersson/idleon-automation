@@ -15,6 +15,8 @@ hold<->distance cast model — can be measured, and the #63 detection refinement
 (eel/megalodon over-detect on score text / mine cores) so target selection is
 reliable. Until the model fits the bot casts random holds and logs them.
 """
+import argparse
+import os
 import random
 import sys
 import time
@@ -24,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
+from common.monitor import save_frame
 from common.input import hold, click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
@@ -84,22 +87,32 @@ MAX_START_ATTEMPTS = 3
 BAR_GONE_GAMEOVER_S = 3.0
 
 
-def _measure_landing(win_left, win_top, play, settle_s, poll_s):
+def _measure_landing(win_left, win_top, play, settle_s, poll_s,
+                     frames_dir=None, cast_idx=0):
     """Poll find_lure after a cast and return (landed (x, y), frame) once the
     bobber SETTLES — two consecutive detections within LANDING_STABLE_PX, i.e.
     it has stopped on the bar. Exits early (mid-flight the bobber moves fast,
     so it doesn't trigger), keeping the grab count low. Falls back to the last
     detection if it never settles within settle_s; (None, None) if never seen
-    (cast landed off the play region)."""
+    (cast landed off the play region).
+
+    When frames_dir is set (--save-frames), every poll frame is saved with the
+    find_lure x (or NA) in the name — for debugging which moment the landing
+    read latches onto (the same hold landing at wildly different x, #58)."""
     prev = None
     last, last_frame = None, None
     deadline = time.time() + settle_s
+    j = 0
     while time.time() < deadline:
         post = grab_region(
             win_left + play["left"], win_top + play["top"],
             play["width"], play["height"],
         )
         lure = find_lure(post)
+        if frames_dir is not None:
+            lx = lure[0] if lure is not None else "NA"
+            save_frame(frames_dir / f"cast{cast_idx:02d}_p{j:02d}_x{lx}.png", post)
+        j += 1
         if lure is not None:
             if prev is not None and abs(lure[0] - prev[0]) <= LANDING_STABLE_PX:
                 return lure, post          # settled -> landed; stop polling
@@ -122,6 +135,16 @@ def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tu
 
 
 def run():
+    parser = argparse.ArgumentParser(description="Fishing minigame bot")
+    parser.add_argument(
+        "--save-frames", action="store_true",
+        help="Save each cast's landing-poll frames to assets/captures/"
+             "botrun_<stamp>/ (gitignored), named with the find_lure x — to "
+             "debug landing detection (the launcher's toggle sets "
+             "FISHING_SAVE_FRAMES).")
+    args = parser.parse_args()
+    save_frames = args.save_frames or os.environ.get(
+        "FISHING_SAVE_FRAMES", "").strip().lower() in ("1", "on", "true", "yes")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -148,7 +171,8 @@ def run():
         stats = {"n_casts": 0, "points_total": 0, "max_streak": 0,
                  "end_reason": "process_exit"}
         try:
-            _run_inner(session_started, db, code_commit, model, stats)
+            _run_inner(session_started, db, code_commit, model, stats,
+                       save_frames=save_frames)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
@@ -176,10 +200,17 @@ def run():
             )
 
 
-def _run_inner(session_started, db, code_commit, model, stats):
+def _run_inner(session_started, db, code_commit, model, stats, save_frames=False):
     print(f"Fishing bot starting — tracking window {WINDOW_TITLE!r}. "
           f"Move mouse to a corner to abort.")
     time.sleep(2)
+
+    frames_dir = None
+    if save_frames:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        frames_dir = _HERE / "assets" / "captures" / f"botrun_{stamp}"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving cast frames to {frames_dir} (--save-frames)")
 
     game_running = False        # confirmed active: the cast bar is present
     start_attempts = 0          # consecutive PLAY GAME clicks with no game started
@@ -326,7 +357,8 @@ def _run_inner(session_started, db, code_commit, model, stats):
         # (a single grab missed it mid-arc). Returns the landed position + the
         # frame, so kind_at classifies what it landed on.
         lure, post = _measure_landing(win_left, win_top, play,
-                                      CAST_SETTLE_S, LANDING_POLL_S)
+                                      CAST_SETTLE_S, LANDING_POLL_S,
+                                      frames_dir, stats["n_casts"])
         if lure is not None:
             landed_x, landed_y = lure
             landed_kind = kind_at(post, landed_x, landed_y)

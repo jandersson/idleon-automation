@@ -126,5 +126,16 @@ MINIGAMES = [
             ("Pick play region", "fishing-pick-play-region"),
             ("Calibrate", "fishing-calibrate"),
         ],
+        "bot_options": [
+            {
+                # Saves each cast's landing-poll frames to assets/captures/
+                # botrun_<stamp>/ (gitignored), named with the find_lure x —
+                # to debug landing detection. Sets FISHING_SAVE_FRAMES.
+                "label": "Save frames",
+                "env": "FISHING_SAVE_FRAMES",
+                "values": ["on", "off"],
+                "default": "off",
+            },
+        ],
     },
 ]
