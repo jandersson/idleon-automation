@@ -65,6 +65,14 @@ FLAP_MARGIN = 6
 # the rate-limit sag. Visual-tune: clips top -> raise; clips bottom -> lower.
 FLAP_CENTER_DROP_PX = 12
 
+# Smooth the detected hoop centre across frames. The orange HSV bbox jitters a
+# few px frame-to-frame, and with only ~6px of slack between the fixed bob and
+# the ring opening, a jumpy aim is what clips (run 9: the third hoop's centre
+# read 89->83->82 as it crossed and the avatar struck). EMA the centre; reset
+# on a big jump (= a new, differently-placed hoop) so two hoops aren't blended.
+GAP_SMOOTH_ALPHA = 0.4
+GAP_JUMP_PX = 20
+
 # Min seconds between flaps — caps the flap rate, which sets the avatar's max
 # reachable height (it flaps to rise, gravity pulls between flaps). History:
 # 0.12 left it stuck low; 0.08 lifted it but the first ring-threading run
@@ -176,6 +184,17 @@ def _env_flag(name: str) -> bool:
     """Truthy env var? Lets the launcher GUI (which passes per-bot options as
     env vars, not CLI args) enable flags that the terminal sets via argparse."""
     return os.environ.get(name, "").strip().lower() in ("1", "on", "true", "yes")
+
+
+def smooth_gap_center(prev_smoothed, raw_center, alpha=GAP_SMOOTH_ALPHA, jump_px=GAP_JUMP_PX):
+    """EMA-smooth the hoop's vertical centre across frames so a noisy bbox
+    doesn't jitter the aim. Reset to the raw value on the first reading or a
+    jump larger than jump_px (a new, differently-placed hoop), so two hoops at
+    different heights aren't blended into a wrong aim. Returns the new float
+    centre."""
+    if prev_smoothed is None or abs(raw_center - prev_smoothed) > jump_px:
+        return float(raw_center)
+    return prev_smoothed + alpha * (raw_center - prev_smoothed)
 
 
 def fly_started_moving(recent_ys, min_range=START_MOTION_RANGE_PX) -> bool:
@@ -293,7 +312,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
     last_score_sample = 0.0   # wall-clock of the last throttled score read
     last_score = None         # most recent PTS read, logged per flap
-    last_gap_center = None     # last detected hoop centre; held over detection gaps
+    gap_center_s = None        # EMA-smoothed hoop centre; held over detection gaps
     recent_fly_y: deque[int] = deque(maxlen=START_MOTION_FRAMES)  # for the start-motion gate
     while True:
         check_failsafe()
@@ -417,15 +436,14 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         # only until the first hoop is seen.
         if gap is not None:
             gap_top, gap_bottom, gap_left_x, gap_right_x = gap
-            detected_center = (gap_top + gap_bottom) // 2
-            last_gap_center = detected_center
+            raw_center = (gap_top + gap_bottom) // 2
+            gap_center_s = smooth_gap_center(gap_center_s, raw_center)
         else:
-            gap_top = gap_bottom = gap_left_x = gap_right_x = None
-            detected_center = None
-        # Trigger the flap FLAP_CENTER_DROP_PX below the hoop centre so the bob
-        # centres on the opening, holding the last centre over detection gaps;
-        # default only until the first hoop is seen.
-        aim = detected_center if detected_center is not None else last_gap_center
+            gap_top = gap_bottom = gap_left_x = gap_right_x = raw_center = None
+        # Trigger the flap FLAP_CENTER_DROP_PX below the SMOOTHED hoop centre so
+        # the bob centres on the opening with a steady aim, holding the smoothed
+        # centre over detection gaps; default only until the first hoop.
+        aim = int(round(gap_center_s)) if gap_center_s is not None else None
         if aim is not None:
             target_y = aim + FLAP_CENTER_DROP_PX
         else:
@@ -457,7 +475,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
                 gap_bottom=gap_bottom,
                 gap_left_x=gap_left_x,
                 gap_right_x=gap_right_x,
-                gap_center=detected_center,
+                gap_center=raw_center,
                 gap_height=(gap_bottom - gap_top) if gap is not None else None,
                 fly_offset_below_gap=(fly_y - gap_bottom) if gap is not None else None,
                 gap_lower_margin=FLAP_MARGIN,

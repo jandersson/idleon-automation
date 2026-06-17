@@ -12,6 +12,7 @@ from collections import deque
 
 from minigames.catching.main import (
     fly_started_moving,
+    smooth_gap_center,
     START_MOTION_RANGE_PX,
     _anchored_play_region,
     ANCHOR_PLAY_HALF_W,
@@ -75,3 +76,28 @@ def test_anchored_region_clamps_bottom_and_right():
     assert r["left"] + r["width"] <= 959
     assert r["top"] + r["height"] <= 572
     assert r["width"] > 0 and r["height"] > 0
+
+
+# --- smooth_gap_center (steady aim, #60) ------------------------------------
+
+def test_smooth_gap_center_first_reading_is_raw():
+    assert smooth_gap_center(None, 80) == 80.0
+
+
+def test_smooth_gap_center_emas_close_readings():
+    # prev 80, raw 90, alpha 0.4 -> 80 + 0.4*10 = 84
+    assert smooth_gap_center(80.0, 90, alpha=0.4, jump_px=20) == 84.0
+
+
+def test_smooth_gap_center_resets_on_big_jump():
+    # a jump > jump_px is a new hoop at a different height -> snap to it.
+    assert smooth_gap_center(80.0, 120, alpha=0.4, jump_px=20) == 120.0
+
+
+def test_smooth_gap_center_damps_jitter():
+    # the run-9 third-hoop sequence that jerked the aim and clipped: smoothed,
+    # the aim stays steady near the true centre instead of swinging.
+    s = None
+    for raw in [87, 89, 83, 82, 81, 82]:
+        s = smooth_gap_center(s, raw, alpha=0.4, jump_px=20)
+    assert 82 <= s <= 86
