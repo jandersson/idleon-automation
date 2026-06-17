@@ -23,20 +23,28 @@ REPO_ROOT = _HERE.parent.parent
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.02
 
-# Click vertical strategy: if the fly's projected Y after the next click delay
-# exceeds GAP_LOWER_MARGIN px past the gap's bottom, fire a click to gain
-# altitude. Tune empirically once we see real flight physics.
-GAP_LOWER_MARGIN = 8
+# Flap policy. Aim the fly at the next hoop's CENTRE when one is visible,
+# else hover at this fraction of the play-region height so it never
+# free-falls between hoops (the old policy only flapped near a detected
+# hoop's bottom and did nothing without one — the fly sank and died).
+# From the observe frames the fly/hoop sit around mid-height.
+DEFAULT_HOVER_FRAC = 0.5
+# Flap once the fly has fallen this many px BELOW the target (screen y grows
+# downward). A small deadband so it oscillates around the target.
+FLAP_MARGIN = 6
 
-# Cooldown between consecutive clicks (avoids click-spamming if our model
-# overestimates how fast the fly is dropping).
-MIN_CLICK_INTERVAL = 0.05
+# Min seconds between flaps — caps the flap rate so a run of below-target
+# polls doesn't burst the fly into the ceiling. PROVISIONAL; needs live
+# tuning against real flight physics (the DB logs fly_y/vy per flap).
+MIN_CLICK_INTERVAL = 0.12
 
 # Auto-start (#47): when no fly is on screen the bot is at the entry prompt
 # between attempts, so it clicks the "PLAY GAME" button to start the next
-# play and keeps going until the daily plays run out. START_WAIT_S gives
-# the minigame time to load (the fly to appear) after the click.
-START_WAIT_S = 2.5
+# play and keeps going until the daily plays run out. After a click, poll
+# for the fly for up to this long WITHOUT re-clicking or re-matching the
+# button — the fly needs flapping the instant it appears, so we must NOT
+# sleep through the load (a fixed sleep let it free-fall and die).
+START_CLICK_COOLDOWN_S = 2.0
 # Stop after this many PLAY-GAME clicks in a row that don't produce a fly —
 # the plays are exhausted (the button still renders but no game starts), or
 # the bot is stuck. Resets whenever a play actually starts (a fly appears).
@@ -106,6 +114,7 @@ def _run_inner(session_started, db, code_commit, stats):
     last_fly_time = 0.0       # wall-clock of the last fly detection (game-over bail)
     first_fly_seen = False    # don't bail before the minigame has started
     start_attempts = 0        # consecutive PLAY-GAME clicks with no game starting
+    last_start_click = 0.0    # wall-clock of the last PLAY GAME click
     while True:
         check_failsafe()
         try:
@@ -129,9 +138,16 @@ def _run_inner(session_started, db, code_commit, stats):
         )
         fly_pos = find_fly(frame)
         if fly_pos is None:
-            # No fly = not in an active game. Click PLAY GAME to start the
-            # next play. The prompt is anchored to the player, so search the
-            # FULL window (not the play-region crop) for the button.
+            # Just clicked PLAY GAME — the game is loading. Poll fast for the
+            # fly (cheap, on the small play crop) WITHOUT re-clicking or the
+            # expensive button match, so we start flapping the instant it
+            # appears instead of sleeping through the fall.
+            if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
+                time.sleep(POLL_INTERVAL)
+                continue
+            # Not loading and no fly = at the entry prompt. Click PLAY GAME to
+            # start the next play. The prompt is anchored to the player, so
+            # search the FULL window for the button.
             full = grab_region(win_left, win_top, win_w, win_h)
             btn = find_play_button(full)
             if btn is not None:
@@ -143,11 +159,11 @@ def _run_inner(session_started, db, code_commit, stats):
                     return
                 bx, by = btn
                 start_attempts += 1
+                last_start_click = time.time()
+                last_fly_time = time.time()  # don't let the bail fire mid-start
                 print(f"PLAY GAME at ({bx},{by}) — starting play "
                       f"(attempt {start_attempts}/{MAX_START_ATTEMPTS})")
                 click(win_left + bx, win_top + by)
-                last_fly_time = time.time()  # don't let the bail fire mid-start
-                time.sleep(START_WAIT_S)
                 continue
             # No fly AND no button: a long transition, or off the screen.
             if first_fly_seen and time.time() - last_fly_time > NO_FLY_BAIL_S:
@@ -175,54 +191,51 @@ def _run_inner(session_started, db, code_commit, stats):
         prev_fly = (fly_y, now)
 
         gap = find_next_gap(frame, fly_pos)
-        if gap is None:
-            time.sleep(POLL_INTERVAL)
-            continue
-        gap_top, gap_bottom, gap_left_x, gap_right_x = gap
+        # Aim at the next hoop's CENTRE when one is visible; otherwise hover
+        # at a default height so the fly doesn't free-fall between hoops.
+        if gap is not None:
+            gap_top, gap_bottom, gap_left_x, gap_right_x = gap
+            target_y = (gap_top + gap_bottom) // 2
+        else:
+            gap_top = gap_bottom = gap_left_x = gap_right_x = None
+            target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
 
-        # Click if the fly is dropping toward / past the gap's bottom edge.
-        if fly_y > gap_bottom - GAP_LOWER_MARGIN:
-            if now - last_click_time >= MIN_CLICK_INTERVAL:
-                # Fire immediately on the decision. The fly is still falling,
-                # so any pre-click latency (the old random_delay that sat
-                # here) biases the sampled fly_y away from where the flap
-                # lands. Stamp the fire time and click; bookkeeping runs
-                # after — same rule as hoops/darts, see CLAUDE.md "Click
-                # timing".
-                clicked_at = datetime.now().isoformat(timespec="milliseconds")
-                cx = play_region["left"] + play_region["width"] // 2
-                cy = play_region["top"] + play_region["height"] // 2
-                click(win_left + cx, win_top + cy)
-                last_click_time = time.time()
-                stats["n_flaps"] += 1
-                print(f"fly y={fly_y} vy={fly_vy} gap=[{gap_top}..{gap_bottom}] — flap #{stats['n_flaps']}")
-                # Keep this post-click work light: heavy work here delays the
-                # next fly sample (the hoops cc42529 latency regression). One
-                # indexed insert is fine; if it ever isn't, move it after
-                # random_delay.
-                log_flap(
-                    db,
-                    session_started=session_started,
-                    attempt_idx=1,
-                    flap_idx=stats["n_flaps"],
-                    clicked_at=clicked_at,
-                    fly_x=fly_x,
-                    fly_y=fly_y,
-                    fly_vy=fly_vy,
-                    gap_top=gap_top,
-                    gap_bottom=gap_bottom,
-                    gap_left_x=gap_left_x,
-                    gap_right_x=gap_right_x,
-                    gap_center=(gap_top + gap_bottom) // 2,
-                    gap_height=gap_bottom - gap_top,
-                    fly_offset_below_gap=fly_y - gap_bottom,
-                    gap_lower_margin=GAP_LOWER_MARGIN,
-                    window_w=win_w,
-                    window_h=win_h,
-                    code_commit=code_commit,
-                    source="bot",
-                )
-                random_delay(5, 20)
+        # Flap when the fly has fallen below the target (screen y grows
+        # downward), rate-limited so it oscillates rather than ceiling-slams.
+        if fly_y > target_y + FLAP_MARGIN and now - last_click_time >= MIN_CLICK_INTERVAL:
+            # Fire immediately on the decision (the fly is still falling) —
+            # the hoops/darts click-timing rule; bookkeeping runs after.
+            clicked_at = datetime.now().isoformat(timespec="milliseconds")
+            cx = play_region["left"] + play_region["width"] // 2
+            cy = play_region["top"] + play_region["height"] // 2
+            click(win_left + cx, win_top + cy)
+            last_click_time = time.time()
+            stats["n_flaps"] += 1
+            where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
+            print(f"fly y={fly_y} vy={fly_vy} target={target_y} {where} — flap #{stats['n_flaps']}")
+            log_flap(
+                db,
+                session_started=session_started,
+                attempt_idx=1,
+                flap_idx=stats["n_flaps"],
+                clicked_at=clicked_at,
+                fly_x=fly_x,
+                fly_y=fly_y,
+                fly_vy=fly_vy,
+                gap_top=gap_top,
+                gap_bottom=gap_bottom,
+                gap_left_x=gap_left_x,
+                gap_right_x=gap_right_x,
+                gap_center=target_y if gap is not None else None,
+                gap_height=(gap_bottom - gap_top) if gap is not None else None,
+                fly_offset_below_gap=(fly_y - gap_bottom) if gap is not None else None,
+                gap_lower_margin=FLAP_MARGIN,
+                window_w=win_w,
+                window_h=win_h,
+                code_commit=code_commit,
+                source="bot",
+            )
+            random_delay(5, 20)
 
         time.sleep(POLL_INTERVAL)
 
