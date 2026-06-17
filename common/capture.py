@@ -10,9 +10,28 @@ chokepoint — downstream code never sees physical pixels. The scale is
 derived per grab (not hardcoded 2.0) to handle external 1x monitors
 and fractional scaling.
 """
+import threading
+
 import cv2
 import mss
 import numpy as np
+
+# Reuse one mss instance per thread rather than `with mss.mss()` per grab —
+# the documented-efficient pattern (avoids re-opening the display connection
+# each call). mss isn't thread-safe and an instance is bound to its creating
+# thread, so cache it thread-locally (outcome callbacks can grab from worker
+# threads). NOTE: the grab() capture itself is the dominant cost (~13ms here,
+# size-independent), so the real lever against capture-induced game lag is
+# grab FREQUENCY/COUNT, not instance reuse.
+_local = threading.local()
+
+
+def _sct() -> "mss.base.MSSBase":
+    sct = getattr(_local, "sct", None)
+    if sct is None:
+        sct = mss.mss()
+        _local.sct = sct
+    return sct
 
 
 def _normalize_size(frame: np.ndarray, width: int, height: int) -> np.ndarray:
@@ -24,14 +43,13 @@ def _normalize_size(frame: np.ndarray, width: int, height: int) -> np.ndarray:
 
 
 def grab_region(left: int, top: int, width: int, height: int) -> np.ndarray:
-    with mss.mss() as sct:
-        region = {"left": left, "top": top, "width": width, "height": height}
-        frame = sct.grab(region)
-        return _normalize_size(np.array(frame), width, height)
+    region = {"left": left, "top": top, "width": width, "height": height}
+    frame = _sct().grab(region)
+    return _normalize_size(np.array(frame), width, height)
 
 
 def grab_fullscreen() -> np.ndarray:
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]
-        frame = sct.grab(monitor)
-        return _normalize_size(np.array(frame), monitor["width"], monitor["height"])
+    sct = _sct()
+    monitor = sct.monitors[1]
+    frame = sct.grab(monitor)
+    return _normalize_size(np.array(frame), monitor["width"], monitor["height"])

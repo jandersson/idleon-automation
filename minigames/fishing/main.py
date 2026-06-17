@@ -59,12 +59,15 @@ EXPLORE_HOLD_MAX_MS = 1200
 # so the hold->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
 EXPLORE_EVERY_N = 10
 
-# Landing measurement: POLL find_lure over this window after a cast and take
-# the detection lowest on the bar (largest y) as the landing — a single grab
-# at a fixed delay missed the bobber mid-arc (run 2: only 3/24 casts measured).
-# The window must cover the longest cast's flight + settle.
+# Landing measurement: poll find_lure after a cast and STOP as soon as the
+# bobber settles (two consecutive detections within LANDING_STABLE_PX) — that
+# settled spot is the landing. Early-exit keeps the grab count (and thus the
+# screen-capture load that lags the game — each grab is ~13ms) low: a ~0.6s
+# flight exits in ~6 grabs, not the full window's worth. CAST_SETTLE_S is just
+# the cap for casts that never settle in-region (landed off the bar).
 CAST_SETTLE_S = 1.6
 LANDING_POLL_S = 0.1
+LANDING_STABLE_PX = 6   # consecutive find_lure x within this = settled (landed)
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -82,11 +85,14 @@ BAR_GONE_GAMEOVER_S = 3.0
 
 
 def _measure_landing(win_left, win_top, play, settle_s, poll_s):
-    """Poll find_lure over settle_s; return (landed (x, y), the frame it was
-    in) for the LANDED bobber — the detection lowest on the bar (largest y),
-    since mid-flight the bobber arcs high (small y / off the crop). (None,
-    None) if it's never seen (the cast landed off the play region)."""
-    best, best_frame = None, None
+    """Poll find_lure after a cast and return (landed (x, y), frame) once the
+    bobber SETTLES — two consecutive detections within LANDING_STABLE_PX, i.e.
+    it has stopped on the bar. Exits early (mid-flight the bobber moves fast,
+    so it doesn't trigger), keeping the grab count low. Falls back to the last
+    detection if it never settles within settle_s; (None, None) if never seen
+    (cast landed off the play region)."""
+    prev = None
+    last, last_frame = None, None
     deadline = time.time() + settle_s
     while time.time() < deadline:
         post = grab_region(
@@ -94,10 +100,13 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s):
             play["width"], play["height"],
         )
         lure = find_lure(post)
-        if lure is not None and (best is None or lure[1] > best[1]):
-            best, best_frame = lure, post
+        if lure is not None:
+            if prev is not None and abs(lure[0] - prev[0]) <= LANDING_STABLE_PX:
+                return lure, post          # settled -> landed; stop polling
+            prev = lure
+            last, last_frame = lure, post
         time.sleep(poll_s)
-    return best, best_frame
+    return last, last_frame
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
