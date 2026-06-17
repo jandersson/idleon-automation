@@ -263,6 +263,37 @@ is kept for the post-release read / back-compat. The fill→distance model still
 needs fresh data: runs 8–10 logged no real casts, so the bot explores target
 fills and logs `(charge_level=fill_at_release, landed_dist)` until it fits.
 
+## Catches are detected by the fish DISAPPEARING (2026-06-17, run 14)
+
+A caught fish is consumed and **vanishes** the instant the lure lands on it. The
+original made-detection (`kind_at` at the landing, post-cast) therefore scored
+every catch as a miss — there's no fish left to find. Run-14 cast 6 (saved
+frames): the green fish sat at x109 in every frame until the lure landed at 107,
+then disappeared (a clear catch), logged `made=0`. Across that run, exactly the
+two casts where a fish vanished next to the lure were catches; the bot caught 2
+but logged 1, which also starves the streak (no consecutive catches → eels/squid
+never unlock).
+
+`_classify_catch` now compares the fish near the landing in the **pre-arrival**
+frame vs the **landed** frame: present-then-gone = caught (its kind); still
+sitting there = the lure missed it (cast 3: fish at 203, lure overshot to 226).
+`CATCH_RADIUS=15` px (observed catch offsets ~2–11px). Caveat: it's a
+single-frame pre/post comparison, so a fish-detection flicker could mis-score;
+the score-text OCR (`N PTS` on the bar) would be a stronger cross-check if this
+proves noisy. The fill→distance model is unaffected (it trains on landed_dist,
+not `made`) — this fixes points/streak reporting and unlocking higher fish.
+
+## Open accuracy notes (runs 11–14)
+
+- **Distance saturates ~fill 44** (dist ~210): beyond it the lure goes off the
+  play crop and landings scatter (46→157, 50→156, 53→226). The reliable range is
+  ~fill 15–44. Near/mid model casts land within ~2–10px; far casts overshoot.
+- **The fish are stationary** (the detector reads a constant x across a cast's
+  landing-poll frames) — no moving-target lead needed.
+- **Cross-run offset**: run 13's casts landed ~25px shorter than run 12's for
+  similar fills — likely a cast-origin/player-position effect; adds noise to the
+  fill→distance fit. Worth pinning the origin more robustly if it persists.
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame
