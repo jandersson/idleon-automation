@@ -8,7 +8,9 @@ LOGIC: that the bar is found and that off-bar blobs are excluded.
 import cv2
 import numpy as np
 
-from minigames.fishing.detector import find_cast_bar, find_fish, find_charge_level
+from minigames.fishing.detector import (
+    find_cast_bar, find_fish, find_charge_level, find_charge_fill,
+)
 
 
 def _bgra(h=200, w=700):
@@ -58,6 +60,22 @@ def test_find_charge_level_measures_left_red_bar():
     img2 = _bgra()
     _fill(img2, 70, 100, 20, 30, [3, 220, 230])
     assert find_charge_level(img2) == 0
+
+
+def test_find_charge_fill_reads_thermometer_left_of_cast_bar():
+    # The live charge meter is a vertical red thermometer LEFT of the cast bar;
+    # find_charge_fill reads its red-fill HEIGHT anchored to the cast bar's
+    # full-window (x,y). Paint a partial red fill in the anchored window and
+    # assert the height; an empty anchor reads 0.
+    img = _bgra(h=300, w=900)
+    bar = (434, 233, 304, 7)        # cast bar in full-window coords (as live)
+    # thermometer search window is bar_x-50..-22, bar_y-64..+18 => x384..412, y169..251
+    # paint a 20px-tall red fill at the bottom of that window
+    _fill(img, 231, 251, 392, 404, [3, 220, 230])   # red, ~20 rows, inside the window
+    h = find_charge_fill(img, bar)
+    assert 18 <= h <= 22
+    assert find_charge_fill(_bgra(h=300, w=900), bar) == 0     # empty -> 0
+    assert find_charge_fill(img, None) == 0                    # no anchor -> 0
 
 
 def test_shape_filter_rejects_thin_scenery_edge():

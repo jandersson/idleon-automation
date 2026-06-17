@@ -38,7 +38,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
     find_fish, find_mines, find_lure, find_game_over, kind_at, find_cast_bar,
-    find_play_button, find_charge_level,
+    find_play_button, find_charge_fill,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -361,29 +361,22 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         cx = win_left + play["left"] + play["width"] // 2
         cy = win_top + play["top"] + play["height"] // 2
 
-        # The closure grabs the play crop and reads the left-edge fill each poll.
-        # It also tracks the PEAK fill (and, with --save-frames, dumps each poll
-        # frame named with the charge it read) so a not-ready run is diagnosable:
-        # peak 0 => the bar isn't filling at all (mechanic/region); peak >0 but
-        # below the target => it charges, the abort/target just needs tuning.
+        # The LIVE charge meter is a vertical red thermometer LEFT of the cast
+        # bar (find_charge_fill), read from the FULL window anchored to the cast
+        # bar in full-window coords (the play crop's x<10 misses it entirely —
+        # the thermometer renders left of the crop, #58). The closure tracks the
+        # PEAK fill (and dumps each poll's full frame with --save-frames).
         charge_attempt += 1
         charge_dbg = {"peak": 0, "polls": 0, "attempt": charge_attempt}
+        cast_bar_full = (play["left"] + bar[0], play["top"] + bar[1], bar[2], bar[3])
 
         def _read_charge():
-            crop = grab_region(win_left + play["left"], win_top + play["top"],
-                               play["width"], play["height"])
-            c = find_charge_level(crop)
+            full = grab_region(win_left, win_top, win_w, win_h)
+            c = find_charge_fill(full, cast_bar_full)
             charge_dbg["peak"] = max(charge_dbg["peak"], c)
             if frames_dir is not None:
-                save_frame(frames_dir / f"charge{charge_dbg['attempt']:03d}_"
-                           f"p{charge_dbg['polls']:02d}_c{c}.png", crop)
-                # The oscillating charge bar the player sees during the hold is
-                # NOT in the play crop (run 9: nothing in 342x66 sweeps up/down).
-                # Grab the FULL window each poll too, so we can locate where the
-                # bar actually renders and confirm the capture is live (#58).
-                full = grab_region(win_left, win_top, win_w, win_h)
                 save_frame(frames_dir / f"chargefull{charge_dbg['attempt']:03d}_"
-                           f"p{charge_dbg['polls']:02d}.png", full)
+                           f"p{charge_dbg['polls']:02d}_c{c}.png", full)
             charge_dbg["polls"] += 1
             return c
 

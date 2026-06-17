@@ -242,10 +242,50 @@ def find_charge_level(frame: np.ndarray) -> int:
     cast-power signal: maps ~linearly to landing distance, robustly (in-crop,
     stable post-release), unlike the off-crop bobber landing. The closed-loop
     cast polls this every ~25ms while charging, so the left strip is sliced off
-    BEFORE the HSV convert (per-pixel, identical result, ~Nx less work)."""
+    BEFORE the HSV convert (per-pixel, identical result, ~Nx less work).
+
+    NOTE: this reads x<10 of whatever crop it's given. The LIVE charge meter is a
+    vertical thermometer LEFT of the cast bar (find_charge_fill), not at a crop
+    edge — this function only caught a post-release left bar when the player's
+    position happened to put it in-crop (#58). Kept for that post-release read /
+    back-compat; the closed-loop cast uses find_charge_fill."""
     hsv = _to_hsv(frame[:, :CHARGE_BAR_X_MAX])
     red = cv2.bitwise_or(_mask(hsv, *CHARGE_RED_LOW), _mask(hsv, *CHARGE_RED_HIGH))
     return int(np.count_nonzero((red > 0).any(axis=1)))   # rows with any red = fill height
+
+
+# The LIVE charge meter is a vertical RED thermometer that fills bottom-up while
+# the button is held, anchored just LEFT of (and extending above) the cast bar —
+# NOT at any crop edge. Measured live (run 10, 960x572): with the cast bar at
+# full-window (434,233), the tube fills within x[386,412], y[170,252], i.e. an
+# offset of bar_x-48..bar_x-22 and bar_y-63..bar_y+19. So it's read from the FULL
+# window anchored to the detected cast bar, with margin (offsets below). The red
+# fill HEIGHT is the charge level; the bobber/scenery red sits elsewhere (on/right
+# of the bar), outside this left-of-bar window. See docs/fishing_minigame.md.
+CHARGE_BAR_DX0 = -50   # search window, relative to the cast bar's left edge (x)
+CHARGE_BAR_DX1 = -22
+CHARGE_BAR_DY0 = -64   # relative to the cast bar's top (y); thermometer rises above it
+CHARGE_BAR_DY1 = 18    # tuned on run-10 frames: empty->0, full->56, clean ramp
+
+
+def find_charge_fill(full_frame: np.ndarray,
+                     cast_bar_full: tuple[int, int, int, int] | None) -> int:
+    """Red-fill height (px) of the vertical charge thermometer — the LIVE
+    cast-power signal during the hold. `full_frame` is the whole window;
+    `cast_bar_full` is the cast bar's (x, y, w, h) in FULL-window coords (the
+    anchor). Returns 0 when empty or the anchor is missing. The closed-loop cast
+    polls this and releases at a target fill."""
+    if cast_bar_full is None:
+        return 0
+    bx, by, _bw, _bh = cast_bar_full
+    h, w = full_frame.shape[:2]
+    x0, x1 = max(0, bx + CHARGE_BAR_DX0), max(0, min(w, bx + CHARGE_BAR_DX1))
+    y0, y1 = max(0, by + CHARGE_BAR_DY0), max(0, min(h, by + CHARGE_BAR_DY1))
+    if x1 <= x0 or y1 <= y0:
+        return 0
+    hsv = _to_hsv(full_frame[y0:y1, x0:x1])
+    red = cv2.bitwise_or(_mask(hsv, *CHARGE_RED_LOW), _mask(hsv, *CHARGE_RED_HIGH))
+    return int(np.count_nonzero((red > 0).any(axis=1)))   # rows with red = fill height
 
 
 def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
