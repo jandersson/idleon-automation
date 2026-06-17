@@ -284,6 +284,7 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
     last_start_click = 0.0    # wall-clock of the last PLAY GAME click
     last_score_sample = 0.0   # wall-clock of the last throttled score read
     last_score = None         # most recent PTS read, logged per flap
+    last_gap_center = None     # last detected hoop centre; held over detection gaps
     recent_fly_y: deque[int] = deque(maxlen=START_MOTION_FRAMES)  # for the start-motion gate
     while True:
         check_failsafe()
@@ -400,14 +401,19 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
             return
 
         gap = find_next_gap(frame, fly_pos)
-        # Aim at the next hoop's CENTRE when one is visible; otherwise hover
-        # at a default height so the fly doesn't free-fall between hoops.
+        # Aim at the next hoop's CENTRE when one is visible. The hoop is only
+        # detected on ~60% of frames, so on the gaps HOLD the last known hoop
+        # centre rather than snapping to a fixed mid-height (which sits below
+        # the hoop band and pulls the avatar off it); fall back to the default
+        # only until the first hoop is seen.
         if gap is not None:
             gap_top, gap_bottom, gap_left_x, gap_right_x = gap
             target_y = (gap_top + gap_bottom) // 2
+            last_gap_center = target_y
         else:
             gap_top = gap_bottom = gap_left_x = gap_right_x = None
-            target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
+            target_y = (last_gap_center if last_gap_center is not None
+                        else int(play_region["height"] * DEFAULT_HOVER_FRAC))
 
         # Flap when the fly has fallen below the target (screen y grows
         # downward), rate-limited so it oscillates rather than ceiling-slams.
