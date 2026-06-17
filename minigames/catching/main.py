@@ -130,6 +130,9 @@ def run():
                 duration_s=round(time.time() - started_at, 1),
                 end_reason=stats["end_reason"],
                 final_score=stats["final_score"],
+                min_click_interval=MIN_CLICK_INTERVAL,
+                flap_margin=FLAP_MARGIN,
+                hover_frac=DEFAULT_HOVER_FRAC,
                 code_commit=code_commit,
             )
             db.close()

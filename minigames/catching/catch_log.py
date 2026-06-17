@@ -83,7 +83,15 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # correlated with score progression. See minigames/catching/score.py.
     ("score", "INTEGER"),
 ]
-_RUNS_LATE_COLUMNS: list[tuple[str, str]] = []
+# The flap-policy constants in effect for the run, so the 0.08-vs-0.12
+# MIN_CLICK_INTERVAL comparison (and any later flap tuning) can attribute
+# final_score to the setting — code_commit alone is ambiguous when the
+# constant is edited in place (the base commit stays HEAD, only -dirty).
+_RUNS_LATE_COLUMNS: list[tuple[str, str]] = [
+    ("min_click_interval", "REAL"),
+    ("flap_margin", "INTEGER"),
+    ("hover_frac", "REAL"),
+]
 
 
 def open_db(path: Path) -> sqlite3.Connection:
