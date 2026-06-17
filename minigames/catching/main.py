@@ -17,7 +17,7 @@ from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
-from minigames.catching.detector import find_fly, find_avatar, find_next_gap, find_play_button
+from minigames.catching.detector import find_avatar, find_next_gap, find_play_button
 from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
 
