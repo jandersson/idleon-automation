@@ -14,7 +14,7 @@ from tkinter import ttk
 
 from PIL import ImageTk
 
-from ui.launcher import books_tab, bots_tab, cards_tab, frames_tab, setup_tab, sql_tab, theme
+from ui.launcher import books_tab, bots_tab, cards_tab, frames_tab, process, setup_tab, sql_tab, theme
 from ui.launcher.config import MINIGAMES
 
 
@@ -29,6 +29,10 @@ class Launcher:
         self.processes: dict[str, subprocess.Popen | None] = {m["name"]: None for m in MINIGAMES}
         self.status_labels: dict[str, ttk.Label] = {}
         self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
+        # Running setup/observe tools, keyed by entry point, so the launcher
+        # can stop the long-running ones (observe, capture, watch-wind) —
+        # they have no other stop control in the GUI.
+        self.oneshot_procs: dict[str, subprocess.Popen | None] = {}
         self.log_queue: queue.Queue = queue.Queue()
         # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
         # currently-selected option value for that minigame's bot.
@@ -105,9 +109,15 @@ class Launcher:
                             self.status_labels[name].config(text=text, foreground=color)
                     elif item[0] == "setup_done":
                         _, entry_point = item
+                        self.oneshot_procs[entry_point] = None
                         if entry_point in self.setup_buttons:
                             btn, label = self.setup_buttons[entry_point]
-                            btn.config(state="normal", text=label)
+                            # Restore the launch button (it became a Stop
+                            # button while the tool ran — see process.spawn).
+                            btn.config(
+                                state="normal", text=label, style="TButton",
+                                command=lambda c=entry_point: process.run_oneshot(self, c),
+                            )
                     elif item[0] == "refresh_hoops_stats":
                         bots_tab.refresh_hoops_stats(self)
                     elif item[0] == "refresh_tries":

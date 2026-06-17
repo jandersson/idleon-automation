@@ -51,6 +51,21 @@ def stop_bot(app, mg: dict) -> None:
     if proc is None:
         return
     app.enqueue_log(f"[{name}] stopping...\n")
+    _kill(proc)
+
+
+def stop_oneshot(app, entry_point: str) -> None:
+    """Stop a running setup/observe tool (observe, capture, watch-wind have
+    no other GUI stop). The button restores itself when the process exits,
+    via the setup_done queue message."""
+    proc = app.oneshot_procs.get(entry_point)
+    if proc is None:
+        return
+    app.enqueue_log(f"[{entry_point}] stopping...\n")
+    _kill(proc)
+
+
+def _kill(proc: subprocess.Popen) -> None:
     if sys.platform == "win32":
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                        capture_output=True)
@@ -95,8 +110,15 @@ def spawn(app, entry_point: str, track_as: str | None,
     if track_as is not None:
         app.processes[track_as] = proc
     if entry_point in app.setup_buttons:
+        # Setup tools are launched as one-shots (track_as=None), but some
+        # run until stopped (observe, capture, watch-wind). Turn the button
+        # into a Stop while it runs so there's a GUI control — without this
+        # there was no way to stop observe from the launcher. Quick tools
+        # (pickers) just exit and restore the button. setup_done restores it.
+        app.oneshot_procs[entry_point] = proc
         btn, label = app.setup_buttons[entry_point]
-        btn.config(state="disabled", text=f"{label} (running)")
+        btn.config(state="normal", text=f"■ Stop {label}", style="Stop.TButton",
+                   command=lambda e=entry_point: stop_oneshot(app, e))
     app.enqueue_log(f"[{entry_point}] started (pid {proc.pid})\n")
     threading.Thread(target=drain, args=(app, entry_point, proc, track_as),
                      daemon=True).start()
