@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-17T05:35:27",
-  "total_shots": 1557,
-  "total_makes": 526,
+  "generated_at": "2026-06-17T05:55:32",
+  "total_shots": 1564,
+  "total_makes": 529,
   "make_rate": 0.338,
   "sessions": [
     {
@@ -976,6 +976,13 @@
       "makes": 8,
       "explore_shots": 0,
       "explore_makes": 0
+    },
+    {
+      "started": "2026-06-17T05:53:56",
+      "shots": 7,
+      "makes": 3,
+      "explore_shots": 1,
+      "explore_makes": 1
     }
   ],
   "buckets": [
@@ -1306,11 +1313,11 @@
     {
       "hoop_x_bucket": 590,
       "hoop_y_bucket": 370,
-      "shots": 6,
-      "makes": 3,
-      "mp_shots": 6,
-      "mp_makes": 3,
-      "last_session": "2026-06-16T17:15:43"
+      "shots": 8,
+      "makes": 4,
+      "mp_shots": 8,
+      "mp_makes": 4,
+      "last_session": "2026-06-17T05:53:56"
     },
     {
       "hoop_x_bucket": 590,
@@ -1666,11 +1673,11 @@
     {
       "hoop_x_bucket": 630,
       "hoop_y_bucket": 300,
-      "shots": 4,
+      "shots": 7,
       "makes": 3,
-      "mp_shots": 3,
+      "mp_shots": 6,
       "mp_makes": 2,
-      "last_session": "2026-06-17T02:55:50"
+      "last_session": "2026-06-17T05:53:56"
     },
     {
       "hoop_x_bucket": 630,
@@ -2094,6 +2101,15 @@
       "mp_shots": 0,
       "mp_makes": 0,
       "last_session": "2026-06-10T09:07:15"
+    },
+    {
+      "hoop_x_bucket": 660,
+      "hoop_y_bucket": 360,
+      "shots": 1,
+      "makes": 1,
+      "mp_shots": 1,
+      "mp_makes": 1,
+      "last_session": "2026-06-17T05:53:56"
     },
     {
       "hoop_x_bucket": 660,
@@ -3052,11 +3068,11 @@
     {
       "hoop_x_bucket": 730,
       "hoop_y_bucket": 440,
-      "shots": 2,
-      "makes": 2,
-      "mp_shots": 1,
-      "mp_makes": 1,
-      "last_session": "2026-06-10T12:57:17"
+      "shots": 3,
+      "makes": 3,
+      "mp_shots": 2,
+      "mp_makes": 2,
+      "last_session": "2026-06-17T05:53:56"
     },
     {
       "hoop_x_bucket": 730,
@@ -4940,6 +4956,29 @@
       "predicted_offset": 20,
       "code_commit": "41a972e96ec5",
       "predictor_kind": null
+    },
+    {
+      "hoop_x": 596,
+      "hoop_y": 370,
+      "platform_y": 374,
+      "offset": 0,
+      "target_y": 370,
+      "clamped": 0,
+      "direction": "down",
+      "required_direction": "down",
+      "perturbation": -132,
+      "lives_diff": null,
+      "ball_apex_y": 125,
+      "ball_x_at_rim_height": 571,
+      "ball_landing_x": 681,
+      "window_w": 959,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": 132,
+      "code_commit": "040312393b41-dirty.09446c25",
+      "predictor_kind": "make_prob"
     },
     {
       "hoop_x": 596,
@@ -8965,6 +9004,29 @@
       "predicted_offset": -22,
       "code_commit": "99dd4af2bd71",
       "predictor_kind": "trajectory_gp"
+    },
+    {
+      "hoop_x": 660,
+      "hoop_y": 367,
+      "platform_y": 309,
+      "offset": -63,
+      "target_y": 304,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 36,
+      "ball_x_at_rim_height": 752,
+      "ball_landing_x": 752,
+      "window_w": 959,
+      "window_h": 572,
+      "score_before_int": 1,
+      "score_after_int": 2,
+      "score_increment": 1,
+      "predicted_offset": -63,
+      "code_commit": "040312393b41-dirty.09446c25",
+      "predictor_kind": "make_prob"
     },
     {
       "hoop_x": 660,
@@ -14879,6 +14941,29 @@
     },
     {
       "hoop_x": 731,
+      "hoop_y": 446,
+      "platform_y": 426,
+      "offset": -24,
+      "target_y": 422,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": 222.37864685058594,
+      "ball_apex_y": 73,
+      "ball_x_at_rim_height": 705,
+      "ball_landing_x": 660,
+      "window_w": 959,
+      "window_h": 572,
+      "score_before_int": 2,
+      "score_after_int": 3,
+      "score_increment": 1,
+      "predicted_offset": -24,
+      "code_commit": "040312393b41-dirty.09446c25",
+      "predictor_kind": "make_prob"
+    },
+    {
+      "hoop_x": 731,
       "hoop_y": 479,
       "platform_y": 437,
       "offset": -47,
@@ -15388,8 +15473,8 @@
     {
       "required_direction": "down",
       "region": "band",
-      "shots": 173,
-      "makes": 75
+      "shots": 174,
+      "makes": 76
     },
     {
       "required_direction": "down",
@@ -15406,7 +15491,7 @@
     {
       "required_direction": "up",
       "region": "band",
-      "shots": 258,
+      "shots": 262,
       "makes": 66
     },
     {
@@ -15418,8 +15503,8 @@
     {
       "required_direction": "up",
       "region": "mid_far",
-      "shots": 243,
-      "makes": 166
+      "shots": 245,
+      "makes": 168
     }
   ]
 }
