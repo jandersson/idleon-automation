@@ -220,9 +220,12 @@ investigations:
   `ball_peak_x`) plus velocity-driven over/undershoots (the ball
   inherits the platform's vertical velocity; `platform_vy` is logged
   per shot). Firing direction is a per-hoop policy
-  (`_required_direction_for`): dir=down at very low hoops (y≥530,
-  dir=up proven futile by a full-bob-range exploration sweep) and in
-  the near clank band (x≤640); one predictor is fitted per direction.
+  (`_required_direction_for`): dir=down only at very low hoops (y≥530,
+  dir=up proven futile by a full-bob-range exploration sweep). The
+  near-clank-band (x≤640) dir=down override was tried and reverted
+  2026-06-10, so above the 530 threshold the make_prob model picks
+  direction per shot (its `best_dir`, not the hand rule). One predictor
+  is fitted per direction.
   Make detection is multi-signal — post-shot OCR alone loses ~10% of
   makes; the hoop-respawn signal (`made_source='respawn'`) and the
   prompt-anchored score are load-bearing, and `clean_make` is never

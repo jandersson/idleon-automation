@@ -7,10 +7,16 @@ in issue #37's comments. Follow-up model work: issue #38.
 
 ## The headline reframe: misses are not aim error
 
-Shots whose ball arrives within ±120px of the hoop make at ~64%, and
-made shots cluster within a 16px standard deviation. The bot does not
-lose to near-misses — it loses to two categorically different failure
-modes that both masqueraded as "way short" in the data:
+Shots whose ball arrives within ±120px of the hoop make at ~64% **in
+the make_prob model-aim regime** (model in-band ~58%); the *pooled*
+in-band rate across all eras and aim sources is only ~34% (n≈1.2k),
+because explore and legacy shots arrive in-band and still clank. Arrival
+proximity is necessary but not sufficient — the predictor is the lever,
+not the ±120px window. Clean makes cluster within a ~30px standard
+deviation (the broader `made` population is wider, scattered by lucky
+bounce-ins). The bot does not lose to near-misses — it loses to two
+categorically different failure modes that both masqueraded as "way
+short" in the data:
 
 - **Structure clanks.** The ball *reaches* the hoop (ball_peak_x within
   ~25px of hoop_x), clips the rim front / pole, and bounces backward —
