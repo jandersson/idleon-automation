@@ -1,12 +1,14 @@
 """SQLite cast log for the fishing minigame bot.
 
-Fishing's action is a "cast": hold the mouse for `hold_ms` to charge, then
-release to land the lure a distance set by that hold. One row per cast
-captures the control state at fire time (hold_ms, where the lure was
-aimed, the chosen fish) plus the measured outcome a beat later (where it
-landed, what it hit, points). That's what fits the hold_ms <-> distance
-cast model (cast_model.fit_cast_model) and answers "which hold lands which
-fish".
+Fishing's action is a "cast": hold the mouse to fill the charge bar, then
+release to land the lure a distance set by the charge LEVEL. The bot casts
+closed-loop (release at a target fill, common.input.charge_and_release), so the
+control is `charge_level` — `hold_ms` is retained NULL for legacy/open-loop
+compatibility. One row per cast captures the control state at fire time
+(target_charge_level, where the lure was aimed, the chosen fish) plus the
+measured outcome a beat later (the release charge_level, where it landed, what
+it hit, points). That's what fits the charge_level <-> distance cast model
+(cast_model.fit_cast_model) and answers "which charge lands which fish".
 
 Mirrors minigames/darts/shot_log.py & catching/catch_log.py: a per-action
 table (`casts`) + a per-run summary (`runs`), the shared common.db_log
@@ -17,7 +19,8 @@ CLAUDE.md convention.
 Usage:
     from minigames.fishing.fish_log import open_db, log_cast, fetch_cast_samples
     conn = open_db(Path("minigames/fishing/assets/fishing.db"))
-    row_id = log_cast(conn, session_started="...", cast_idx=1, hold_ms=420, ...)
+    row_id = log_cast(conn, session_started="...", cast_idx=1,
+                      target_charge_level=44, ...)   # set_outcome backfills charge_level
     conn.close()
 """
 import sqlite3
@@ -33,7 +36,7 @@ CREATE TABLE IF NOT EXISTS casts (
     attempt_idx INTEGER,
     cast_idx INTEGER,
     fired_at TEXT,
-    hold_ms INTEGER,                -- the control: how long LMB was held
+    hold_ms INTEGER,                -- legacy open-loop hold; NULL under closed-loop (charge is the control)
     aim_mode TEXT,                  -- 'model' | 'explore' | 'fallback'
     cast_origin_x INTEGER,          -- lure start x (play-region-relative)
     cast_origin_y INTEGER,
