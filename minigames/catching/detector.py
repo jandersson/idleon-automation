@@ -25,16 +25,25 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from common.templates import match_multiscale_center
+from common.templates import match_multiscale_center, match_multiscale_zncc_center
 
 ASSETS = Path(__file__).parent / "assets"
 
 # "PLAY GAME" entry-prompt button (assets/play_button.png is the badge-free
-# "PLAY GAME" text — the count badge changes per play, so it's excluded).
-# Validated against the observe frames: 1.00 when the prompt is up vs 0.55
-# mid-game, so 0.75 cleanly separates. The prompt is anchored above the
-# player (moves with them), hence template matching, not coordinate caching.
-PLAY_BUTTON_MATCH_THRESHOLD = 0.75
+# "PLAY GAME" text — the count badge changes per play, so it's excluded). The
+# prompt is anchored above the player (moves with them), hence template
+# matching, not coordinate caching.
+#
+# Match via background-invariant masked ZNCC (play_button_mask.png covers the
+# rigid grey button, excluding the corners where the world background bleeds
+# in). An unmasked CCOEFF match sagged from 1.00 in the home map to 0.78 in a
+# desert region — uncomfortably near the old 0.75 cutoff — because the
+# changing scenery behind the button drags the score down. Masked ZNCC fixes
+# that: the prompt scores ~0.99 on ANY map while gameplay scenery scores
+# <0.15, so 0.6 separates with a wide margin. If the mask file is missing the
+# code falls back to the old unmasked CCOEFF at 0.75.
+PLAY_BUTTON_MATCH_THRESHOLD = 0.6
+PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD = 0.75
 
 # Golden hoops — saturated orange/yellow. (Other hoop colours score more —
 # wiki #52: orange/green/gold/lava — but the observe frames only had
@@ -110,11 +119,14 @@ def _find_fly_template(bgr: np.ndarray) -> tuple[int, int] | None:
 
 
 def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
-    """Locate the "PLAY GAME" entry button via multi-scale template match
-    against assets/play_button.png. Returns its (x, y) centre (clicking
-    there starts a play) or None below PLAY_BUTTON_MATCH_THRESHOLD / when
-    the template is missing. Search the FULL window frame — the prompt is
-    anchored to the player's world position, not a fixed region."""
+    """Locate the "PLAY GAME" entry button. Returns its (x, y) centre
+    (clicking there starts a play) or None when it isn't on screen / the
+    template is missing. Search the FULL window frame — the prompt is anchored
+    to the player's world position, not a fixed region.
+
+    Background-invariant masked ZNCC (play_button_mask.png) is the primary
+    path so the match holds up across world regions; falls back to the
+    unmasked CCOEFF match when the mask file is absent."""
     path = ASSETS / "play_button.png"
     if not path.exists():
         return None
@@ -124,8 +136,15 @@ def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
     bgr = _to_bgr(frame)
     if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
         return None
+    mask_path = ASSETS / "play_button_mask.png"
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE) if mask_path.exists() else None
+    if mask is not None:
+        center, conf, _ = match_multiscale_zncc_center(bgr, template, mask)
+        if center is None or conf < PLAY_BUTTON_MATCH_THRESHOLD:
+            return None
+        return center
     center, val, _ = match_multiscale_center(bgr, template)
-    if center is None or val < PLAY_BUTTON_MATCH_THRESHOLD:
+    if center is None or val < PLAY_BUTTON_UNMASKED_FALLBACK_THRESHOLD:
         return None
     return center
 

@@ -138,6 +138,77 @@ def match_multiscale_masked(
     return best_loc, max(best_val, 0.0), best_scale
 
 
+def masked_match_confidence(
+    image: np.ndarray,
+    template: np.ndarray,
+    mask: np.ndarray,
+    top_left: tuple[int, int],
+    scale: float,
+) -> float:
+    """Zero-mean normalized cross-correlation (ZNCC) over the masked template
+    pixels at a fixed location/scale.
+
+    A background-invariant CONFIDENCE to pair with match_multiscale's
+    localization. Two reasons it beats TM_CCORR_NORMED-with-mask for a UI
+    sprite over changing scenery: mean-subtraction discriminates the sprite
+    from bright flat regions (raw CCORR scores those ~0.9), and the mask drops
+    the pixels that vary with the world behind the overlay. So the same sprite
+    scores ~1.0 over any background while non-sprite scenery scores near 0.
+
+    Returns ZNCC in [-1, 1]; 0.0 when the patch is out of bounds, the mask is
+    near-empty, or the masked patch is flat (mean-subtraction kills it).
+    """
+    th = int(round(template.shape[0] * scale))
+    tw = int(round(template.shape[1] * scale))
+    if th < 1 or tw < 1:
+        return 0.0
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    t = cv2.resize(template, (tw, th), interpolation=interp)
+    m = cv2.resize(mask, (tw, th), interpolation=cv2.INTER_NEAREST)
+    x, y = top_left
+    patch = image[y:y + th, x:x + tw]
+    if patch.shape[:2] != (th, tw):
+        return 0.0
+    sel = m > 0
+    if int(sel.sum()) < 10:
+        return 0.0
+    a = t[sel].astype(np.float32).ravel()
+    b = patch[sel].astype(np.float32).ravel()
+    a -= a.mean()
+    b -= b.mean()
+    denom = float(np.sqrt((a * a).sum() * (b * b).sum()))
+    if denom == 0.0:
+        return 0.0
+    return float((a * b).sum() / denom)
+
+
+def match_multiscale_zncc_center(
+    image: np.ndarray,
+    template: np.ndarray,
+    mask: np.ndarray,
+    region: tuple[int, int, int, int] | None = None,
+    scales: tuple[float, ...] = DEFAULT_SCALES,
+) -> tuple[tuple[int, int] | None, float, float]:
+    """Locate `template` with the unmasked multiscale CCOEFF sweep, then
+    re-score the winning location with background-invariant masked ZNCC
+    (masked_match_confidence). Returns (center, zncc_confidence, scale) — use
+    the ZNCC as the accept/reject confidence, NOT the localization value.
+
+    The CCOEFF sweep localizes the sprite well even with the background
+    contaminating its score; the masked ZNCC then yields a confidence that
+    doesn't sag when the same sprite sits over a different world — which is
+    what drops a plain unmasked match below threshold across game regions
+    (catching's PLAY GAME prompt: 1.00 in its home map, 0.78 in the desert).
+    """
+    top_left, _val, scale = match_multiscale(image, template, region, scales)
+    if top_left is None:
+        return None, 0.0, scale
+    conf = masked_match_confidence(image, template, mask, top_left, scale)
+    th = int(round(template.shape[0] * scale))
+    tw = int(round(template.shape[1] * scale))
+    return (top_left[0] + tw // 2, top_left[1] + th // 2), conf, scale
+
+
 class ScaleLockMatcher:
     """Stateful multi-scale matcher for per-poll hot paths.
 

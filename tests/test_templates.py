@@ -5,9 +5,11 @@ import pytest
 
 from common.templates import (
     ScaleLockMatcher,
+    masked_match_confidence,
     match_multiscale,
     match_multiscale_center,
     match_multiscale_masked,
+    match_multiscale_zncc_center,
 )
 
 
@@ -209,3 +211,57 @@ def test_masked_match_locates_center():
     assert abs(top_left[0] - (200 - 8)) <= 1
     assert abs(top_left[1] - (100 - 8)) <= 1
     assert val > 0.95
+
+
+def test_masked_zncc_confidence_is_background_independent():
+    """The property find_play_button needs: the masked-ZNCC confidence at the
+    sprite is high and ~the same over two DIFFERENT backgrounds (the PLAY GAME
+    button scores ~0.99 whether it sits over its home map or the desert). The
+    foreground is pasted at a known spot so the confidence is measured at the
+    true location, isolating background-invariance from localization."""
+    template, mask, fg = _sprite_with_border()
+
+    def conf_on(bg_value):
+        img = np.full((300, 400, 3), bg_value, dtype=np.uint8)
+        img[100:124, 200:224] = fg  # foreground only, on a fresh background
+        return masked_match_confidence(img, template, mask, top_left=(192, 92), scale=1.0)
+
+    conf_dark, conf_bright = conf_on(30), conf_on(200)
+    assert conf_dark > 0.95 and conf_bright > 0.95
+    assert abs(conf_dark - conf_bright) < 0.02  # background swap barely moves it
+
+
+def test_masked_zncc_center_finds_sprite():
+    """End-to-end: locate + confidence on a clean scene returns a centre on
+    the sprite at high confidence."""
+    template, mask, _ = _sprite_with_border()
+    img = np.full((300, 400, 3), 70, dtype=np.uint8)
+    img[100:140, 200:240] = template  # full template (border included)
+    center, conf, _ = match_multiscale_zncc_center(img, template, mask, scales=(1.0,))
+    assert center is not None
+    assert abs(center[0] - 220) <= 3 and abs(center[1] - 120) <= 3
+    assert conf > 0.99
+
+
+def test_masked_zncc_rejects_bright_flat_region():
+    """The reason ZNCC is used over TM_CCORR_NORMED for the button: mean-
+    subtraction makes a bright flat region score ~0, where raw CCORR scores
+    it ~0.9 (which collapsed the prompt-vs-gameplay margin)."""
+    template, mask, _ = _sprite_with_border()
+    flat = np.full((300, 400, 3), 255, dtype=np.uint8)
+    conf = masked_match_confidence(flat, template, mask, top_left=(50, 50), scale=1.0)
+    assert abs(conf) < 0.1
+
+
+def test_masked_match_confidence_exact_match_is_one():
+    template, mask, _ = _sprite_with_border()
+    img = np.full((100, 100, 3), 12, dtype=np.uint8)
+    img[20:60, 20:60] = template
+    conf = masked_match_confidence(img, template, mask, top_left=(20, 20), scale=1.0)
+    assert conf > 0.99
+
+
+def test_masked_match_confidence_out_of_bounds_is_zero():
+    template, mask, _ = _sprite_with_border()
+    img = np.full((100, 100, 3), 50, dtype=np.uint8)
+    assert masked_match_confidence(img, template, mask, top_left=(80, 80), scale=1.0) == 0.0
