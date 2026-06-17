@@ -79,8 +79,8 @@ MINIGAMES = [
                 # which main.py reads (the GUI can't pass --save-frames).
                 "label": "Save frames",
                 "env": "CATCHING_SAVE_FRAMES",
-                "values": ["off", "on"],
-                "default": "off",
+                "values": ["on", "off"],
+                "default": "on",
             },
         ],
     },
