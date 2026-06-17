@@ -55,12 +55,15 @@ DEFAULT_HOVER_FRAC = 0.5
 # Flap once the fly has fallen this many px BELOW the target (screen y grows
 # downward). A small deadband so it oscillates around the target.
 FLAP_MARGIN = 6
-# Aim this many px ABOVE the hoop centre. The rate-limited flap lets the
-# avatar sag past the target before firing, so at the moment a hoop passes it
-# sits ~14px below the centre (measured run 8: fly_y 88-96 vs centre 81 as
-# gap_left_x crossed the avatar) and grazes the lower ring edge. Aiming high
-# by the sag re-centres the pass. Provisional — visual-tune.
-FLAP_LAG_PX = 14
+# Trigger the flap this many px BELOW the hoop centre. The avatar's bob is a
+# fixed ~47px (the game's flap impulse) and the ring opening is ~53px, so the
+# bob CAN fit inside — but it was riding ~7px high and clipping the TOP edge
+# (measured bob 50-97 vs opening 54-107). Triggering below centre shifts the
+# whole bob DOWN so it centres on the opening; the avatar then stays inside
+# the ring through the pass and threads at ANY arrival phase, which is what
+# makes threading reliable without true arrival-timing. ~half the bob minus
+# the rate-limit sag. Visual-tune: clips top -> raise; clips bottom -> lower.
+FLAP_CENTER_DROP_PX = 12
 
 # Min seconds between flaps — caps the flap rate, which sets the avatar's max
 # reachable height (it flaps to rise, gravity pulls between flaps). History:
@@ -419,16 +422,17 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False):
         else:
             gap_top = gap_bottom = gap_left_x = gap_right_x = None
             detected_center = None
-        # Aim FLAP_LAG_PX above the hoop centre (sag compensation), holding the
-        # last centre over detection gaps; default only until the first hoop.
+        # Trigger the flap FLAP_CENTER_DROP_PX below the hoop centre so the bob
+        # centres on the opening, holding the last centre over detection gaps;
+        # default only until the first hoop is seen.
         aim = detected_center if detected_center is not None else last_gap_center
         if aim is not None:
-            target_y = max(0, aim - FLAP_LAG_PX)
+            target_y = aim + FLAP_CENTER_DROP_PX
         else:
             target_y = int(play_region["height"] * DEFAULT_HOVER_FRAC)
 
-        # Flap when the fly has fallen below the target (screen y grows
-        # downward), rate-limited so it oscillates rather than ceiling-slams.
+        # Flap when the avatar has fallen below the (below-centre) trigger,
+        # rate-limited so it can't ceiling-slam.
         if fly_y > target_y + FLAP_MARGIN and now - last_click_time >= MIN_CLICK_INTERVAL:
             # Fire immediately on the decision (the fly is still falling) —
             # the hoops/darts click-timing rule; bookkeeping runs after.
