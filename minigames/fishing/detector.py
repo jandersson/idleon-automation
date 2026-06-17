@@ -240,8 +240,10 @@ CHARGE_RED_HIGH = ((170, 120, 90), (179, 255, 255))
 def find_charge_level(frame: np.ndarray) -> int:
     """Fill height (px) of the left-edge red charge bar — 0 when empty. The
     cast-power signal: maps ~linearly to landing distance, robustly (in-crop,
-    stable post-release), unlike the off-crop bobber landing."""
-    hsv = _to_hsv(frame)[:, :CHARGE_BAR_X_MAX]
+    stable post-release), unlike the off-crop bobber landing. The closed-loop
+    cast polls this every ~25ms while charging, so the left strip is sliced off
+    BEFORE the HSV convert (per-pixel, identical result, ~Nx less work)."""
+    hsv = _to_hsv(frame[:, :CHARGE_BAR_X_MAX])
     red = cv2.bitwise_or(_mask(hsv, *CHARGE_RED_LOW), _mask(hsv, *CHARGE_RED_HIGH))
     return int(np.count_nonzero((red > 0).any(axis=1)))   # rows with any red = fill height
 

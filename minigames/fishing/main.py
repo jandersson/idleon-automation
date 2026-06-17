@@ -1,19 +1,22 @@
 """Fishing minigame bot — main loop and config.
 
-The fishing minigame is a hold-to-cast distance game (see
-docs/fishing_minigame.md): hold LMB to charge, release to land the lure on
-a fish (Green/Eel/Squid/Whale) while avoiding mines. The bot's control is
-the hold duration; its learned model is hold_ms <-> cast distance
-(cast_model), fitted at startup from logged casts and refined by
-exploration — the darts pattern.
+The fishing minigame is a hold-to-charge distance game (see
+docs/fishing_minigame.md): hold LMB to fill a charge bar, release to land the
+lure on a fish (Green/Eel/Squid/Whale) while avoiding mines. The bot casts
+CLOSED-LOOP — it polls the charge bar while holding and releases at a target
+fill (common.input.charge_and_release) — so the charge LEVEL is the control
+variable; its learned model is charge_level <-> cast distance (cast_model),
+fitted at startup from logged casts and refined by exploration (darts pattern).
 
 STATUS: auto-starts (clicks the PLAY GAME prompt, like catching/mining — the
 cast bar is the 'minigame active' signal), plays the picked cast-bar region
-with calibrated colour detection, and explores hold durations. Still needed to
-SCORE: assets/lure.png (capture via fishing-capture) so landings — and thus the
-hold<->distance cast model — can be measured, and the #63 detection refinement
-(eel/megalodon over-detect on score text / mine cores) so target selection is
-reliable. Until the model fits the bot casts random holds and logs them.
+with calibrated colour detection, and aims off the charge bar. The charge fill
+is a clean, in-crop, reproducible distance signal (validated offline on the
+run-7 frames: landed_x ~ 5.0*charge); the closed-loop release also detects the
+rod-not-ready state (fill stays 0 = previous lure still reeling) and skips that
+cast instead of burning it (#58). Until MIN_SAMPLES charged casts exist the bot
+explores random target charge levels and logs (charge_level, landed_dist).
+Open: warm-fish HSV verification + grey-mine detection (#63).
 """
 import argparse
 import os
@@ -27,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.monitor import save_frame
-from common.input import hold, click, random_delay, check_failsafe
+from common.input import charge_and_release, click, random_delay, check_failsafe
 from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
@@ -41,8 +44,8 @@ from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
 )
 from minigames.fishing.cast_model import (
-    FISH_VALUE, MIN_SAMPLES, fit_cast_model, hold_for_distance,
-    distance_for_hold, choose_target,
+    FISH_VALUE, MIN_SAMPLES, fit_cast_model, charge_for_distance,
+    distance_for_charge, choose_target,
 )
 
 _HERE = Path(__file__).parent
@@ -53,18 +56,29 @@ REPO_ROOT = _HERE.parent.parent
 WINDOW_TITLE = "Legends Of Idleon"
 POLL_INTERVAL = 0.05
 
-# Exploration hold range (ms): random holds within this span sample the
-# hold->distance curve until the cast model is fitted. PLACEHOLDER bounds —
-# widen/narrow once a real cast's hold-to-reach is observed.
-EXPLORE_HOLD_MIN_MS = 150
-# Holds beyond ~850ms overshoot the bar — the lure lands off the play-region
-# crop and find_lure never sees it (NA), wasting the cast. The bar's far end
-# is reached around here (max-x ~256 at hold ~730), so cap exploration to the
-# measurable in-bar range.
-EXPLORE_HOLD_MAX_MS = 850
-# Fire an exploration cast every Nth cast even after the model is fitted,
-# so the hold->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
+# Exploration charge range (fill px): random target charge levels within this
+# span sample the charge->distance curve until the cast model is fitted.
+# Offline on the run-7 frames the bar fills to ~60 (saturated) and landing is
+# ~linear over [~8, ~60]; cap exploration just under saturation so the lure
+# lands in-crop (measurable) and we never sit holding at a full bar.
+EXPLORE_CHARGE_MIN = 10
+EXPLORE_CHARGE_MAX = 58
+# Fire an exploration cast every Nth cast even after the model is fitted, so
+# the charge->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
 EXPLORE_EVERY_N = 10
+
+# Closed-loop charge-and-release timing (common.input.charge_and_release):
+# poll the charge bar this often while holding; give the rod this long to
+# start charging before declaring it not-ready (previous lure still reeling);
+# never hold longer than this (the bar saturates ~750ms, so this bounds a
+# stuck hold and the wait on an over-cap target).
+CHARGE_POLL_S = 0.025
+CHARGE_READY_GRACE_S = 0.3
+CHARGE_MAX_HOLD_S = 1.5
+# After a not-ready abort, wait this long before retrying (the rod recovers
+# over ~a cast cycle; the aborts are cheap — they poll for ready without
+# burning a cast, unlike the old fixed-cooldown open-loop hold).
+NOT_READY_RETRY_S = 0.3
 
 # Landing measurement: the lure REELS IN after landing (the bobber's x
 # decreases poll-to-poll until it vanishes — confirmed in the --save-frames
@@ -96,18 +110,20 @@ BAR_GONE_GAMEOVER_S = 3.0
 
 def _measure_landing(win_left, win_top, play, settle_s, poll_s,
                      frames_dir=None, cast_idx=0):
-    """Poll find_lure after a cast and return (landed (x, y), frame) once the
-    bobber SETTLES — two consecutive detections within LANDING_STABLE_PX, i.e.
-    it has stopped on the bar. Exits early (mid-flight the bobber moves fast,
-    so it doesn't trigger), keeping the grab count low. Falls back to the last
-    detection if it never settles within settle_s; (None, None) if never seen
-    (cast landed off the play region).
+    """Poll find_lure after a cast and return (landed (x, y), frame): the
+    bobber's FARTHEST x = the landing (it reels in after landing, so max-x is
+    the landing, not the settled/retracted read). Exits early once the bobber
+    retracts past the max or vanishes after being seen, keeping the grab count
+    low. (None, None) if never seen (cast landed off the play region).
+
+    The cast power is the charge bar (returned by charge_and_release at
+    release), not measured here — this poll only locates the bobber to classify
+    the hit and supply landed_dist as the model's training target.
 
     When frames_dir is set (--save-frames), every poll frame is saved with the
     find_lure x (or NA) in the name — for debugging which moment the landing
-    read latches onto (the same hold landing at wildly different x, #58)."""
+    read latches onto (#58)."""
     best, best_frame = None, None   # (x, y) at the FARTHEST x = the landing
-    charge = 0                      # max charge-bar fill over the poll (stable)
     seen = False
     deadline = time.time() + settle_s
     j = 0
@@ -117,7 +133,6 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
             play["width"], play["height"],
         )
         lure = find_lure(post)
-        charge = max(charge, find_charge_level(post))
         if frames_dir is not None:
             lx = lure[0] if lure is not None else "NA"
             save_frame(frames_dir / f"cast{cast_idx:02d}_p{j:02d}_x{lx}.png", post)
@@ -131,7 +146,7 @@ def _measure_landing(win_left, win_top, play, settle_s, poll_s,
         elif seen:
             break                  # bobber vanished after landing -> done
         time.sleep(poll_s)
-    return best, best_frame, charge
+    return best, best_frame
 
 
 def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tuple[int, int]:
@@ -171,17 +186,17 @@ def run():
         samples = fetch_cast_samples(db)
         model = fit_cast_model(samples)
         if model is None:
-            print(f"cast model: not fitted ({len(samples)} measured casts "
-                  f"< {MIN_SAMPLES}) — exploring holds "
-                  f"[{EXPLORE_HOLD_MIN_MS},{EXPLORE_HOLD_MAX_MS}] ms")
+            print(f"cast model: not fitted ({len(samples)} charged casts "
+                  f"< {MIN_SAMPLES}) — exploring charge levels "
+                  f"[{EXPLORE_CHARGE_MIN},{EXPLORE_CHARGE_MAX}]")
         else:
             lo, hi = model.reach_px()
             print(f"cast model: fitted on {model.n} casts — "
-                  f"hold {model.hold_min_ms}-{model.hold_max_ms} ms reaches "
+                  f"charge {model.charge_min}-{model.charge_max} reaches "
                   f"{lo:.0f}-{hi:.0f} px")
         started_at = time.time()
-        stats = {"n_casts": 0, "points_total": 0, "max_streak": 0,
-                 "end_reason": "process_exit"}
+        stats = {"n_casts": 0, "n_not_ready": 0, "points_total": 0,
+                 "max_streak": 0, "end_reason": "process_exit"}
         try:
             _run_inner(session_started, db, code_commit, model, stats,
                        save_frames=save_frames)
@@ -198,6 +213,7 @@ def run():
                 attempt_idx=1,
                 ended_at=datetime.now().isoformat(timespec="seconds"),
                 n_casts=stats["n_casts"],
+                n_not_ready=stats["n_not_ready"],
                 points_total=stats["points_total"] or None,
                 max_streak=stats["max_streak"],
                 duration_s=round(time.time() - started_at, 1),
@@ -229,6 +245,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
     last_start_click = 0.0
     last_active_time = time.time()   # wall-clock the cast bar was last seen
     streak = 0
+    not_ready_streak = 0   # consecutive rod-not-ready aborts (one print/episode)
     while True:
         check_failsafe()
         try:
@@ -315,31 +332,55 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
 
         if explore:
-            hold_ms = random.randint(EXPLORE_HOLD_MIN_MS, EXPLORE_HOLD_MAX_MS)
+            target_charge = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
             target, aim_mode = None, "explore"
-            predicted = distance_for_hold(model, hold_ms) if model else None
         else:
             target = choose_target(fish, model, origin_x)
             if target is None:
-                hold_ms = random.randint(EXPLORE_HOLD_MIN_MS, EXPLORE_HOLD_MAX_MS)
+                target_charge = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
                 aim_mode = "fallback"
-                predicted = distance_for_hold(model, hold_ms) if model else None
             else:
-                hold_ms = hold_for_distance(model, target["target_dist"])
+                target_charge = charge_for_distance(model, target["target_dist"])
                 aim_mode = "model"
-                predicted = distance_for_hold(model, hold_ms)
+        predicted = distance_for_charge(model, target_charge) if model else None
 
-        # Fire immediately on the decision — the fish move, so any latency
-        # between sampling positions and casting biases the target (the
-        # hoops/darts click-timing rule). Bookkeeping runs after the cast.
+        # Closed-loop cast: hold while polling the charge bar, release at
+        # target_charge. The cast distance is set by the charge level we release
+        # at (not where the click lands), so there's no sampled-then-stale
+        # latency to fight as in the click-timing games — but no disk writes go
+        # between the decision and the hold. The read_charge closure grabs the
+        # play crop and reads the left-edge fill each poll.
         fired_at = datetime.now().isoformat(timespec="milliseconds")
         cx = win_left + play["left"] + play["width"] // 2
         cy = win_top + play["top"] + play["height"] // 2
-        hold(cx, cy, hold_ms)
+
+        def _read_charge():
+            crop = grab_region(win_left + play["left"], win_top + play["top"],
+                               play["width"], play["height"])
+            return find_charge_level(crop)
+
+        charge, ready = charge_and_release(
+            cx, cy, target_charge, _read_charge,
+            poll_s=CHARGE_POLL_S, ready_grace_s=CHARGE_READY_GRACE_S,
+            max_hold_s=CHARGE_MAX_HOLD_S)
+
+        if not ready:
+            # Rod not ready: the previous lure is still reeling in (the bar never
+            # left 0). Skip this cast entirely — don't log/count it — and retry
+            # after a beat. One print per waiting episode (reset on a real cast).
+            stats["n_not_ready"] += 1
+            if not_ready_streak == 0:
+                print("rod not ready (charge bar 0) — waiting for the lure to "
+                      "reel in")
+            not_ready_streak += 1
+            time.sleep(NOT_READY_RETRY_S)
+            continue
+        not_ready_streak = 0
         stats["n_casts"] += 1
 
         tag = (f"{target['kind']}@{target['target_dist']}px" if target else "explore")
-        print(f"cast #{stats['n_casts']} hold={hold_ms}ms [{aim_mode}] -> {tag} "
+        print(f"cast #{stats['n_casts']} charge={charge} (aim {target_charge}) "
+              f"[{aim_mode}] -> {tag} "
               f"(fish={len(fish)} mines={len(mines)} streak={streak})")
 
         row_id = log_cast(
@@ -348,13 +389,14 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             attempt_idx=1,
             cast_idx=stats["n_casts"],
             fired_at=fired_at,
-            hold_ms=hold_ms,
+            hold_ms=None,           # closed-loop: charge is the control, not a fixed hold
             aim_mode=aim_mode,
             cast_origin_x=origin_x,
             cast_origin_y=origin_y,
             target_kind=(target["kind"] if target else "explore"),
             target_x=(target["x"] if target else None),
             target_dist_px=(target["target_dist"] if target else None),
+            target_charge_level=target_charge,
             predicted_dist_px=(int(predicted) if predicted is not None else None),
             streak_before=streak,
             n_fish=len(fish),
@@ -365,15 +407,12 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             source="bot",
         )
 
-        # Measure the cast. The bobber landing (max-x poll) classifies what was
-        # hit, but the CHARGE-BAR fill (charge) is the robust distance signal —
-        # always in-crop and stable, logged every cast even when the bobber
-        # lands off-crop (then landed_* are NULL but charge_level still
-        # captures the cast power, #58). The charge<->distance model + aiming
-        # off it is the next step once enough charge data is logged.
-        lure, post, charge = _measure_landing(win_left, win_top, play,
-                                              CAST_SETTLE_S, LANDING_POLL_S,
-                                              frames_dir, stats["n_casts"])
+        # Locate the bobber landing (max-x poll) to classify the hit and supply
+        # landed_dist (the charge->distance model's training target). The cast
+        # power is `charge` from the release above — the robust, in-crop signal.
+        lure, post = _measure_landing(win_left, win_top, play,
+                                      CAST_SETTLE_S, LANDING_POLL_S,
+                                      frames_dir, stats["n_casts"])
         landed_x = landed_dist = landed_kind = points = made = None
         if lure is not None:
             landed_x, landed_y = lure
