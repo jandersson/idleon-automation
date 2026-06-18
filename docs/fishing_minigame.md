@@ -414,8 +414,9 @@ The reader matches each white-fill glyph against `assets/digit_templates/<d>.png
 captured **through the same white-fill pipeline** the live reader uses (the
 catching lesson — a template from another pipeline mismatches). 0/2/6 were seeded
 from botrun_225352 ("0 PTS" / "26 BEST"); 1/3/4/5/8/9 were added from the
-botrun_120520 live run (score climbed 0→16). **Only 7 is still missing** (no
-readable frame caught a 7). The capture flow: `uv run fishing --save-frames` saves
+botrun_120520 live run (score climbed 0→16); 7 from botrun_123328 ("7 PTS"). The
+**set is now complete (0–9)** — both live runs (46 crops) read monotonic with no
+None and no misreads. The capture flow: `uv run fishing --save-frames` saves
 each cast's before/after PTS crop to `assets/captures/botrun_*/score_*.png`, then
 `fishing-capture-digits` dumps the isolated glyphs + a contact sheet to label and
 copy into `digit_templates/`.
