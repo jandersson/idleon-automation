@@ -14,6 +14,15 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 **Push directly to `main`.** Solo repo; the per-change PR roundtrip isn't worth the overhead. Was tried briefly on 2026-05-24 (#29, #30) and reverted — branches added latency without value. The Claude PR review bot (#28) is still wired up for any PRs that do get opened (e.g. external contributions), but the default flow is commit + push to main.
 
+**Concurrent CLAUDE CODE sessions → one git worktree + branch each.** The exception to "push to main": when two **Claude Code dev sessions** edit the repo at the same time — e.g. one improving darts (in automode), one on fishing. This is about the *coding sessions*, not the game-playing bots. Both sessions in the same directory share one working tree, **index**, and `HEAD`, so one session's `git commit` sweeps the other's staged files into its commit (observed 2026-06-18: staged fishing changes landed in the other session's `fix(darts)` commit). Branching alone doesn't help — a single checkout has one index. The fix is isolation *before* launch:
+
+```bash
+git worktree add ../idleon-<scope> -b <scope>     # e.g. ../idleon-darts -b darts
+git -C ../idleon-<scope> push -u origin <scope>   # set upstream (push.default=simple needs it)
+```
+
+Launch the second session with that dir as its cwd (a session's cwd is fixed at start, so this must precede launch). Each session commits/pushes its own branch; integrate by merging to `main` (`git checkout main && git merge --no-edit <scope> …`) — **conflict-free** because the minigames live in disjoint dirs. Refresh a reused worktree with `git -C ../idleon-<scope> merge main` before relaunching; remove with `git worktree remove`. (Aside: if a game bot runs from a worktree, its `common.auto_commit` DB push follows that worktree's branch too, so `darts.db`/`fishing.db` stay on-branch — no extra handling.)
+
 **Add unit tests for new stuff.** New pure-logic helpers, parsers, schema modules, regression guards — write a test alongside the change in `tests/`. Match the existing style: fast, self-contained, no live captures. CV-against-real-frames stays manual (visual, calibrated by user).
 
 **File an issue for every refinement you find.** A refinement, deferred edge case, approximation a better approach could replace, follow-up a fix unblocks, or "looks off" anomaly that you notice but don't finish now goes in a GitHub issue (`gh issue create`, matching the existing label scheme) — not just chat, a code comment, or a docs caveat. Bias to over-file; cross-link the issue with the docs/code. See [`.claude/AGENTS.md`](.claude/AGENTS.md).
