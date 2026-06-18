@@ -318,11 +318,22 @@ mines detected in ~840 frames.
 Consequence for the cast-15 case: the `eel@129` was a mine core, now excluded —
 so that overlap no longer scores a phantom eel (it falls to a miss, since the
 green that was actually caught was fully occluded by the mine and isn't
-detectable from those frames). **Real eel detection is still unvalidated** —
-there is not one confirmed clean real-eel sample yet; the S≥150 floor is
-provisional until eels are seen un-occluded. Open: targeting eels for their 2
-points needs that calibration; mine *avoidance* (don't cast at a mine-only spot)
+detectable from those frames). Mine *avoidance* (don't cast at a mine-only spot)
 is now possible since mines are detected.
+
+### The real eel is a curled fish — matched by template (run 18, cast 10)
+
+A clean, un-occluded eel finally showed up: a **yellow CURLED fish**. It defeats
+colour detection two ways — its hue/sat (H12-24, S~122) is the **tan dock's**
+(S~121), so a relaxed colour gate floods 68% of no-eel frames; and the curl
+gives **fill ~0.20**, far under the square-fish gate. So eel is dropped from
+`FISH_HSV` and matched by its distinctive **curled shape** via template
+(`find_eel`, `assets/eel.png`, cropped from cast 10) — like the lure. Template
+match **1.00** on the eel (0.95 as it swims) vs **≤0.63** across 263 no-eel
+frames; threshold 0.75. Corpus-wide it fires **only in the two streak-3 runs**
+(13 + 14) and zero in every no-streak run. `choose_target` can now target eels
+for their 2 points. Caveat: one template/pose so far — add crops if other eel
+animations under-match.
 
 ## Sources
 
