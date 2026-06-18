@@ -476,6 +476,12 @@ Consequences + fix:
 - **Caveat on old data**: pre-fix `landed_kind` counts (the "1 whale", some
   "squid") are unreliable — some were converged multi-catches. Points/`made` were
   always right (the delta); only the kind labels were.
+- **Refinement (deferred, #66)**: the delta alone still can't name a multi-catch
+  or tell a lone eel from two greens. Cross-checking the delta against which fish
+  actually VANISHED near the landing (`pre_fish`/`post_fish`) would attribute the
+  kind(s) accurately on measured catches. Deferred because kind drives no decision
+  today (points/streak come from the delta); it's data-quality + a prereq for
+  kind-aware strategy.
 
 ## Close-to-the-dock fish — reach floor, not detection (#58, 2026-06-18)
 
