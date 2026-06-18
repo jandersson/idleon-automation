@@ -38,7 +38,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
     find_fish, find_mines, find_lure, find_game_over, find_cast_bar,
-    find_play_button, find_charge_fill,
+    find_play_button, find_charge_fill, find_eel,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -523,7 +523,6 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             pre_fish = find_fish(pre_frame, bar=bar) if pre_frame is not None else []
             post_fish = find_fish(post, bar=bar)
             landed_kind, made = _classify_catch(pre_fish, post_fish, landed_x)
-            points = FISH_VALUE.get(landed_kind, 0)
             landed_dist = abs(landed_x - origin_x)
             # Catch-geometry telemetry: lure offset to the nearest pre-cast fish
             # (lure - fish). made doesn't track the x gap alone, so log dx AND dy.
@@ -531,11 +530,26 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             if nearest is not None:
                 catch_dx = landed_x - nearest["x"]
                 catch_dy = landed_y - nearest["y"]
+        elif target is not None and target["kind"] == "eel":
+            # Far eel casts often don't settle a measurable bobber, so the
+            # landing-based test never runs and the catch goes unrecorded (run
+            # 19 caught 2 eels logged as nothing). But an eel (<=1 on the bar,
+            # and the cast aimed right at it) is caught if it's GONE from the bar
+            # afterward — check that directly (#63).
+            after = grab_region(win_left + play["left"], win_top + play["top"],
+                                play["width"], play["height"])
+            if find_eel(after, bar=find_cast_bar(after)) is None:
+                landed_kind, made, landed_x = "eel", 1, target["x"]
+
+        if made:
+            points = FISH_VALUE.get(landed_kind, 0)
             stats["points_total"] += points
-            # Streak: any fish catch extends it; a Whale catch resets to 1
-            # (wiki); a miss breaks it.
-            streak = (1 if landed_kind == "whale" else streak + 1) if made else 0
+            # Streak: any fish catch extends it; a Whale catch resets to 1 (wiki).
+            streak = 1 if landed_kind == "whale" else streak + 1
             stats["max_streak"] = max(stats["max_streak"], streak)
+        elif made == 0:
+            streak = 0          # a measured miss breaks the streak
+        # made is None (the cast wasn't measured) -> streak unchanged
         set_outcome(
             db, row_id,
             landed_x=landed_x,
