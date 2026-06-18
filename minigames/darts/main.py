@@ -1052,6 +1052,13 @@ def _run_inner(
         if shot_stats["red_streak"] and shot_stats["red_streak"] % RED_CHAIN_FOR_LIFE == 0:
             print(f"  [red-chain] {shot_stats['red_streak']} consecutive bullseyes "
                   f"— +1 life granted (Throwy Darts: {RED_CHAIN_FOR_LIFE} reds in a row)")
+        # Surface the detected band in the live log so the launcher GUI
+        # logger (which streams the bot's stdout line-by-line) shows which
+        # stripe the dart landed in, not just hit/miss.
+        if stripe_color is not None:
+            print(f"  [band] {stripe_color} (+{score_increment})")
+        elif diff_changed:
+            print("  [band] hit — band unresolved (score OCR)")
         log_throw(
             throw_db,
             session_started=session_started,
