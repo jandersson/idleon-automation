@@ -16,6 +16,8 @@ The README covers per-minigame run commands and tuning knobs — don't duplicate
 
 **Add unit tests for new stuff.** New pure-logic helpers, parsers, schema modules, regression guards — write a test alongside the change in `tests/`. Match the existing style: fast, self-contained, no live captures. CV-against-real-frames stays manual (visual, calibrated by user).
 
+**File an issue for every refinement you find.** A refinement, deferred edge case, approximation a better approach could replace, follow-up a fix unblocks, or "looks off" anomaly that you notice but don't finish now goes in a GitHub issue (`gh issue create`, matching the existing label scheme) — not just chat, a code comment, or a docs caveat. Bias to over-file; cross-link the issue with the docs/code. See [`.claude/AGENTS.md`](.claude/AGENTS.md).
+
 ## Setup
 
 `pip install -e .` or `uv sync` — both work, `uv.lock` is checked in. Python 3.11+.

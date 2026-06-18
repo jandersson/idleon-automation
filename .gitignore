@@ -24,7 +24,10 @@ data/
 # Editor / OS
 .vscode/
 .idea/
-.claude/
+# Ignore local Claude settings but TRACK the shared agent guidance. (A file under
+# a fully-ignored dir can't be re-included, so ignore the contents + negate.)
+.claude/*
+!.claude/AGENTS.md
 .DS_Store
 Thumbs.db
 
