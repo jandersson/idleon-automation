@@ -367,6 +367,51 @@ curled) and a **mine** — squid partly overlapping the eel. Findings:
   support firms up, reachable squids (3 pts) should start getting targeted; worth
   watching that high-value fish near the reach edge actually get chosen.
 
+## Background-invariant fish detection — masked-ZNCC sprites (#75, 2026-06-18)
+
+Absolute-HSV color gates break per biome because the minigame is an overlay over
+a **live, varying world**: the tan dock read as `eel` (#63), the turquoise beach
+water flooded `green` and left the bot stuck on the no-fish path (#72). The fish
+SPRITES are identical pixels regardless of biome — only the world behind them
+changes — so detection should match the **sprite**, not its colour-vs-background.
+
+`detector.find_fish_sprites` does per-kind, multi-pose **masked-ZNCC** matching
+over the cast-bar band: a masked `TM_CCORR_NORMED` sweep localizes candidate peaks
+(iterative max + neighbourhood suppression → multiple fish), each confirmed by
+`masked_match_confidence` (ZNCC over the sprite's masked pixels) at
+`SPRITE_ZNCC_THRESHOLD=0.55`. The mask drops the world behind the overlay, so the
+same fish scores ~0.9 over any biome. Templates: `assets/fish_<kind>_<n>.png` +
+`_mask.png`, bootstrapped from the existing corpus (green×2, squid×2 poses).
+
+Validated offline (the cross-biome feasibility that justified the rebuild):
+- masked ZNCC at the true fish location — **same biome 0.86–0.92, turquoise beach
+  0.90, no-fish background 0.27–0.32** (clean ~0.9-vs-0.3 separation across
+  totally different biomes; the JPG-shifted screenshot still matched at 0.88).
+- Integrated `find_fish` over the corpus: **99% of HSV greens + 100% of HSV
+  squids recovered, +8 fish HSV had MISSED found, 0 true false positives.** A flat
+  green rectangle (which HSV calls a fish) is correctly rejected (not the sprite).
+
+Merged **additively** into `find_fish`: a fish counts if HSV OR the sprite fires.
+The dedup is **kind-aware** — a sprite det suppresses only a SAME-KIND HSV
+duplicate, never a different kind. This is load-bearing: a proximity-only dedup
+dropped a converged eel(2)/whale(5) sitting within `SPRITE_DEDUP_PX=12` of a
+green/squid sprite, erasing the high-value fish from `choose_target` in exactly
+the converged-cluster regime where it matters (caught by a multi-agent review).
+
+Scope + open items:
+- **Whale** has no sprite (never captured, #69) → stays HSV-only; provisional.
+- **Eel** keeps its own curled-shape template (`find_eel`), but on UNMASKED CCOEFF
+  (threshold 0.75) — which under-matches under occlusion (0.63 with a squid
+  overlap). **Migrating the eel to this masked-ZNCC framework** (add an eel mask,
+  fold into `find_fish_sprites`) should fix that and unify the three detectors —
+  follow-up under #75.
+- Threshold 0.55 sits ~0.04 below the validated true-fish floor; safe given the
+  ~0.20 gap to background and the now kind-aware dedup (a spurious green/squid
+  sprite can no longer delete an eel/whale), but tunable if a new biome shows a
+  phantom green/squid.
+- HSV green/squid are retained as a fallback; retiring them (sprite-only for those
+  kinds) is the eventual step once ZNCC is proven live across biomes.
+
 ## PTS score delta is the ground-truth catch signal (#58/#63, 2026-06-18)
 
 The bobber-disappearance / eel-absence heuristics miss catches they can't see:
