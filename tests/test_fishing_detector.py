@@ -52,6 +52,34 @@ def test_find_cast_bar_ignores_narrow_blue():
     assert find_cast_bar(img) is None
 
 
+def test_find_cast_bar_accepts_right_clipped_bar():
+    # Corner cut-off (game bug): the bar is clipped at the window's RIGHT edge, so
+    # it's narrower than BAR_MIN_WIDTH (250) but pinned to the edge — accept it at
+    # the reduced floor so the visible left portion is playable (#corner-cutoff).
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 103, 470, 700, _BAR_HSV)   # 230px bar, right edge == window width
+    bar = find_cast_bar(img)
+    assert bar is not None
+    x, y, w, h = bar
+    assert x == 470 and x + w == 700        # pinned to the right edge, visible width kept
+
+
+def test_find_cast_bar_rejects_left_clipped_short_bar():
+    # A short bar clipped at the LEFT edge cuts off the origin/charge/score anchor —
+    # reject it (needs the full BAR_MIN_WIDTH), so the bot doesn't mis-anchor (#58).
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 103, 0, 230, _BAR_HSV)     # 230px bar pinned to the LEFT edge
+    assert find_cast_bar(img) is None
+
+
+def test_find_cast_bar_rejects_midscreen_narrow_bar():
+    # A 230px strip NOT touching either edge is below BAR_MIN_WIDTH -> rejected
+    # (only an edge-clipped bar earns the reduced floor).
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 103, 300, 530, _BAR_HSV)
+    assert find_cast_bar(img) is None
+
+
 def test_find_charge_level_measures_left_red_bar():
     # the charge bar is a thin red strip at the far-left edge; its fill height
     # is the cast-power signal (#58). Empty -> 0.

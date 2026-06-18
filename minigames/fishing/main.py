@@ -51,7 +51,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from minigames.fishing.detector import (
     find_fish, find_mines, find_lure, find_game_over, find_cast_bar,
-    find_play_button, find_charge_fill, find_eel,
+    find_play_button, find_charge_fill, find_eel, BAR_CLIP_MARGIN,
 )
 from minigames.fishing.fish_log import (
     open_db, log_cast, set_outcome, log_run, fetch_cast_samples,
@@ -550,6 +550,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
     no_fish_since = None  # wall-clock the bar went fish-less (None = fish seen) (#72)
     nofish_warned = False
     last_nofish_save = 0.0
+    clipped_notified = False  # warned once that the bar is cut off at the screen edge
     while True:
         check_failsafe()
         try:
@@ -612,6 +613,16 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             game_running = True
             print(f"Minigame active (cast bar at {bar}) — casting.")
         last_active_time = time.time()
+        # Corner cut-off (game bug): the board doesn't fully render in the right
+        # corner, so the cast bar is clipped at the window's right edge. The bot
+        # plays the visible (left) portion — origin/charge/score are intact — but
+        # the far right is missing, so warn once (reposition for the full board).
+        if not clipped_notified and bar_full[0] + bar_full[2] >= win_w - BAR_CLIP_MARGIN:
+            clipped_notified = True
+            print(f"NOTE: cast bar is cut off at the screen's right edge "
+                  f"(width {bar_full[2]}px vs ~304 full) — the board is incomplete "
+                  f"(corner cut-off bug). Playing the visible portion; move away "
+                  f"from the corner for the full board.")
 
         is_over, go_conf = find_game_over(frame)
         if is_over:

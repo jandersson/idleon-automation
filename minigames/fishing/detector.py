@@ -113,6 +113,18 @@ MIN_BLOB_AREA = 40
 BAR_HSV = ((102, 150, 90), (118, 255, 205))
 BAR_MIN_WIDTH = 250          # the track spans a wide strip
 BAR_MIN_ASPECT = 6.0         # much wider than tall
+# Corner cut-off (game bug): standing in the RIGHT corner, the board doesn't
+# fully render — the cast bar is CLIPPED at the screen's right edge (observed
+# 2026-06-18: a 230px bar pinned to x=window_w, below BAR_MIN_WIDTH -> find_cast_bar
+# returned None -> the bot went blind). A bar whose right edge touches the window
+# edge is accepted at a reduced floor so the VISIBLE (left) portion can still be
+# played — the cast origin, charge thermometer, and score all sit at the bar's
+# left, which is intact in the right corner. A LEFT-clipped bar is NOT accepted at
+# the reduced floor: its left edge (the origin/charge/score anchor) is the cut-off
+# side, so a short left-clipped bar would mis-anchor everything (#58) — better to
+# return None and not play.
+BAR_CLIP_MARGIN = 4          # bar right edge within this many px of the window = clipped
+BAR_MIN_WIDTH_CLIPPED = 200  # reduced floor for a right-clipped bar (still substantial)
 # Fish/mines sit ON the bar but extend above/below its thin saturated core,
 # so the detection window is the bar's x-extent and its y +/- this pad.
 BAR_VPAD = 20
@@ -165,8 +177,14 @@ def find_cast_bar(frame: np.ndarray) -> tuple[int, int, int, int] | None:
     are lighter / less saturated, so a saturation floor + a wide-aspect filter
     isolate it. Used to confine fish/mine detection to the track (the world
     scenery shares the fish hues otherwise). Only the bar's saturated core is
-    matched; callers pad vertically (BAR_VPAD) for the fish that sit on it."""
+    matched; callers pad vertically (BAR_VPAD) for the fish that sit on it.
+
+    A bar CLIPPED at the window's RIGHT edge (the corner cut-off bug) is accepted
+    at the reduced BAR_MIN_WIDTH_CLIPPED floor so the visible left portion can be
+    played; a left-clipped or mid-screen narrow strip still needs the full
+    BAR_MIN_WIDTH (a left-clip would cut off the origin/charge/score anchor)."""
     hsv = _to_hsv(frame)
+    win_w = frame.shape[1]
     mask = _mask(hsv, *BAR_HSV)
     # bridge the gaps the fish/mines punch in the strip so it stays one contour
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 25), np.uint8))
@@ -174,7 +192,11 @@ def find_cast_bar(frame: np.ndarray) -> tuple[int, int, int, int] | None:
     best, best_w = None, 0
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w >= BAR_MIN_WIDTH and w / max(1, h) >= BAR_MIN_ASPECT and w > best_w:
+        if w / max(1, h) < BAR_MIN_ASPECT:
+            continue
+        clipped_right = (x + w) >= win_w - BAR_CLIP_MARGIN
+        min_w = BAR_MIN_WIDTH_CLIPPED if clipped_right else BAR_MIN_WIDTH
+        if w >= min_w and w > best_w:
             best, best_w = (x, y, w, h), w
     return best
 
