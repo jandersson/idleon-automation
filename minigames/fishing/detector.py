@@ -34,10 +34,16 @@ ASSETS = Path(__file__).parent / "assets"
 # positives). See docs/fishing_minigame.md.
 FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # Green Fish: in-game fill is H76 S79 V255 — the S floor must be LOW (was
-    # 100, which excluded the fish entirely) and the hue capped BELOW the cast
-    # bar's cyan top-edge (H~98) so the fish doesn't merge into it. Verified on
-    # the capture frames (one clean ~17x17 blob per frame).
-    "green": ((70, 50, 130), (92, 255, 255)),
+    # 100, which excluded the fish entirely). The hue is capped at 88: the
+    # original 92 was "below the cast bar's cyan edge", but a BRIGHT BEACH biome
+    # (blue sky + TURQUOISE water, vs the calibration area's orange sunset) puts
+    # the water at H90-100, which flooded the green mask inside the bar window and
+    # buried the fish in a non-square blob -> find_fish returned nothing and the
+    # bot sat stuck (#72). The seafoam-green fish there reads <=88, the turquoise
+    # water >=90, so 88 separates them with a ~2-hue margin. Validated zero-
+    # regression on 215 old-area frames (green detections 179 = 179) and recovers
+    # the new-area fish. One clean ~17x17 blob per frame.
+    "green": ((70, 50, 130), (88, 255, 255)),
     # Eel is NOT here — it's a yellow CURLED fish whose colour (H12-24, S~122)
     # is indistinguishable from the tan dock (S~121), so HSV either misses it or
     # floods 68% of frames with dock false positives (#63). It's matched by its

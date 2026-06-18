@@ -140,6 +140,22 @@ def test_shape_filter_rejects_thin_scenery_edge():
     assert all(not (175 <= x <= 215) for x in xs)    # thin strip (~x195) dropped
 
 
+def test_green_bound_excludes_turquoise_water_keeps_seafoam_fish():
+    # A bright-beach biome puts turquoise WATER at H~90-92, which the old green
+    # upper bound (92) let flood the bar window and bury the fish -> find_fish
+    # returned nothing and the bot sat stuck (#72). The bound is now 88: a
+    # seafoam-green fish (H<=88) is still detected, but a turquoise square (H91)
+    # on the same bar is NOT classified as a fish. Guards against widening it back.
+    img = _bgra()
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)         # bar
+    _fill(img, 96, 112, 300, 317, [85, 200, 180])   # seafoam fish (H85) ON the bar
+    _fill(img, 96, 112, 380, 397, [91, 120, 200])   # turquoise water square (H91)
+    bar = find_cast_bar(img)
+    fish = [d for d in find_fish(img, bar=bar) if d["kind"] == "green"]
+    assert any(292 <= d["x"] <= 325 for d in fish)          # the fish is found
+    assert all(not (372 <= d["x"] <= 405) for d in fish)    # the H91 water is not
+
+
 def test_bar_restriction_keeps_on_bar_fish_drops_scenery():
     img = _bgra()
     _fill(img, 95, 109, 100, 600, _BAR_HSV)      # bar
