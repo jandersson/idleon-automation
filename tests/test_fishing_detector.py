@@ -96,18 +96,19 @@ def test_find_fish_keeps_green_on_a_mine():
     assert any(d["kind"] == "green" for d in find_fish(img, mines=mines))
 
 
-def test_find_eel_matches_its_template_and_ignores_green():
-    # The eel is found by its curled-shape template, not colour. Pasting the
-    # committed eel sprite is matched; a plain green fish is not.
-    tmpl = cv2.imread(str(Path("minigames/fishing/assets/eel.png")))
-    assert tmpl is not None
+def test_find_eel_matches_its_sprite_and_ignores_green():
+    # The eel migrated to the masked-ZNCC sprite path (#77): find_eel is a wrapper
+    # over find_fish_sprites, so it needs the cast bar. Pasting the real eel sprite
+    # on the bar is matched; a flat green block is not (different pixels).
     img = _bgra(h=200, w=700)
-    img[80:80 + tmpl.shape[0], 300:300 + tmpl.shape[1], :3] = tmpl
-    res = find_eel(img)
-    assert res is not None and 295 <= res[0] <= 325
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)
+    _paste_sprite(img, "fish_eel_1.png", 300, 86)
+    res = find_eel(img, bar=find_cast_bar(img))
+    assert res is not None and 300 <= res[0] <= 330
     green_only = _bgra(h=200, w=700)
+    _fill(green_only, 95, 109, 100, 600, _BAR_HSV)
     _fill(green_only, 95, 111, 300, 316, _GREEN_HSV)
-    assert find_eel(green_only) is None
+    assert find_eel(green_only, bar=find_cast_bar(green_only)) is None
 
 
 def test_find_charge_fill_reads_thermometer_left_of_cast_bar():

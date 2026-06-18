@@ -55,16 +55,16 @@ def test_vote_among_multiple_valid_increments():
     assert after == 23
 
 
-def test_falls_back_to_last_non_none_when_no_valid():
-    """When every candidate produces an out-of-range increment, fall back
-    to the most recent non-None reading. Preserves pre-multi-pass
-    behavior so logged data isn't worse than before."""
+def test_no_valid_increment_returns_none_none():
+    """When every candidate produces an out-of-set increment (a misread —
+    the score can only move +1/+2/+3/+5 per throw), return (None, None)
+    rather than logging a bogus 10/20 (#78). hit/miss is captured
+    separately by the score diff, so nothing of value is lost."""
     after, incr = _pick_best_score_after(
         score_before_int=10,
-        post_readings=[None, 195, -4, None, 200],  # none of -5/185/190 are valid
+        post_readings=[None, 195, -4, None, 200],  # -5/185/190 all invalid
     )
-    assert after == 200
-    assert incr == 190  # 200 - 10, even though out of {1,2,3,5}
+    assert (after, incr) == (None, None)
 
 
 def test_pre_update_readings_filtered_naturally():

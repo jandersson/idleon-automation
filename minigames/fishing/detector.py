@@ -46,11 +46,10 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # regression on 215 old-area frames (green detections 179 = 179) and recovers
     # the new-area fish. One clean ~17x17 blob per frame.
     "green": ((70, 50, 130), (88, 255, 255)),
-    # Eel is NOT here — it's a yellow CURLED fish whose colour (H12-24, S~122)
-    # is indistinguishable from the tan dock (S~121), so HSV either misses it or
-    # floods 68% of frames with dock false positives (#63). It's matched by its
-    # distinctive curled SHAPE instead (find_eel, assets/eel.png) — template
-    # match 1.00 on the eel vs <=0.63 across 263 no-eel frames.
+    # Eel is NOT here — its colour (H12-24, S~122) is indistinguishable from the
+    # tan dock (S~121), so HSV can't find it (#63). It's a masked-ZNCC SPRITE kind
+    # now (fish_eel_*.png + GrabCut body masks, in SPRITE_KINDS / find_fish_sprites,
+    # #77) — the curl is matched by its pixels with the warm background masked out.
     # Squid (purple, DARK V~60). Validated live on the first real squid
     # (cast09/botrun_120520): detected in 5/6 frames, no false positives (#63).
     "squid": ((132, 60, 30), (150, 255, 170)),
@@ -66,11 +65,13 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
 # the sprite's own pixels, the world behind it dropped) — `green`/`squid` template
 # from one biome scores ~0.9 on the SAME fish in any other, vs ~0.3 on background.
 # Validated: 99-100% of HSV detections recovered, +8 HSV-missed fish found, 0 true
-# false positives, cross-biome (turquoise beach) green at 0.88. Whale has no
-# template yet (never captured, #69) so it stays HSV-only; eel keeps its own
-# curled-shape template (find_eel). Sprite library: assets/fish_<kind>_<n>.png +
-# a _mask.png isolating the body (captured/validated through the live pipeline).
-SPRITE_KINDS = ("green", "squid")
+# false positives, cross-biome (turquoise beach) green at 0.88. The EEL is here
+# too (#77): its colour == the dock, but a GrabCut body mask lets masked ZNCC
+# match the curl's pixels — fixing the occlusion under-match (0.63 unmasked ->
+# ~0.97 masked). Whale has no template yet (never captured, #69) so it stays
+# HSV-only. Sprite library: assets/fish_<kind>_<n>.png + a _mask.png isolating the
+# body (green/squid masks from HSV; eel masks from GrabCut, its colour==background).
+SPRITE_KINDS = ("green", "squid", "eel")
 SPRITE_SCALES = (0.9, 1.0, 1.1)    # fish size is window-relative; small scale slack
 SPRITE_CCORR_FLOOR = 0.55          # masked-CCORR localization candidate floor
 SPRITE_ZNCC_THRESHOLD = 0.55       # accept gate; true fish >=0.59 (incl. occluded), background <~0.35
@@ -218,11 +219,8 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
         mask = _restrict(_mask(hsv, low, high), bar)
         for x, y in _blob_centroids(mask, min_area, FISH_ASPECT_RANGE, FISH_MIN_FILL):
             fish.append({"x": x, "y": y, "kind": kind})
-    # Eel: matched by its curled SHAPE (its colour can't be told from the dock,
-    # #63). Skip a match inside a mine as a safety against a chance template hit.
-    eel = find_eel(frame, bar=bar)
-    if eel is not None and not _in_a_mine(eel[0], eel[1], mines):
-        fish.append({"x": eel[0], "y": eel[1], "kind": "eel"})
+    # (Eel is no longer matched here — it's a masked-ZNCC SPRITE kind now, handled
+    # in the sprite merge below, #77. Green/squid are HSV here AND sprites.)
     if include_megalodon:
         meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
         for x, y in _blob_centroids(_restrict(meg, bar), min_area,
@@ -230,17 +228,21 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
             if _in_a_mine(x, y, mines):
                 continue          # mine's red core, not a megalodon
             fish.append({"x": x, "y": y, "kind": "megalodon"})
-    # Background-invariant sprite detections (masked ZNCC, #75) merged ADDITIVELY:
-    # a fish counts if EITHER the HSV gate above OR the sprite match fires. A
-    # sprite det suppresses an HSV det only as a SAME-KIND duplicate (the redundant
-    # green/squid blob at the same spot) — never a different kind. The dedup MUST
-    # be kind-aware: a green/squid sprite must not delete a converged eel(2)/whale
-    # (5)/megalodon sitting within DEDUP_PX, which have no sprite template and
-    # would otherwise vanish from choose_target in exactly the converged-cluster
-    # regime where the high-value fish matters most (#75 review). So HSV still
-    # covers whale/eel/megalodon and the ~1% of green/squid a pose misses, while
-    # the sprite match adds the green/squid HSV drops in a new biome.
+    # Background-invariant sprite detections (masked ZNCC) for green/squid/eel
+    # (#75/#77), merged ADDITIVELY: a fish counts if EITHER the HSV gate above OR
+    # the sprite match fires. A sprite det suppresses an HSV det only as a
+    # SAME-KIND duplicate (the redundant green/squid blob at the same spot) —
+    # never a different kind. The dedup MUST be kind-aware: a green/squid sprite
+    # must not delete a converged whale(5)/megalodon sitting within DEDUP_PX, which
+    # have no sprite template and would otherwise vanish from choose_target in
+    # exactly the converged-cluster regime where the high-value fish matters most
+    # (#75 review). So HSV still covers whale/megalodon and the ~1% of green/squid
+    # a pose misses, while sprites add the green/squid/eel HSV drops in a new biome.
     sprites = find_fish_sprites(frame, bar)
+    # Preserve the eel-in-mine safety from the old curled-template path: drop an
+    # eel sprite det centred inside a mine (a chance match on a mine core).
+    sprites = [s for s in sprites
+               if not (s["kind"] == "eel" and _in_a_mine(s["x"], s["y"], mines))]
     if sprites:
         merged = list(sprites)
         for f in fish:
@@ -315,40 +317,24 @@ def find_lure(frame: np.ndarray, threshold: float = 0.7) -> tuple[int, int] | No
     return (cx, cy) if val >= threshold else None
 
 
-# The eel is a yellow CURLED fish; its colour (H12-24, S~122) is the tan dock's
-# (S~121), so HSV can't find it — but the curl is a distinctive SHAPE, matched by
-# template (assets/eel.png, cropped live from a streak-3 run). Threshold 0.75
-# sits above the worst no-eel frame (0.63 across 263) and below the eel (0.95-1.0)
-# (#63). One template/pose so far — widen with more eel crops if it under-matches.
-EEL_MATCH_THRESHOLD = 0.75
-
-
-def find_eel(frame: np.ndarray, threshold: float = EEL_MATCH_THRESHOLD,
+def find_eel(frame: np.ndarray,
              bar: tuple[int, int, int, int] | None = None) -> tuple[int, int] | None:
-    """Locate the eel by its curled-shape template(s); (x, y) of the best match
-    at/above `threshold`, else None. `bar` is accepted for a consistent signature
-    but the match runs on the whole crop.
+    """(x, y) of the best eel match, or None — a thin wrapper over the masked-ZNCC
+    sprite path (find_fish_sprites). The eel MIGRATED from an unmasked curled-shape
+    template to the same masked-ZNCC framework as green/squid (#77): its colour
+    can't be told from the warm dock/sky, but the SPRITE can be matched with a
+    GrabCut body mask, which fixes the occlusion under-match (the squid-overlapped
+    eel scored 0.63 unmasked / undetected, ~0.97 masked) and unifies the detector.
 
-    Matches against ALL ``assets/eel*.png`` poses and keeps the best. The eel
-    curls into several shapes, and a SINGLE pose under-matches the others at
-    ~0.63 — right at the no-eel ceiling, so there's no threshold that separates
-    them and most eels go undetected (#63). Drop additional clean eel crops
-    (``eel_<tag>.png``) from a ``--save-frames`` run to widen pose coverage."""
-    templates = sorted(ASSETS.glob("eel*.png"))
-    if not templates:
+    Kept as the eel-presence check for main.py's eel-absence catch test. The eel is
+    distinguished from the structurally-similar green by find_fish_sprites'
+    highest-confidence-per-location dedup (eel ~0.98 beats green-on-eel ~0.82).
+    Coords are play-region-relative."""
+    eels = [d for d in find_fish_sprites(frame, bar) if d["kind"] == "eel"]
+    if not eels:
         return None
-    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    best_val, best_xy = -1.0, None
-    for path in templates:
-        template = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        if template is None:
-            continue
-        if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
-            continue
-        (cx, cy), val, _scale = match_multiscale_center(bgr, template)
-        if val > best_val:
-            best_val, best_xy = val, (cx, cy)
-    return best_xy if best_val >= threshold else None
+    best = max(eels, key=lambda d: d["conf"])
+    return (best["x"], best["y"])
 
 
 _SPRITE_CACHE: dict[str, list[tuple[np.ndarray, np.ndarray]]] | None = None

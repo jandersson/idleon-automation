@@ -366,11 +366,15 @@ def _pick_best_score_after(
 ) -> tuple:
     """Choose (score_after_int, score_increment) from a list of OCR
     candidates by requiring the increment to be in VALID_SCORE_INCREMENTS.
-    Vote among valid candidates by frequency; fall back to the last
-    non-None reading when nothing passes the sanity check.
+    Vote among valid candidates by frequency; return (None, None) when
+    nothing passes the sanity check (#78) — the score can only move by
+    +1/+2/+3/+5 per throw, so an out-of-set reading (e.g. a doubled-digit
+    10/20 misread) is a misread, not data. hit/miss is captured separately
+    by the score-region diff, so dropping it loses nothing.
 
-    Returns (best_after, best_increment). Either can be None if no
-    candidate is usable.
+    Returns (best_after, best_increment). When score_before_int is None we
+    can't compute an increment, so we return the last reading with
+    increment None; otherwise either being None means no usable candidate.
     """
     from collections import Counter
     if score_before_int is None:
@@ -385,12 +389,10 @@ def _pick_best_score_after(
         best_incr = incr_counts.most_common(1)[0][0]
         best_after = next(a for i, a in valid if i == best_incr)
         return best_after, best_incr
-    # No valid increment — fall back to last non-None reading (preserves
-    # the pre-multi-pass behavior so we don't lose information when OCR
-    # is completely broken for this throw).
-    for c in reversed(post_readings):
-        if c is not None:
-            return c, c - score_before_int
+    # No valid increment: an out-of-set reading (e.g. a doubled-digit
+    # 10/20 misread) is untrustworthy, so return unknown for both rather
+    # than logging a bogus increment (#78). hit/miss is unaffected — it's
+    # read from the score-region diff (diff_changed), not this value.
     return None, None
 
 
