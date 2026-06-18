@@ -334,8 +334,17 @@ gives **fill ~0.20**, far under the square-fish gate. So eel is dropped from
 match **1.00** on the eel (0.95 as it swims) vs **≤0.63** across 263 no-eel
 frames; threshold 0.75. Corpus-wide it fires **only in the two streak-3 runs**
 (13 + 14) and zero in every no-streak run. `choose_target` can now target eels
-for their 2 points. Caveat: one template/pose so far — add crops if other eel
-animations under-match.
+for their 2 points.
+
+**Two more poses added (botrun_142848, 2026-06-18).** One template wasn't enough:
+on a streak-4 session the single pose matched **0.745** at best and detected **0
+of the session's eels** (the user saw eels go un-fired-at). `find_eel` now matches
+ALL `assets/eel*.png` and keeps the best; `eel_2` (a tight spiral curl) and `eel_3`
+(a compact vertical curl) were cropped from that session's near-misses. Corpus
+result on those 309 frames: **0→4 casts detected** (cast05–08), the new poses
+GENERALISE (cast07/08 weren't templates yet match `eel_3` at 0.94), and **zero
+false positives** — every non-eel cast (mines included) stays **≤0.633**, far
+below 0.75. Add more `eel_<tag>.png` crops if other curls under-match (#63).
 
 ### First live squid + eel cluster (cast09, botrun_120520, 2026-06-18)
 
