@@ -94,6 +94,16 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("landed_y", "INTEGER"),
     ("catch_dx", "INTEGER"),
     ("catch_dy", "INTEGER"),
+    # PTS score read just before the cast and just after the landing; their
+    # delta is the ground-truth catch (the game's own count), which rescues the
+    # far-cast / eel catches the bobber-disappearance heuristic misses (#58/#63).
+    # NULL when a digit isn't captured yet / the read failed (then detect_source
+    # is the fallback heuristic, not 'score').
+    ("score_before", "INTEGER"),
+    ("score_after", "INTEGER"),
+    # Which signal decided the outcome: 'score' (delta authoritative), 'landing'
+    # (fish-disappearance), 'eel_absence' (eel gone from the bar), or NULL.
+    ("detect_source", "TEXT"),
 ]
 # Rod-not-ready aborts this run: closed-loop casts skipped because the bar
 # stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now

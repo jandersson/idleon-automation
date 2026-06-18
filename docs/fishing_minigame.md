@@ -335,6 +335,83 @@ frames; threshold 0.75. Corpus-wide it fires **only in the two streak-3 runs**
 for their 2 points. Caveat: one template/pose so far — add crops if other eel
 animations under-match.
 
+## PTS score delta is the ground-truth catch signal (#58/#63, 2026-06-18)
+
+The bobber-disappearance / eel-absence heuristics miss catches they can't see:
+far casts that never settle a measurable bobber, and the curled eel (one template
+pose, prone to under-match). The game's own **"N PTS" counter** doesn't lie — read
+it just before a cast and just after the landing, and the **delta is the catch**:
++1 green, +2 eel, +3 squid, +5 whale, 0 a miss. `score_before`/`score_after` are
+read from the FULL window (the counter renders below-left of the cast bar, left of
+the play crop), anchored to the detected cast bar (`score.py` `SCORE_DX/DY`).
+`_resolve_catch` trusts the two reads **asymmetrically** (so it only ever *adds*
+correct catches, never fabricates a catch OR a streak-resetting miss):
+
+- **delta > 0** (a known fish value) → authoritative catch: the score rose, so
+  something was caught — the rescue for far-cast / eel catches with no bobber.
+- **delta == 0** (a clean miss) → the counter can lag the catch by an animation
+  frame, so a zero read right after the landing may be *stale*. It does **not**
+  veto a catch the bobber/eel heuristic positively confirmed (that would
+  fabricate a miss and reset the streak — the dangerous failure, flagged by the
+  pre-commit review). The zero is recorded as a miss only when the heuristic
+  didn't confirm a catch (where `_measure_landing` waited the full settle, so the
+  read is reliable).
+- a **None** read (uncaptured digit / unreadable) or an ambiguous delta → the
+  heuristic verdict stands.
+
+Logged per cast: `score_before`, `score_after`, `detect_source`
+(`score`/`landing`/`eel_absence`).
+
+### Binarization: white-fill, not Otsu (the dock bridges the digits)
+
+The shared reader (`common/score_digits.py`) defaults to Otsu-minority binarize,
+which is clean on water/sky but **bridges** on the busy tan dock — the dark plank
+grooves binarize alongside the dark glyph outlines and connect the digits into the
+scenery and the "PTS" label (components span the full crop height; the leading
+digit can't be read). The score digits are a bright near-white **fill**, so keying
+on that — `binarize_white_fill`, V≥190 & S≤110 — rejects the dock (saturated), the
+planks/outlines (dark), and the coloured bar, leaving clean glyphs. The reader is
+parameterised (`make_pts_reader(dir, binarize=…)`); catching keeps the Otsu
+default unchanged. Validated on the botrun_225352 frames: **163/176 read "0 PTS"
+→ 0, zero misreads** (13 had no cast bar → `None` → fallback); "26 BEST" → 26; the
+P/T/B/E/S/T label fragments all score ≤0.35 vs the 0.6 match floor.
+
+The **noise blob** left of the "0" is the red charge thermometer's bright
+highlight at `bar_x-38..-28` (present only mid-charge; the digit's left edge is at
+`bar_x-21`). `SCORE_DX0 = -26` starts the crop past it with a ~5px margin, so the
+leftmost component is the lone leading digit.
+
+### Digit templates: bootstrap + capture flow
+
+The reader matches each white-fill glyph against `assets/digit_templates/<d>.png`,
+captured **through the same white-fill pipeline** the live reader uses (the
+catching lesson — a template from another pipeline mismatches). 0/2/6 are seeded
+from botrun_225352 ("0 PTS" / "26 BEST"). The rest (1,3,4,5,7,8,9) come from a live
+run: `uv run fishing --save-frames` saves each cast's before/after PTS crop to
+`assets/captures/botrun_*/score_*.png` (the score climbs 0→9 across casts), then
+`fishing-capture-digits` dumps the isolated glyphs + a contact sheet to label and
+copy into `digit_templates/`. Until a digit is captured the reader returns `None`
+for any score containing it and falls back — safe, just lower coverage.
+
+### Open / to validate live
+
+- **Multi-digit PTS layout** is assumed left-aligned (number's left edge fixed at
+  `bar_x-21`, grows rightward, "PTS" shifts right) — so `DX0=-26` captures the
+  leading digit at any digit count. Unverified (the bootstrap run never scored);
+  if it's right-aligned a 2+ digit leading digit could clip → wrong read → `None`
+  delta → heuristic fallback (degrades safely). Confirm from a live multi-digit
+  frame and adjust `SCORE_DX0`/`DX1` if needed.
+- **Score-update lag.** The after-read happens once `_measure_landing` returns —
+  on a measured catch that can be only ~0.2–0.4s after the landing (early exit on
+  the bobber reeling in), within the window where the counter may not have ticked
+  yet. `_resolve_catch` handles this by not letting a `delta==0` veto a confirmed
+  catch (above); the residual assumption is that on a far cast (no bobber, full
+  ~1.6s wait) the score has settled, so its `delta==0` reliably records a miss.
+  Confirm from live runs that measured `delta>0` catches read on time (the rescue
+  path) and that far-cast zeros aren't lagging.
+- The eel template is still one pose — the score delta now catches an eel (+2)
+  regardless of the template matching, which is the point.
+
 ## Sources
 
 - IdleOn Wiki — Fishing Minigame: https://idleon.wiki/wiki/Fishing_Minigame

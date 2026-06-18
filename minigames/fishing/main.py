@@ -16,6 +16,13 @@ run-7 frames: landed_x ~ 5.0*charge); the closed-loop release also detects the
 rod-not-ready state (fill stays 0 = previous lure still reeling) and skips that
 cast instead of burning it (#58). Until MIN_SAMPLES charged casts exist the bot
 explores random target charge levels and logs (charge_level, landed_dist).
+
+Catches are detected by the PTS score DELTA (read before vs after each cast —
+the game's own count, authoritative; +1 green/+2 eel/+3 squid/+5 whale), which
+overrides and rescues the far-cast / eel catches the bobber-disappearance
+heuristic misses (#58/#63). The score read falls back to that heuristic whenever
+a digit isn't captured yet / the crop is unreadable (read is None). Grow the
+digit-template library with `fishing --save-frames` + `fishing-capture-digits`.
 Open: warm-fish HSV verification + grey-mine detection (#63).
 """
 import argparse
@@ -47,6 +54,7 @@ from minigames.fishing.cast_model import (
     FISH_VALUE, MIN_SAMPLES, fit_cast_model, charge_for_distance,
     distance_for_charge, choose_target, lands_on_mine_only,
 )
+from minigames.fishing.score import read_score, kind_from_delta, score_crop
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -198,6 +206,39 @@ def _classify_catch(pre_fish: list[dict], post_fish: list[dict], landed_x: int,
     if any(abs(f["x"] - landed_x) <= radius for f in post_fish):
         return "miss", 0          # a fish is still there -> not caught
     return near[0]["kind"], 1     # the nearest fish vanished -> caught
+
+
+def _resolve_catch(heuristic: tuple[str | None, int | None, str | None],
+                   score_before: int | None, score_after: int | None
+                   ) -> tuple[str | None, int | None, str | None]:
+    """Final (landed_kind, made, detect_source) for a cast.
+
+    The PTS score DELTA is the game's own count, used to rescue / correct the
+    bobber-disappearance / eel-absence heuristic (#58/#63). `heuristic` is the
+    (kind, made, source) detection produced (made None when the cast wasn't
+    measured). The two reads are trusted ASYMMETRICALLY:
+
+    - delta > 0 (a known fish value): AUTHORITATIVE catch — the score rose, so
+      something was caught; this is the rescue for far-cast / eel catches that
+      never settle a measurable bobber.
+    - delta == 0 (a clean miss): the counter can lag the catch by an animation
+      frame, so a zero read right after the landing may be STALE. Don't let it
+      veto a catch the bobber/eel heuristic positively confirmed (that would
+      fabricate a miss and reset the streak — the dangerous failure). Trust the
+      zero as a miss only when the heuristic did NOT confirm a catch.
+    - a None read (uncaptured digit / unreadable) or an ambiguous delta leaves
+      the heuristic verdict in place.
+    """
+    _h_kind, h_made, _h_source = heuristic
+    delta_catch = kind_from_delta(score_before, score_after)
+    if delta_catch is None:
+        return heuristic
+    kind, _delta = delta_catch
+    if kind != "miss":
+        return (kind, 1, "score")          # delta>0: the score rose -> caught
+    if h_made == 1:
+        return heuristic                   # don't let a stale zero veto a catch
+    return ("miss", 0, "score")            # zero confirms / records the miss
 
 
 def _landing_from_detections(dets, stable_px: int = LANDING_STABLE_PX,
@@ -449,6 +490,16 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         charge_dbg = {"peak": 0, "polls": 0, "attempt": charge_attempt}
         cast_bar_full = (play["left"] + bar[0], play["top"] + bar[1], bar[2], bar[3])
 
+        # PTS score BEFORE the cast — the authoritative catch signal (the game's
+        # own count). Full window, anchored to the cast bar. Closed-loop timing
+        # isn't biased by a pre-hold read (the cast power is the release fill, not
+        # a sampled instant), so this sits safely before the hold. None until the
+        # digits are captured / on an unreadable frame -> the delta falls back to
+        # the bobber-disappearance heuristic below (#58/#63). The crop is saved
+        # AFTER the cast (deferred disk write — never between decision and hold).
+        full_before = grab_region(win_left, win_top, win_w, win_h)
+        score_before = read_score(full_before, cast_bar_full)
+
         def _read_charge():
             # Fast poll: grab + read only. NO per-poll frame save — writing a
             # full-window PNG each poll stalled the loop ~40ms and the fast-
@@ -504,6 +555,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             n_mines=len(mines),
             window_w=win_w,
             window_h=win_h,
+            score_before=score_before,
             code_commit=code_commit,
             source="bot",
         )
@@ -514,8 +566,16 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         lure, post, pre_frame = _measure_landing(win_left, win_top, play,
                                                  CAST_SETTLE_S, LANDING_POLL_S,
                                                  frames_dir, stats["n_casts"])
+
+        # PTS score AFTER the landing — read immediately to minimise the lag
+        # between the catch (score ticks when the fish vanishes at landing) and
+        # the read. score_after - score_before is the ground-truth catch below.
+        full_after = grab_region(win_left, win_top, win_w, win_h)
+        score_after = read_score(full_after, cast_bar_full)
+
         landed_x = landed_y = landed_dist = landed_kind = points = made = None
         catch_dx = catch_dy = None
+        detect_source = None
         if lure is not None:
             landed_x, landed_y = lure
             # Catch = a fish near the landing JUST BEFORE the lure arrives is gone
@@ -523,6 +583,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             pre_fish = find_fish(pre_frame, bar=bar) if pre_frame is not None else []
             post_fish = find_fish(post, bar=bar)
             landed_kind, made = _classify_catch(pre_fish, post_fish, landed_x)
+            detect_source = "landing"
             landed_dist = abs(landed_x - origin_x)
             # Catch-geometry telemetry: lure offset to the nearest pre-cast fish
             # (lure - fish). made doesn't track the x gap alone, so log dx AND dy.
@@ -540,6 +601,12 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
                                 play["width"], play["height"])
             if find_eel(after, bar=find_cast_bar(after)) is None:
                 landed_kind, made, landed_x = "eel", 1, target["x"]
+                detect_source = "eel_absence"
+
+        # The score delta overrides the bobber/eel heuristic when it's readable
+        # (see _resolve_catch) — the game's own count, authoritative.
+        landed_kind, made, detect_source = _resolve_catch(
+            (landed_kind, made, detect_source), score_before, score_after)
 
         if made:
             points = FISH_VALUE.get(landed_kind, 0)
@@ -561,7 +628,20 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             charge_level=charge or None,
             catch_dx=catch_dx,
             catch_dy=catch_dy,
+            score_after=score_after,
+            detect_source=detect_source,
         )
+
+        # Deferred debug saves of the before/after PTS crops (never between the
+        # fire decision and the hold). --save-frames feeds fishing-capture-digits
+        # to grow the digit-template library (the score climbs 0->9 across casts).
+        if frames_dir is not None:
+            cb = score_crop(full_before, cast_bar_full)
+            if cb is not None:
+                save_frame(frames_dir / f"score_c{stats['n_casts']:02d}_before_r{score_before}.png", cb)
+            ca = score_crop(full_after, cast_bar_full)
+            if ca is not None:
+                save_frame(frames_dir / f"score_c{stats['n_casts']:02d}_after_r{score_after}.png", ca)
 
         random_delay(int(CAST_COOLDOWN_S * 1000), int(CAST_COOLDOWN_S * 1000) + 200)
 
