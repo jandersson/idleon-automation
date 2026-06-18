@@ -143,6 +143,19 @@ _LATE_COLUMNS = [
     # opened up from ~0 to ~100px), else 0. Lets analysis isolate oval shots
     # for the future 2-D aim model (#59).
     ("oval_active", "INTEGER"),
+    # Hoop HORIZONTAL motion at fire (#76). The aim locks hoop_x once at
+    # target-set (main.py find_rim, ~L1574) and the ball is airborne ~1.5s
+    # more, so a horizontally-oscillating hoop is elsewhere by arrival —
+    # make_prob is fed a stale single-frame hoop_x. These quantify it from a
+    # throttled rim-position buffer (mirrors range_samples for the platform):
+    # hoop_vx = least-squares px/s slope (+ = rightward); hoop_xmin/xmax =
+    # the observed oscillation range; hoop_x_at_fire = the freshest detected
+    # x (its delta from the logged hoop_x is the lining-up staleness).
+    # Instrumentation only — aim unchanged; feeds a later lead-the-target fix.
+    ("hoop_vx", "REAL"),
+    ("hoop_xmin", "INTEGER"),
+    ("hoop_xmax", "INTEGER"),
+    ("hoop_x_at_fire", "INTEGER"),
 ]
 
 

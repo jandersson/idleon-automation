@@ -223,6 +223,13 @@ def _platform_velocity(
 OVAL_X_RANGE_PX = 40        # platform x-spread above this = oval phase
 OVAL_FIRE_INTERVAL_MS = 1000  # min gap between collect-fires in the oval
 
+# Throttle (s) for the hoop horizontal-motion sampler (#76). The poll loop
+# is CV-bound at ~POLL_INTERVAL, so re-running find_rim every tick would
+# roughly double per-tick CV cost; 100ms bounds the extra rim matches to
+# ~10/s while still giving ~15 samples over the ~1.5s flight window — ample
+# for a hoop_vx slope and the oscillation range.
+HOOP_SAMPLE_INTERVAL_S = 0.1
+
 
 def _platform_velocity_x(
     samples: list[tuple[float, int, int]],
@@ -252,6 +259,29 @@ def _platform_x_range(range_samples) -> int:
     """Horizontal spread (max-min) of the buffered platform x samples."""
     xs = [p[1] for p in range_samples]
     return (max(xs) - min(xs)) if xs else 0
+
+
+def _hoop_motion(
+    hoop_samples,
+) -> tuple[float | None, int | None, int | None, int | None]:
+    """(hoop_vx, hoop_xmin, hoop_xmax, hoop_x_at_fire) from the
+    (timestamp, hoop_x, hoop_y) rim buffer at the newest sample (#76).
+
+    The hoop oscillates horizontally, but the aim locks hoop_x once at
+    target-set and the ball is airborne ~1.5s more, so a moving hoop is
+    elsewhere by arrival. These per-shot diagnostics quantify that:
+    hoop_vx is the horizontal velocity (px/s, + = rightward) — the
+    generic least-squares px-slope, reused from _platform_velocity_x;
+    xmin/xmax the observed oscillation range; hoop_x_at_fire the freshest
+    detected x, whose delta from the logged (target-set) hoop_x is the
+    lining-up staleness. Instrumentation only — the aim is unchanged."""
+    vx = _platform_velocity_x(list(hoop_samples)) if hoop_samples else None
+    xmin = xmax = None
+    if len(hoop_samples) >= 5:
+        xs = [p[1] for p in hoop_samples]
+        xmin, xmax = int(min(xs)), int(max(xs))
+    x_at_fire = int(hoop_samples[-1][1]) if hoop_samples else None
+    return vx, xmin, xmax, x_at_fire
 
 
 def _platform_recently_moving(
@@ -1121,6 +1151,7 @@ def _record_shot_outcome(
     session_started: str,
     code_commit: str | None,
     prev_last_shot: dict | None = None,
+    hoop_samples=(),
 ) -> dict:
     """Post-click bookkeeping: capture the flight, wait out the cooldown,
     read the score, classify the outcome, persist the row, and update the
@@ -1244,6 +1275,13 @@ def _record_shot_outcome(
     # once the platform traces the post-20-make oval. oval_active_value was
     # computed above (it also gates the make-detection trajectory bypass).
     platform_vx_value = _platform_velocity_x(list(range_samples))
+    # Hoop horizontal motion at fire (#76): the aim's hoop_x is the
+    # target-set snapshot; the hoop has kept oscillating since. hoop_vx +
+    # the observed x-range + the freshest x quantify how stale the aim's
+    # hoop_x is (hoop_x_at_fire - hoop_x), feeding a later lead-the-target fix.
+    hoop_vx_value, hoop_xmin_value, hoop_xmax_value, hoop_x_at_fire_value = (
+        _hoop_motion(list(hoop_samples))
+    )
     shot_row_id = log_shot(
         shot_db,
         session_started=session_started,
@@ -1287,6 +1325,10 @@ def _record_shot_outcome(
         platform_vy=platform_vy_value,
         platform_vx=platform_vx_value,
         oval_active=int(oval_active_value),
+        hoop_vx=hoop_vx_value,
+        hoop_xmin=hoop_xmin_value,
+        hoop_xmax=hoop_xmax_value,
+        hoop_x_at_fire=hoop_x_at_fire_value,
         prompt_up=int(bool(shot.prompt_visible_before)),
         target_source=shot.target.target_source,
     )
@@ -1461,6 +1503,12 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
     platform_missing_since: float | None = None  # no-platform bail (00:40 runaway)
     range_samples: deque[tuple[float, int, int]] = deque(maxlen=200)  # (ts, px, py) for range + period diagnostics
     last_range_log = time.time()
+    # Hoop horizontal-motion buffer (#76): (ts, hoop_x, hoop_y), the rim
+    # counterpart of range_samples. Sampled on a throttle (HOOP_SAMPLE_INTERVAL_S)
+    # so hoop_vx + the oscillation range can be logged per shot — the aim
+    # path that locks hoop_x at target-set is unchanged.
+    hoop_samples: deque[tuple[float, int, int]] = deque(maxlen=200)
+    last_hoop_sample = 0.0
     # Fire-window diagnostics. Reset every range-log window so we see a rate
     # rather than a monotonically-growing total. y_open = py near target_y.
     cycles_window = 0
@@ -1613,6 +1661,19 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
         px, py = platform_pos
         platform_history.append(py)
         range_samples.append((time.time(), px, py))
+
+        # Hoop horizontal-motion sampler (#76). The aim locks hoop_x once at
+        # target-set (~find_rim above) and the ball flies ~1.5s more, so a
+        # horizontally-oscillating hoop is stale by arrival. Sample the rim
+        # on a throttle into its own buffer — purely for the hoop_vx /
+        # oscillation-range diagnostics logged per shot; the aim is untouched.
+        # Reuses `frame` already grabbed this tick (no extra capture).
+        now_hs = time.time()
+        if now_hs - last_hoop_sample >= HOOP_SAMPLE_INTERVAL_S:
+            hs_pos, _hs_conf, _hs_scale = find_rim(frame)
+            if hs_pos is not None:
+                hoop_samples.append((now_hs, int(hs_pos[0]), int(hs_pos[1])))
+            last_hoop_sample = now_hs
 
         if time.time() - last_range_log > 3.0 and range_samples:
             xs = [p[1] for p in range_samples]
@@ -1798,8 +1859,15 @@ def _run_inner(session_started: str, shot_db, predictors: dict, code_commit: str
                     session_started=session_started,
                     code_commit=code_commit,
                     prev_last_shot=last_shot,
+                    hoop_samples=hoop_samples,
                 )
                 platform_history.clear()
+                # Clear the hoop buffer too: the hoop teleports to a new x on
+                # a make, so carrying samples across shots would mix two hoops
+                # and inflate hoop_xmin/xmax. Each shot's window observes only
+                # the current hoop's oscillation (#76).
+                hoop_samples.clear()
+                last_hoop_sample = 0.0
                 prev_py = None
                 target = None  # re-detect hoop after it repositions
                 # Force the game-over check on the very next iteration:
