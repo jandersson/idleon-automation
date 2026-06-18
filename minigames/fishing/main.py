@@ -57,7 +57,7 @@ from minigames.fishing.fish_log import (
 )
 from minigames.fishing.cast_model import (
     FISH_VALUE, MIN_SAMPLES, fit_cast_model, charge_for_distance,
-    distance_for_charge, choose_target, lands_on_mine_only,
+    distance_for_charge, choose_target, lands_on_mine_only, nearest_fish_target,
     theil_sen_velocity, lead_fish_dist, LEAD_TIME_FALLBACK_S,
 )
 from minigames.fishing.score import read_score, kind_from_delta, score_crop
@@ -76,7 +76,11 @@ POLL_INTERVAL = 0.05
 # release-timing oscillation, #58). Keep explore targets safely below the peak
 # so they're always reached on the up-sweep — a target above the peak would
 # never trigger the release and the cast would fall to the max-hold backstop.
-EXPLORE_CHARGE_MIN = 10
+# The MIN is low (5, not 10) so exploration samples SHORT casts and the model's
+# reach floor drops toward fish that spawn close to the dock — otherwise they sit
+# below reach (~69px at charge 11) and can't be targeted (#58). It doubles as the
+# floor for the close-fish 'nearest' aim (charge_for_distance min_charge).
+EXPLORE_CHARGE_MIN = 5
 EXPLORE_CHARGE_MAX = 50
 # Fire an exploration cast every Nth cast even after the model is fitted, so
 # the charge->distance surface keeps getting sampled (darts EXPLORE_EVERY_N).
@@ -510,8 +514,18 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         else:
             target = choose_target(fish, model, origin_x)
             if target is None:
-                target_charge = _explore_charge(model, origin_x, mines, fish)
-                aim_mode = "fallback"
+                # All detected fish are out of the model's reach — typically too
+                # CLOSE to the dock (below the ~69px reach floor). Aim SHORT at the
+                # nearest one, extrapolating the charge down to EXPLORE_CHARGE_MIN,
+                # rather than a random far explore that flings the lure past them
+                # into a mine (#58). The cast lands near the dock either way, so
+                # it's safe even where the linear fit drifts at low charge; the
+                # score delta records a catch if it lands. (Exploration's lowered
+                # MIN extends the reach floor down so these become true model casts.)
+                target = nearest_fish_target(fish, origin_x)
+                target_charge = charge_for_distance(
+                    model, target["target_dist"], min_charge=EXPLORE_CHARGE_MIN)
+                aim_mode = "nearest"
             else:
                 # The targets slide, so the decision-time x is stale by landing.
                 # For a SINGLE fish, sample its velocity over a few quick polls

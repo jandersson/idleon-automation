@@ -450,6 +450,23 @@ digits are all captured.
 - The eel template is still one pose — the score delta now catches an eel (+2)
   regardless of the template matching, which is the point.
 
+## Close-to-the-dock fish — reach floor, not detection (#58, 2026-06-18)
+
+A fish spawning close to the dock went uncaught and the bot **flung the lure far
+into a mine** instead. It's a REACH bug, not detection: the fish IS detected (e.g.
+a green at x≈48–50 from the origin), but the cast model's reach floor is ~69px
+(charge_min≈11), so `choose_target` deems it unreachable → returns None → the old
+fallback fired a *random far* explore (charge 39 → ~207px, toward the mines).
+Confirmed on botrun_131146 cast14 (green@50, mines@139/214, lure→207).
+
+Fix: when `choose_target` finds nothing in reach but fish ARE present, aim SHORT
+at the nearest one (`nearest_fish_target`) by extrapolating the charge down to
+`EXPLORE_CHARGE_MIN` (`charge_for_distance(..., min_charge=)`), tagged
+`aim_mode='nearest'` — the lure stays near the dock (safe even if the linear fit
+drifts at low charge; the score delta still records a catch if it lands), never
+flung far. And `EXPLORE_CHARGE_MIN` 10→5 so exploration samples short casts and
+the reach floor drops over runs, turning these into ordinary in-reach model casts.
+
 ## Targets slide — the moving-target lead (the streak stall, #58, 2026-06-18)
 
 The streak stalls at ~3 (so eels/squid/whale rarely unlock, and the run is all

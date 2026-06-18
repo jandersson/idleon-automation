@@ -11,6 +11,7 @@ from minigames.fishing.cast_model import (
     charge_for_distance,
     reachable,
     choose_target,
+    nearest_fish_target,
     lands_on_mine_only,
 )
 
@@ -61,6 +62,24 @@ def test_charge_for_distance_inverts_and_clamps():
     assert distance_for_charge(m, 40) == 200
     assert charge_for_distance(m, 10) == 10           # below reach -> clamp to charge_min
     assert charge_for_distance(m, 99_999) == 60       # above reach (bar saturated) -> charge_max
+
+
+def test_charge_for_distance_min_charge_override_extrapolates_down():
+    # The close-fish 'nearest' aim reaches BELOW the sampled support (charge_min)
+    # toward a fish nearer than the reach floor, down to the given floor.
+    m = CastModel(slope=5.0, intercept=0.0, charge_min=10, charge_max=60, n=20)
+    assert charge_for_distance(m, 50) == 10                      # default floor = charge_min
+    assert charge_for_distance(m, 50, min_charge=5) == 10        # 50/5 -> 10, above the 5 floor
+    assert charge_for_distance(m, 20, min_charge=5) == 5         # 20/5=4 -> floored at 5 (was 10)
+    assert charge_for_distance(m, 99_999, min_charge=5) == 60    # upper clamp unaffected
+
+
+def test_nearest_fish_target():
+    assert nearest_fish_target([], origin_x=0) is None
+    fish = [{"x": 200, "kind": "squid"}, {"x": 50, "kind": "green"}]
+    t = nearest_fish_target(fish, origin_x=0)
+    assert t["x"] == 50 and t["kind"] == "green"        # nearest to the origin
+    assert t["target_dist"] == 50 and t["value"] == 1   # augmented dist + point value
 
 
 def test_reachable():

@@ -120,13 +120,21 @@ def distance_for_charge(model: CastModel, charge: float) -> float:
     return model.slope * charge + model.intercept
 
 
-def charge_for_distance(model: CastModel, distance_px: float) -> int:
+def charge_for_distance(model: CastModel, distance_px: float,
+                        min_charge: int | None = None) -> int:
     """Charge-bar fill level to land at `distance_px`, clamped to the model's
     observed charge support so the bot never extrapolates past the bar's
     saturation or into untested fills. Inverse of the linear fit; the result
-    is the target the closed-loop cast releases at."""
+    is the target the closed-loop cast releases at.
+
+    `min_charge` overrides the LOWER clamp (default: the model's charge_min). The
+    close-fish 'nearest' aim passes a smaller floor to reach BELOW the sampled
+    support toward a fish nearer than the reach floor (a bounded downward
+    extrapolation — the cast still lands short/near the dock even if the linear
+    fit drifts there, so it never flings far; #58)."""
     raw = (distance_px - model.intercept) / model.slope
-    return int(round(min(model.charge_max, max(model.charge_min, raw))))
+    lo = model.charge_min if min_charge is None else min_charge
+    return int(round(min(model.charge_max, max(lo, raw))))
 
 
 def reachable(model: CastModel | None, distance_px: float, tol_px: float = 0.0) -> bool:
@@ -183,6 +191,19 @@ def choose_target(
             best_key = key
             best = {**f, "target_dist": dist, "value": value}
     return best
+
+
+def nearest_fish_target(fish: list[dict], origin_x: int) -> dict | None:
+    """The nearest detected fish as a target dict (augmented with `target_dist`
+    and `value`), or None if no fish. Used when `choose_target` finds nothing
+    within the model's reach but fish ARE present — typically too CLOSE to the
+    dock (below the reach floor): aim short at the nearest one rather than fling a
+    random far explore past it into a mine (#58)."""
+    if not fish:
+        return None
+    f = min(fish, key=lambda f: abs(f["x"] - origin_x))
+    return {**f, "target_dist": abs(f["x"] - origin_x),
+            "value": FISH_VALUE.get(f.get("kind", ""), 0)}
 
 
 # --- Moving-target lead --------------------------------------------------
