@@ -130,6 +130,16 @@ MIN_LANDING_DETECTIONS = 2
 # offsets: ~2-11px (run 14 casts 6/9), so 15 covers a hit while excluding a
 # fish the lure clearly overshot (cast 3: fish 203, lure 226 = miss).
 CATCH_RADIUS = 15
+# Max px a fish can SLIDE between the pre-arrival frame and the landed frame, used
+# by vanished_fish to PAIR a near-landing fish to a post sighting of the same kind
+# (it moved, wasn't caught) vs counting it caught. Set to the documented MAX
+# per-cast slide (~32px over the full ~1.3s decision->landing; pre->post is only
+# the lure's visible flight, so this is a generous upper bound). The asymmetry
+# justifies erring large: over-pairing only loses a multi-attribution to the SAFE
+# fallback (the score-delta kind guess + a +1 streak stand), while UNDER-pairing
+# counts a slid-away fish as caught — the kind-only bug this fixes (#66, review).
+# Calibratable from --save-frames pre/post pairs.
+SLIDE_BUDGET_PX = 32
 # Moving-target lead: the targets SLIDE back and forth (~cast 5+, growing
 # through a game; see docs). For a single-fish model cast the bot samples the
 # fish over a few quick polls BEFORE firing to estimate its slide velocity
@@ -229,6 +239,87 @@ def _classify_catch(pre_fish: list[dict], post_fish: list[dict], landed_x: int,
     if any(abs(f["x"] - landed_x) <= radius for f in post_fish):
         return "miss", 0          # a fish is still there -> not caught
     return near[0]["kind"], 1     # the nearest fish vanished -> caught
+
+
+def vanished_fish(pre_fish: list[dict], post_fish: list[dict], landed_x: int,
+                  radius: int = CATCH_RADIUS,
+                  slide_budget: int = SLIDE_BUDGET_PX) -> list[dict]:
+    """Fish that were near the landing just before the lure arrived and are GONE
+    after — the actual catch(es). The sliding mechanic converges several fish, so
+    one cast can consume more than one; this returns a LIST (vs _classify_catch's
+    single nearest). Pure.
+
+    Matching is by kind AND POSITION: each near-landing pre fish is paired to the
+    nearest still-unclaimed post fish of the SAME kind within `slide_budget` px (it
+    moved, wasn't caught); a pre fish with no such match VANISHED -> caught. The
+    position pairing (not kind-alone) is what stops a fish that merely SLID out of
+    the landing radius from being miscounted as caught — fish routinely slide
+    >radius between frames (docs), so kind-alone over-counts (#66, review-flagged).
+
+    A caught fish that was UNDETECTED in `pre_fish` (e.g. an under-matched eel)
+    simply isn't in the result — `attribute_catch` then cross-checks the vanished
+    set's value-sum against the score delta and falls back to the delta's kind
+    guess on any mismatch, so this can stay permissive. The rare residual it can't
+    catch (an undetected catch whose value is offset by a flickered-out uncaught
+    fish of equal value) only mis-labels data; points/made/streak-gating are
+    unaffected."""
+    near_pre = sorted((f for f in pre_fish if abs(f["x"] - landed_x) <= radius),
+                      key=lambda f: abs(f["x"] - landed_x))
+    remaining = list(post_fish)
+    vanished: list[dict] = []
+    for f in near_pre:
+        match_i = match_d = None
+        for i, p in enumerate(remaining):
+            if p["kind"] != f["kind"]:
+                continue
+            d = abs(p["x"] - f["x"])
+            if d <= slide_budget and (match_d is None or d < match_d):
+                match_i, match_d = i, d
+        if match_i is None:
+            vanished.append(f)          # no same-kind post sighting nearby -> caught
+        else:
+            remaining.pop(match_i)      # paired to a post sighting -> slid, not caught
+    return vanished
+
+
+def attribute_catch(vanished: list[dict], delta: int | None
+                    ) -> tuple[str | None, int | None]:
+    """Name a measured catch's kind(s) and fish COUNT from the vanished set, but
+    ONLY when their FISH_VALUE sum equals the score `delta` — the cross-check that
+    rejects a detection flicker (a dropped/extra fish makes the sum mismatch).
+    Returns ``(kind_label, n_fish)`` — a '+'-joined sorted label ('eel+squid', or
+    just 'green' for a lone fish) and the fish count — or ``(None, None)`` when the
+    set can't be trusted (nothing vanished, no positive delta, or the sum
+    mismatches), so the caller keeps the score-delta's kind guess and a +1 streak.
+
+    This disambiguates what the delta alone can't: a +2 is a lone eel OR two
+    greens, a +5 ('multi') is eel+squid — naming the kinds on measured catches and
+    giving the per-fish count the streak undercounts on converged catches
+    (#66/#70). Far casts with no measured bobber pass `vanished=[]` and fall back.
+    Pure.
+
+    Only SCORING fish (FISH_VALUE > 0) count toward the label, sum, and count: a
+    zero-value fish (megalodon, or any future non-scoring kind) must never inflate
+    the streak count nor let the value-sum match coincidentally. (Today's detector
+    leaves megalodon off, so the vanished set is already all-scoring — this keeps
+    the guard from depending on that.)"""
+    scoring = [f for f in vanished if FISH_VALUE.get(f["kind"], 0) > 0]
+    if not scoring or not delta or delta <= 0:
+        return None, None
+    if sum(FISH_VALUE[f["kind"]] for f in scoring) != delta:
+        return None, None
+    return "+".join(sorted(f["kind"] for f in scoring)), len(scoring)
+
+
+def _streak_after(streak: int, landed_kind: str | None, n_caught: int) -> int:
+    """The streak after a catch. A Whale resets it to 1 (wiki) — tested against
+    the '+'-split label so a CONVERGED catch containing a whale ('green+whale')
+    resets too, not only the lone 'whale' (review-flagged). Otherwise the streak
+    advances by the NUMBER OF FISH caught (the game counts per fish, so a converged
+    multi-catch is +2/+3); n_caught is 1 when the count can't be measured (#70)."""
+    if "whale" in (landed_kind or "").split("+"):
+        return 1
+    return streak + n_caught
 
 
 def _resolve_catch(heuristic: tuple[str | None, int | None, str | None],
@@ -701,6 +792,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         landed_x = landed_y = landed_dist = landed_kind = points = made = None
         catch_dx = catch_dy = None
         detect_source = None
+        pre_fish = post_fish = None    # set on a measured landing -> kind attribution (#66)
         if lure is not None:
             landed_x, landed_y = lure
             # Catch = a fish near the landing JUST BEFORE the lure arrives is gone
@@ -733,21 +825,40 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         landed_kind, made, detect_source = _resolve_catch(
             (landed_kind, made, detect_source), score_before, score_after)
 
+        # Attribute the catch's KIND(s) and per-fish COUNT from the fish that
+        # vanished near the landing, cross-checked against the score delta — what
+        # the delta alone can't tell (a +2 is a lone eel OR two greens; a +5
+        # 'multi' is eel+squid). Refines only the cosmetic landed_kind label and
+        # the per-fish streak count (#66/#70); points + made already come from the
+        # authoritative delta. Only on a delta-confirmed catch with a MEASURED
+        # landing (pre_fish set) — far-cast rescues keep the delta guess + a +1
+        # streak (the cross-check can't run with no fish frames).
+        n_caught = 1
+        if (made and detect_source == "score" and pre_fish is not None
+                and landed_x is not None
+                and score_before is not None and score_after is not None):
+            caught = vanished_fish(pre_fish, post_fish or [], landed_x)
+            label, count = attribute_catch(caught, score_after - score_before)
+            if label is not None:
+                landed_kind = label     # 'eel+squid' etc. (was the opaque 'multi')
+                n_caught = count
+
         if made:
             # Points: the score DELTA is the game's own count, so it's the truth
-            # even for a converged multi-catch (landed_kind 'multi' has no single
-            # FISH_VALUE — its points are the delta). The heuristic paths fall back
-            # to the kind's value.
+            # even for a converged multi-catch (landed_kind 'multi'/'eel+squid' has
+            # no single FISH_VALUE — its points are the delta). The heuristic paths
+            # fall back to the kind's value.
             if detect_source == "score" and score_before is not None and score_after is not None:
                 points = score_after - score_before
             else:
                 points = FISH_VALUE.get(landed_kind, 0)
             stats["points_total"] += points
-            # Streak: any catch extends it; a Whale resets to 1 (wiki). A score
-            # delta never labels 'whale' now (a +5 is logged 'multi' — usually
-            # eel+squid, and whales are undetected), so this only resets on a
-            # detector-confirmed whale, not a converged multi-catch.
-            streak = 1 if landed_kind == "whale" else streak + 1
+            # Streak: advance by the NUMBER OF FISH caught (the game counts per
+            # fish, so a converged multi-catch is +2/+3, not +1; n_caught from the
+            # vanished-fish attribution, 1 when unmeasured, #70) — except a Whale
+            # resets to 1 (wiki). _streak_after handles both, incl. a converged
+            # label that contains a whale.
+            streak = _streak_after(streak, landed_kind, n_caught)
             stats["max_streak"] = max(stats["max_streak"], streak)
         elif made == 0:
             streak = 0          # a measured miss breaks the streak

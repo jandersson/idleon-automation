@@ -507,12 +507,51 @@ Consequences + fix:
 - **Caveat on old data**: pre-fix `landed_kind` counts (the "1 whale", some
   "squid") are unreliable — some were converged multi-catches. Points/`made` were
   always right (the delta); only the kind labels were.
-- **Refinement (deferred, #66)**: the delta alone still can't name a multi-catch
-  or tell a lone eel from two greens. Cross-checking the delta against which fish
-  actually VANISHED near the landing (`pre_fish`/`post_fish`) would attribute the
-  kind(s) accurately on measured catches. Deferred because kind drives no decision
-  today (points/streak come from the delta); it's data-quality + a prereq for
-  kind-aware strategy.
+### Vanished-fish kind attribution + per-fish streak (#66/#70, 2026-06-18)
+
+The delta alone can't name a multi-catch or tell a lone eel from two greens
+(both +2). On a **measured** catch the detector already knows which fish were
+near the landing before vs after, so the fish that **vanished** are the actual
+catch — `main.vanished_fish` returns that set. Matching is by kind **and
+position**: each near-landing pre-fish is paired to the nearest still-unclaimed
+post sighting of the same kind within `SLIDE_BUDGET_PX` (it slid, wasn't caught);
+a pre-fish with no such match vanished → caught. The position pairing (not
+kind-alone) is what a pre-commit review flagged as load-bearing — fish routinely
+slide >`CATCH_RADIUS` between frames (see "Targets slide"), so a kind-only test
+miscounts a slid-away fish as caught. The budget is set to the documented max
+per-cast slide because over-pairing only costs a safe fallback while under-pairing
+corrupts the data. `main.attribute_catch` then **cross-checks** the vanished
+set's `FISH_VALUE` sum against the score delta and, on a match, names the kind(s)
+(`'eel+squid'` instead of the opaque `'multi'`, sorted/joined) and returns the
+**fish count**. Only scoring fish (value > 0) count, so a non-scoring kind can't
+inflate the count or match coincidentally.
+
+The residual the cross-check can't catch (review finding, accepted): an
+undetected-but-caught fish (e.g. an under-matched eel) whose missing value is
+exactly offset by an equal-value fish that flickered out of detection can pass
+`sum == delta` on a wrong set. It needs a conjunction of detection failures, only
+mis-labels data, and never touches `made`/`points`/streak-gating — so it's logged
+as a known limitation, not guarded further.
+
+Two consequences, both data-quality (kind still drives no decision):
+- **landed_kind** is refined to the named set on delta-confirmed measured catches.
+- **The streak now advances by the fish COUNT** (`n_caught`), not +1 per cast —
+  fixing the #70 undercount where the game advances per fish but the bot counted
+  per cast. Far casts / eel-absence / heuristic catches (no measured fish frames)
+  keep the +1 estimate, and the value-sum cross-check falls back to the delta's
+  kind guess + `n_caught=1` whenever it can't be trusted (flicker, a fish slid out
+  of radius), so it only ever *improves* the label/count, never fabricates one.
+
+Safety: the attribution touches **only** the cosmetic `landed_kind` and the
+streak count — `made` and `points` still come solely from the authoritative
+delta (`_resolve_catch`), so it can't fabricate a catch or a streak-resetting
+miss. Pure helpers unit-tested in `tests/test_fishing_landing.py`; the live
+pre/post fish sampling stays manual. (A real lone whale, if ever detected, still
+attributes as `'whale'` and resets the streak; a converged catch *containing* a
+whale is not special-cased — whales are undetected, so this is moot today.)
+
+- **Caveat on old data stands**: pre-fix `landed_kind` counts remain unreliable;
+  no backfill (the attribution runs live, not retroactively).
 
 ## Close-to-the-dock fish — reach floor, not detection (#58, 2026-06-18)
 
