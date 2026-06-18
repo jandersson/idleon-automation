@@ -12,7 +12,7 @@ from pathlib import Path
 
 from minigames.fishing.detector import (
     find_cast_bar, find_fish, find_charge_level, find_charge_fill,
-    find_mines, _in_a_mine, find_eel,
+    find_mines, _in_a_mine, find_eel, find_fish_sprites, ASSETS,
 )
 
 
@@ -154,6 +154,83 @@ def test_green_bound_excludes_turquoise_water_keeps_seafoam_fish():
     fish = [d for d in find_fish(img, bar=bar) if d["kind"] == "green"]
     assert any(292 <= d["x"] <= 325 for d in fish)          # the fish is found
     assert all(not (372 <= d["x"] <= 405) for d in fish)    # the H91 water is not
+
+
+# --- masked-ZNCC sprite detection (#75): background-invariant fish detection ---
+
+def _paste_sprite(img, name, x, y):
+    """Paste the full real sprite crop (incl. its own corner background)."""
+    s = cv2.imread(str(ASSETS / name))
+    img[y:y + s.shape[0], x:x + s.shape[1], :3] = s
+    return s.shape[:2]
+
+
+def _composite_sprite(img, name, x, y):
+    """Overlay only the MASKED sprite body, leaving img's background in the
+    corners — simulates the same fish over a different world."""
+    s = cv2.imread(str(ASSETS / name))
+    m = cv2.imread(str(ASSETS / name.replace(".png", "_mask.png")), cv2.IMREAD_GRAYSCALE)
+    roi = img[y:y + s.shape[0], x:x + s.shape[1], :3]
+    roi[m > 0] = s[m > 0]
+
+
+def test_find_fish_sprites_detects_real_green_template():
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)
+    _paste_sprite(img, "fish_green_1.png", 300, 88)   # real sprite on the bar
+    sp = find_fish_sprites(img, find_cast_bar(img))
+    assert any(d["kind"] == "green" and 300 <= d["x"] <= 330 for d in sp)
+    assert all("conf" in d for d in sp)
+
+
+def test_find_fish_sprites_is_background_invariant():
+    # The SAME fish body over two very different worlds must both match (#75) —
+    # absolute HSV breaks per biome (#63/#72); masked ZNCC scores only the sprite
+    # pixels, so the world behind it is irrelevant.
+    for bg_hsv in ([15, 180, 210], [95, 170, 200]):   # orange sunset vs turquoise water
+        img = _bgra(h=200, w=700)
+        bgr = cv2.cvtColor(np.uint8([[bg_hsv]]), cv2.COLOR_HSV2BGR)[0, 0]
+        img[75:130, 100:600, :3] = [int(c) for c in bgr]    # the biome band
+        _fill(img, 95, 109, 100, 600, _BAR_HSV)
+        _composite_sprite(img, "fish_green_1.png", 300, 88)  # body only; corners = biome
+        sp = find_fish_sprites(img, find_cast_bar(img))
+        assert any(d["kind"] == "green" for d in sp), f"missed over bg {bg_hsv}"
+
+
+def test_find_fish_sprites_rejects_a_flat_colour_blob():
+    # A flat green rectangle (which the HSV gate calls a fish) is NOT the textured
+    # sprite, so the ZNCC matcher rejects it — sprite detection is more specific.
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)
+    _fill(img, 96, 108, 300, 320, _GREEN_HSV)            # flat green block
+    assert find_fish_sprites(img, find_cast_bar(img)) == []
+
+
+def test_find_fish_sprites_none_bar_is_empty():
+    assert find_fish_sprites(_bgra(), None) == []
+
+
+def test_find_fish_merges_sprite_detection_additively():
+    # find_fish surfaces the sprite detection (with its conf) alongside HSV.
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)
+    _paste_sprite(img, "fish_squid_1.png", 300, 86)
+    fish = find_fish(img, bar=find_cast_bar(img))
+    assert any(f["kind"] == "squid" and "conf" in f for f in fish)
+
+
+def test_merge_keeps_converged_whale_next_to_a_green_sprite():
+    # A whale (5pts, HSV-only — no sprite template) converged within DEDUP_PX of a
+    # green sprite det must SURVIVE: the kind-aware dedup only suppresses a same-kind
+    # HSV duplicate, so a green sprite can't delete the high-value whale (#75 review).
+    img = _bgra(h=200, w=700)
+    _fill(img, 95, 109, 100, 600, _BAR_HSV)
+    _paste_sprite(img, "fish_green_1.png", 300, 88)          # green sprite ~x311
+    whale_hsv = [109, 90, 200]                               # in FISH_HSV['whale'] (H100-118, low S)
+    _fill(img, 96, 110, 314, 330, whale_hsv)                 # whale blob ~6px from the green
+    fish = find_fish(img, bar=find_cast_bar(img))
+    assert any(f["kind"] == "green" for f in fish)           # sprite green kept
+    assert any(f["kind"] == "whale" for f in fish)           # converged whale NOT dropped
 
 
 def test_bar_restriction_keeps_on_bar_fish_drops_scenery():

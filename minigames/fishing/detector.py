@@ -20,7 +20,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from common.templates import match_multiscale_center, match_multiscale_zncc_center
+from common.templates import (
+    match_multiscale_center, match_multiscale_zncc_center, masked_match_confidence,
+)
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -56,6 +58,24 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # S~186, whale sprite S~79). Provisional until a whale is seen live.
     "whale": ((100, 40, 110), (118, 130, 255)),
 }
+
+# Background-invariant sprite detection (#75). The minigame is an overlay over a
+# LIVE, varying world, so absolute-HSV gates break per biome (tan dock -> 'eel'
+# #63; turquoise water floods 'green' #72). The fish SPRITES are identical pixels
+# regardless of biome, so match the sprite (masked ZNCC: mean-subtracted NCC over
+# the sprite's own pixels, the world behind it dropped) — `green`/`squid` template
+# from one biome scores ~0.9 on the SAME fish in any other, vs ~0.3 on background.
+# Validated: 99-100% of HSV detections recovered, +8 HSV-missed fish found, 0 true
+# false positives, cross-biome (turquoise beach) green at 0.88. Whale has no
+# template yet (never captured, #69) so it stays HSV-only; eel keeps its own
+# curled-shape template (find_eel). Sprite library: assets/fish_<kind>_<n>.png +
+# a _mask.png isolating the body (captured/validated through the live pipeline).
+SPRITE_KINDS = ("green", "squid")
+SPRITE_SCALES = (0.9, 1.0, 1.1)    # fish size is window-relative; small scale slack
+SPRITE_CCORR_FLOOR = 0.55          # masked-CCORR localization candidate floor
+SPRITE_ZNCC_THRESHOLD = 0.55       # accept gate; true fish >=0.59 (incl. occluded), background <~0.35
+SPRITE_DEDUP_PX = 12               # merge peaks/dets within this x (one fish)
+SPRITE_MAX_PEAKS = 8               # per template-scale, cap the NMS loop
 # Fish are roughly-square SOLID sprites; the warm-hued false positives (the
 # tan dock / palm / sandcastle edges that read as 'eel') are thin and wide,
 # and the score text glyphs are small. Keep only square-ish, filled blobs.
@@ -210,6 +230,24 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
             if _in_a_mine(x, y, mines):
                 continue          # mine's red core, not a megalodon
             fish.append({"x": x, "y": y, "kind": "megalodon"})
+    # Background-invariant sprite detections (masked ZNCC, #75) merged ADDITIVELY:
+    # a fish counts if EITHER the HSV gate above OR the sprite match fires. A
+    # sprite det suppresses an HSV det only as a SAME-KIND duplicate (the redundant
+    # green/squid blob at the same spot) — never a different kind. The dedup MUST
+    # be kind-aware: a green/squid sprite must not delete a converged eel(2)/whale
+    # (5)/megalodon sitting within DEDUP_PX, which have no sprite template and
+    # would otherwise vanish from choose_target in exactly the converged-cluster
+    # regime where the high-value fish matters most (#75 review). So HSV still
+    # covers whale/eel/megalodon and the ~1% of green/squid a pose misses, while
+    # the sprite match adds the green/squid HSV drops in a new biome.
+    sprites = find_fish_sprites(frame, bar)
+    if sprites:
+        merged = list(sprites)
+        for f in fish:
+            if all(f["kind"] != s["kind"] or abs(f["x"] - s["x"]) > SPRITE_DEDUP_PX
+                   for s in sprites):
+                merged.append(f)
+        return merged
     return fish
 
 
@@ -311,6 +349,104 @@ def find_eel(frame: np.ndarray, threshold: float = EEL_MATCH_THRESHOLD,
         if val > best_val:
             best_val, best_xy = val, (cx, cy)
     return best_xy if best_val >= threshold else None
+
+
+_SPRITE_CACHE: dict[str, list[tuple[np.ndarray, np.ndarray]]] | None = None
+
+
+def _load_sprite_templates() -> dict[str, list[tuple[np.ndarray, np.ndarray]]]:
+    """Load + cache the per-kind (sprite, mask) template pairs from
+    assets/fish_<kind>_<n>.png / _mask.png. Cached at module level — find_fish
+    runs every poll, so this reads disk once."""
+    global _SPRITE_CACHE
+    if _SPRITE_CACHE is not None:
+        return _SPRITE_CACHE
+    out: dict[str, list[tuple[np.ndarray, np.ndarray]]] = {}
+    for kind in SPRITE_KINDS:
+        pairs = []
+        for p in sorted(ASSETS.glob(f"fish_{kind}_*.png")):
+            if p.name.endswith("_mask.png"):
+                continue
+            t = cv2.imread(str(p), cv2.IMREAD_COLOR)
+            m = cv2.imread(str(p.with_name(p.stem + "_mask.png")), cv2.IMREAD_GRAYSCALE)
+            if t is not None and m is not None and t.shape[:2] == m.shape[:2]:
+                pairs.append((t, m))
+        out[kind] = pairs
+    _SPRITE_CACHE = out
+    return out
+
+
+def _match_sprite_instances(region_bgr: np.ndarray,
+                            templates: list[tuple[np.ndarray, np.ndarray]],
+                            scales=SPRITE_SCALES,
+                            ccorr_floor=SPRITE_CCORR_FLOOR,
+                            zncc_thresh=SPRITE_ZNCC_THRESHOLD,
+                            max_peaks=SPRITE_MAX_PEAKS) -> list[tuple[int, int, float]]:
+    """All (cx, cy, zncc) matches of any pose in `templates` within `region_bgr`.
+
+    Two-stage so it finds MULTIPLE fish and stays background-invariant: a masked
+    CCORR sweep localizes candidate peaks (cheap, but scores bright-flat regions
+    high), each confirmed by masked ZNCC (mean-subtracted -> rejects flat scenery,
+    masked -> ignores the world behind the sprite). Iterative max + neighbourhood
+    suppression on the CCORR map yields several peaks per pose. Coords are
+    region-relative; the caller offsets to play-region coords. Pure CV."""
+    dets: list[tuple[int, int, float]] = []
+    for tmpl, mask in templates:
+        for s in scales:
+            th, tw = int(round(tmpl.shape[0] * s)), int(round(tmpl.shape[1] * s))
+            if th < 6 or tw < 6 or region_bgr.shape[0] < th or region_bgr.shape[1] < tw:
+                continue
+            t = cv2.resize(tmpl, (tw, th))
+            m = cv2.resize(mask, (tw, th))
+            cc = cv2.matchTemplate(region_bgr, t, cv2.TM_CCORR_NORMED, mask=m)
+            cc = np.nan_to_num(cc, nan=0.0, posinf=0.0, neginf=0.0)
+            for _ in range(max_peaks):
+                _, mx, _, loc = cv2.minMaxLoc(cc)
+                if mx < ccorr_floor:
+                    break
+                px, py = loc
+                z = masked_match_confidence(region_bgr, tmpl, mask, (px, py), s)
+                if z >= zncc_thresh:
+                    dets.append((px + tw // 2, py + th // 2, z))
+                cc[max(0, py - th // 2):py + th // 2 + 1,
+                   max(0, px - tw // 2):px + tw // 2 + 1] = 0.0
+    return dets
+
+
+def find_fish_sprites(frame: np.ndarray,
+                      bar: tuple[int, int, int, int] | None) -> list[dict]:
+    """Background-invariant fish detection by masked-ZNCC sprite matching (#75):
+    {x, y, kind, conf} dicts in play-region coords, confined to the cast-bar band.
+    Matches each kind's sprite poses (assets/fish_<kind>_*.png) and keeps every
+    peak that clears the ZNCC gate, deduped across kinds/poses by proximity
+    (highest conf wins). Empty when `bar` is None or no templates exist.
+
+    Unlike the HSV gates this is biome-invariant — it matches the sprite's pixels,
+    not their colour against whatever world is drawn behind the overlay — so it
+    holds up where absolute HSV breaks per biome (#63/#72). Merged additively by
+    find_fish; whale (no template) and the eel keep their existing paths."""
+    if bar is None:
+        return []
+    templates = _load_sprite_templates()
+    if not any(templates.values()):
+        return []
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    x, y, w, h = bar
+    y0, y1 = max(0, y - BAR_VPAD), min(bgr.shape[0], y + h + BAR_VPAD)
+    x0, x1 = max(0, x), min(bgr.shape[1], x + w)
+    region = bgr[y0:y1, x0:x1]
+    if region.size == 0:
+        return []
+    raw: list[tuple[int, int, str, float]] = []
+    for kind in SPRITE_KINDS:
+        for dx, dy, z in _match_sprite_instances(region, templates[kind]):
+            raw.append((x0 + dx, y0 + dy, kind, z))
+    raw.sort(key=lambda d: -d[3])      # highest confidence first
+    out: list[dict] = []
+    for fx, fy, kind, z in raw:
+        if all(abs(fx - o["x"]) > SPRITE_DEDUP_PX for o in out):
+            out.append({"x": fx, "y": fy, "kind": kind, "conf": round(z, 3)})
+    return out
 
 
 # "PLAY GAME" entry prompt — the shared Idleon minigame button (same sprite
