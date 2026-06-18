@@ -38,12 +38,11 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # bar's cyan top-edge (H~98) so the fish doesn't merge into it. Verified on
     # the capture frames (one clean ~17x17 blob per frame).
     "green": ((70, 50, 130), (92, 255, 255)),
-    # Eel (yellow/orange). S floor 150: the low-saturation warm SCENERY — the tan
-    # dock, the red/white bobber, the score text — all read S~121 and were firing
-    # 83 false eels in a no-streak run (#63); a real eel is saturated (S~197). S is
-    # the clean discriminator (V overlaps). PROVISIONAL: only 1 clean real-eel
-    # sample so far (cast 15, overlapping) — re-check the floors as eels recur.
-    "eel": ((13, 150, 140), (28, 255, 255)),
+    # Eel is NOT here — it's a yellow CURLED fish whose colour (H12-24, S~122)
+    # is indistinguishable from the tan dock (S~121), so HSV either misses it or
+    # floods 68% of frames with dock false positives (#63). It's matched by its
+    # distinctive curled SHAPE instead (find_eel, assets/eel.png) — template
+    # match 1.00 on the eel vs <=0.63 across 263 no-eel frames.
     "squid": ((132, 60, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
     # Whale (blue) overlaps the blue bar (H~109) — separated by saturation (bar
     # S~186, whale sprite S~79). Provisional until a whale is seen live.
@@ -187,14 +186,15 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
         mines = find_mines(frame, bar=bar)
     hsv = _to_hsv(frame)
     fish: list[dict] = []
-    for kind, (low, high) in FISH_HSV.items():
+    for kind, (low, high) in FISH_HSV.items():   # green, squid, whale (square sprites)
         mask = _restrict(_mask(hsv, low, high), bar)
         for x, y in _blob_centroids(mask, min_area, FISH_ASPECT_RANGE, FISH_MIN_FILL):
-            # Only the WARM eel collides with a mine's orange core; a green/squid/
-            # whale inside a mine is a real fish sitting ON it (catchable), keep it.
-            if kind == "eel" and _in_a_mine(x, y, mines):
-                continue          # mine's orange core, not an eel (#63)
             fish.append({"x": x, "y": y, "kind": kind})
+    # Eel: matched by its curled SHAPE (its colour can't be told from the dock,
+    # #63). Skip a match inside a mine as a safety against a chance template hit.
+    eel = find_eel(frame, bar=bar)
+    if eel is not None and not _in_a_mine(eel[0], eel[1], mines):
+        fish.append({"x": eel[0], "y": eel[1], "kind": "eel"})
     if include_megalodon:
         meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
         for x, y in _blob_centroids(_restrict(meg, bar), min_area,
@@ -264,6 +264,33 @@ def find_lure(frame: np.ndarray, threshold: float = 0.7) -> tuple[int, int] | No
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     template = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if template is None:
+        return None
+    (cx, cy), val, _scale = match_multiscale_center(bgr, template)
+    return (cx, cy) if val >= threshold else None
+
+
+# The eel is a yellow CURLED fish; its colour (H12-24, S~122) is the tan dock's
+# (S~121), so HSV can't find it — but the curl is a distinctive SHAPE, matched by
+# template (assets/eel.png, cropped live from a streak-3 run). Threshold 0.75
+# sits above the worst no-eel frame (0.63 across 263) and below the eel (0.95-1.0)
+# (#63). One template/pose so far — widen with more eel crops if it under-matches.
+EEL_MATCH_THRESHOLD = 0.75
+
+
+def find_eel(frame: np.ndarray, threshold: float = EEL_MATCH_THRESHOLD,
+             bar: tuple[int, int, int, int] | None = None) -> tuple[int, int] | None:
+    """Locate the eel by its curled-shape template (assets/eel.png); (x, y) of
+    the best match at/above `threshold`, else None. `bar` is accepted for a
+    consistent signature but the match runs on the whole crop (the template is
+    specific enough — 0 false matches on 263 no-eel frames)."""
+    path = ASSETS / "eel.png"
+    if not path.exists():
+        return None
+    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if template is None:
+        return None
+    bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
         return None
     (cx, cy), val, _scale = match_multiscale_center(bgr, template)
     return (cx, cy) if val >= threshold else None

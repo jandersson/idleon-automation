@@ -8,9 +8,11 @@ LOGIC: that the bar is found and that off-bar blobs are excluded.
 import cv2
 import numpy as np
 
+from pathlib import Path
+
 from minigames.fishing.detector import (
     find_cast_bar, find_fish, find_charge_level, find_charge_fill,
-    find_mines, _in_a_mine,
+    find_mines, _in_a_mine, find_eel,
 )
 
 
@@ -85,20 +87,27 @@ def test_in_a_mine():
     assert not _in_a_mine(360, 104, mines)   # well outside
 
 
-def test_find_fish_drops_eel_in_mine_keeps_green():
-    # A mine's orange core reads as 'eel'; it's dropped when inside a mine. A
-    # GREEN sitting on a mine is a real catchable fish and is kept.
+def test_find_fish_keeps_green_on_a_mine():
+    # A green fish sitting inside a mine bbox is a real catchable fish (landing
+    # on a fish over a mine still scores), so it is kept, not excluded.
     img = _bgra()
-    _fill(img, 96, 112, 296, 312, _GREEN_HSV)        # green fish ~x304
-    _fill(img, 96, 112, 396, 412, [20, 200, 230])    # warm 'eel' blob ~x404
-    mines = [{"x": 404, "y": 104, "bbox": (392, 92, 28, 24)}]  # mine over the eel
-    kinds = {(d["kind"]) for d in find_fish(img, mines=mines)}
-    xs = {d["kind"]: d["x"] for d in find_fish(img, mines=mines)}
-    assert "green" in kinds                          # green kept
-    assert "eel" not in kinds                        # mine-core eel dropped
-    # a green that happened to be inside a mine bbox is still kept
-    mines2 = [{"x": 304, "y": 104, "bbox": (292, 92, 28, 24)}]
-    assert any(d["kind"] == "green" for d in find_fish(img, mines=mines2))
+    _fill(img, 96, 112, 296, 312, _GREEN_HSV)
+    mines = [{"x": 304, "y": 104, "bbox": (292, 92, 28, 24)}]
+    assert any(d["kind"] == "green" for d in find_fish(img, mines=mines))
+
+
+def test_find_eel_matches_its_template_and_ignores_green():
+    # The eel is found by its curled-shape template, not colour. Pasting the
+    # committed eel sprite is matched; a plain green fish is not.
+    tmpl = cv2.imread(str(Path("minigames/fishing/assets/eel.png")))
+    assert tmpl is not None
+    img = _bgra(h=200, w=700)
+    img[80:80 + tmpl.shape[0], 300:300 + tmpl.shape[1], :3] = tmpl
+    res = find_eel(img)
+    assert res is not None and 295 <= res[0] <= 325
+    green_only = _bgra(h=200, w=700)
+    _fill(green_only, 95, 111, 300, 316, _GREEN_HSV)
+    assert find_eel(green_only) is None
 
 
 def test_find_charge_fill_reads_thermometer_left_of_cast_bar():
