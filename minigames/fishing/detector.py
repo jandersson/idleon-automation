@@ -281,21 +281,30 @@ EEL_MATCH_THRESHOLD = 0.75
 
 def find_eel(frame: np.ndarray, threshold: float = EEL_MATCH_THRESHOLD,
              bar: tuple[int, int, int, int] | None = None) -> tuple[int, int] | None:
-    """Locate the eel by its curled-shape template (assets/eel.png); (x, y) of
-    the best match at/above `threshold`, else None. `bar` is accepted for a
-    consistent signature but the match runs on the whole crop (the template is
-    specific enough — 0 false matches on 263 no-eel frames)."""
-    path = ASSETS / "eel.png"
-    if not path.exists():
-        return None
-    template = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    if template is None:
+    """Locate the eel by its curled-shape template(s); (x, y) of the best match
+    at/above `threshold`, else None. `bar` is accepted for a consistent signature
+    but the match runs on the whole crop.
+
+    Matches against ALL ``assets/eel*.png`` poses and keeps the best. The eel
+    curls into several shapes, and a SINGLE pose under-matches the others at
+    ~0.63 — right at the no-eel ceiling, so there's no threshold that separates
+    them and most eels go undetected (#63). Drop additional clean eel crops
+    (``eel_<tag>.png``) from a ``--save-frames`` run to widen pose coverage."""
+    templates = sorted(ASSETS.glob("eel*.png"))
+    if not templates:
         return None
     bgr = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
-    if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
-        return None
-    (cx, cy), val, _scale = match_multiscale_center(bgr, template)
-    return (cx, cy) if val >= threshold else None
+    best_val, best_xy = -1.0, None
+    for path in templates:
+        template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if template is None:
+            continue
+        if bgr.shape[0] < template.shape[0] or bgr.shape[1] < template.shape[1]:
+            continue
+        (cx, cy), val, _scale = match_multiscale_center(bgr, template)
+        if val > best_val:
+            best_val, best_xy = val, (cx, cy)
+    return best_xy if best_val >= threshold else None
 
 
 # "PLAY GAME" entry prompt — the shared Idleon minigame button (same sprite
