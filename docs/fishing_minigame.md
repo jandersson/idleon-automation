@@ -450,6 +450,33 @@ digits are all captured.
 - The eel template is still one pose — the score delta now catches an eel (+2)
   regardless of the template matching, which is the point.
 
+## Converged multi-catch — a delta is a SUM, not one fish (#58, 2026-06-18)
+
+The sliding mechanic has a second consequence: fish **slide together and
+converge**, so one cast can catch **several at once**. A run logged a "whale"
+(+5) that was actually an **eel (2) + squid (3)** caught together as they
+converged (user-confirmed from the scene: a green, an eel, a squid, two mines —
+no whale). So the score DELTA is the *total points*, which can be a SUM.
+
+Consequences + fix:
+- `kind_from_delta` no longer maps +5→whale. It names a **lone** common fish only
+  for green/eel/squid (delta 1/2/3); any other positive delta (4, 5, 6, …) is a
+  **converged multi-catch** labelled `'multi'` worth its full delta. (Whales are
+  rare and undetected, and the eel+squid sum is the common cause of a +5 — so a
+  real whale is also logged `multi` until whale *detection* can confirm one.)
+- **Multi-catch deltas were being DROPPED**: +4/+6/+7 returned None (no single
+  fish) → fell to the heuristic → often unrecorded. Now they're real catches
+  (made=1, points=delta). The points always come from the delta, so `'multi'`
+  scores correctly.
+- The streak no longer resets on a delta `'whale'` (that was a converged
+  multi-catch mislabel). It also explains the **streak-counter undercount**: the
+  game advances the streak *per fish*, the bot *per cast*, so a converged catch
+  is +2 in-game but +1 to the bot's (cosmetic) counter — which is why squid/whale
+  appeared at low logged streaks.
+- **Caveat on old data**: pre-fix `landed_kind` counts (the "1 whale", some
+  "squid") are unreliable — some were converged multi-catches. Points/`made` were
+  always right (the delta); only the kind labels were.
+
 ## Close-to-the-dock fish — reach floor, not detection (#58, 2026-06-18)
 
 A fish spawning close to the dock went uncaught and the bot **flung the lure far

@@ -18,9 +18,11 @@ cast instead of burning it (#58). Until MIN_SAMPLES charged casts exist the bot
 explores random target charge levels and logs (charge_level, landed_dist).
 
 Catches are detected by the PTS score DELTA (read before vs after each cast —
-the game's own count, authoritative; +1 green/+2 eel/+3 squid/+5 whale), which
-overrides and rescues the far-cast / eel catches the bobber-disappearance
-heuristic misses (#58/#63). The score read falls back to that heuristic whenever
+the game's own count, authoritative for the catch + points), which overrides and
+rescues the far-cast / eel catches the bobber-disappearance heuristic misses
+(#58/#63). The delta is the TOTAL points: sliding fish converge and are caught
+together, so it can be a SUM (+1 green / +2 eel / +3 squid as a lone fish; any
+other positive delta is a 'multi' catch worth its delta — NOT a whale). The score read falls back to that heuristic whenever
 a digit isn't captured yet / the crop is unreadable (read is None). Grow the
 digit-template library with `fishing --save-frames` + `fishing-capture-digits`.
 
@@ -709,9 +711,19 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             (landed_kind, made, detect_source), score_before, score_after)
 
         if made:
-            points = FISH_VALUE.get(landed_kind, 0)
+            # Points: the score DELTA is the game's own count, so it's the truth
+            # even for a converged multi-catch (landed_kind 'multi' has no single
+            # FISH_VALUE — its points are the delta). The heuristic paths fall back
+            # to the kind's value.
+            if detect_source == "score" and score_before is not None and score_after is not None:
+                points = score_after - score_before
+            else:
+                points = FISH_VALUE.get(landed_kind, 0)
             stats["points_total"] += points
-            # Streak: any fish catch extends it; a Whale catch resets to 1 (wiki).
+            # Streak: any catch extends it; a Whale resets to 1 (wiki). A score
+            # delta never labels 'whale' now (a +5 is logged 'multi' — usually
+            # eel+squid, and whales are undetected), so this only resets on a
+            # detector-confirmed whale, not a converged multi-catch.
             streak = 1 if landed_kind == "whale" else streak + 1
             stats["max_streak"] = max(stats["max_streak"], streak)
         elif made == 0:

@@ -41,9 +41,18 @@ SCORE_DY0 = 11
 # don't show this scenery — were available.
 SCORE_DY1 = 23
 
-# Point value -> caught fish kind, for turning a score DELTA into a catch.
-# (Wiki: green 1, eel 2, squid 3, whale 5.)
-DELTA_KIND = {1: "green", 2: "eel", 3: "squid", 5: "whale"}
+# Single-fish point value -> kind, for naming a score DELTA's catch. NOTE: a
+# delta is the TOTAL points gained, which the sliding mechanic makes a SUM —
+# fish slide together and CONVERGE, so one cast can catch several at once (an
+# observed +5 was eel(2)+squid(3), NOT a whale). So this only covers the values
+# a LONE common fish gives (green/eel/squid). +5 (whale OR eel+squid) is left
+# OUT — whales are rare and undetected, the eel+squid sum is the common cause —
+# and any delta not here is labelled 'multi' (the points still come from the
+# delta). Wiki single-fish values: green 1, eel 2, squid 3, whale 5.
+DELTA_KIND = {1: "green", 2: "eel", 3: "squid"}
+# Label for a catch whose points don't match a single common fish (a converged
+# multi-catch, or a +5 that can't be told from a whale).
+MULTI_KIND = "multi"
 
 # White-fill binarization (not the shared Otsu-minority default): the fishing
 # score renders over a busy tan dock whose dark plank grooves bridge the digits
@@ -74,15 +83,21 @@ def read_score(full_frame: np.ndarray, cast_bar_full):
 
 
 def kind_from_delta(before, after):
-    """The caught fish kind from a (before, after) PTS pair, or None.
+    """(kind, points) for a (before, after) PTS pair, or None.
 
-    Returns (kind, points) when the score rose by a known fish value, ("miss", 0)
-    when it didn't move, or None when either read failed (unknown — don't guess).
-    A multi-fish jump or an unmapped delta also returns None (ambiguous)."""
+    The delta is the game's own count, so it's authoritative for the CATCH and the
+    POINTS: ``("miss", 0)`` when the score didn't move, ``(kind, delta)`` for a
+    rise. `points` is always the full delta — including converged multi-catches
+    (sliding fish caught together: +4/+5/+6/… are real catches worth their delta).
+    `kind` names a lone common fish only when the delta is one fish's value
+    (green/eel/squid); otherwise it's ``MULTI_KIND`` (a multi-catch, or a +5 that
+    can't be told from a whale). None when a read failed (unknown — don't guess)
+    or the score DROPPED (a bogus read; the score never decreases)."""
     if before is None or after is None:
         return None
     delta = after - before
+    if delta < 0:
+        return None
     if delta == 0:
         return "miss", 0
-    kind = DELTA_KIND.get(delta)
-    return (kind, delta) if kind is not None else None
+    return DELTA_KIND.get(delta, MULTI_KIND), delta

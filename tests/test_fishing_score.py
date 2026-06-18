@@ -18,18 +18,21 @@ from minigames.fishing import score as FS
 # --- kind_from_delta: the score-delta -> catch mapping ---------------------
 
 @pytest.mark.parametrize("before,after,expected", [
-    (None, 5, None),         # a read failed -> unknown, never a guess
+    (None, 5, None),          # a read failed -> unknown, never a guess
     (3, None, None),
     (None, None, None),
-    (5, 5, ("miss", 0)),     # no change -> a clean miss
-    (0, 1, ("green", 1)),    # +1 green
-    (4, 6, ("eel", 2)),      # +2 eel
-    (1, 4, ("squid", 3)),    # +3 squid
-    (2, 7, ("whale", 5)),    # +5 whale
+    (5, 5, ("miss", 0)),      # no change -> a clean miss
+    (0, 1, ("green", 1)),     # +1 green (only a lone green sums to 1)
+    (4, 6, ("eel", 2)),       # +2 -> a lone eel (best guess)
+    (1, 4, ("squid", 3)),     # +3 -> a lone squid (best guess)
     (0, 2, ("eel", 2)),
-    (0, 4, None),            # +4 maps to no single fish -> ambiguous
-    (3, 11, None),           # a multi-fish jump is ambiguous
-    (5, 3, None),            # a DECREASE is never a catch
+    # The delta is the TOTAL points: sliding fish CONVERGE and are caught
+    # together, so a sum that isn't a lone common fish is a 'multi' catch worth
+    # its delta (NOT a whale — +5 was observed as eel+squid).
+    (2, 7, ("multi", 5)),     # +5: whale OR eel+squid -> multi (whales undetected)
+    (0, 4, ("multi", 4)),     # +4: no single fish -> a converged multi-catch
+    (3, 11, ("multi", 8)),    # a big jump is still a real catch worth its points
+    (5, 3, None),             # a DECREASE is a bogus read -> None
 ])
 def test_kind_from_delta(before, after, expected):
     assert FS.kind_from_delta(before, after) == expected
@@ -197,7 +200,15 @@ def test_resolve_catch_keeps_heuristic_when_a_read_is_none():
     assert _resolve_catch(("eel", 1, "eel_absence"), 3, None) == ("eel", 1, "eel_absence")
 
 
-def test_resolve_catch_keeps_heuristic_on_ambiguous_delta():
+def test_resolve_catch_keeps_heuristic_on_dropped_score():
     from minigames.fishing.main import _resolve_catch
-    # +4 maps to no single fish -> ambiguous -> the heuristic verdict stands.
-    assert _resolve_catch(("miss", 0, "landing"), 0, 4) == ("miss", 0, "landing")
+    # The score DROPPED (a bogus read) -> None -> the heuristic verdict stands.
+    assert _resolve_catch(("miss", 0, "landing"), 7, 3) == ("miss", 0, "landing")
+
+
+def test_resolve_catch_records_converged_multi_catch():
+    from minigames.fishing.main import _resolve_catch
+    # The +5 the bot once logged "whale" was eel+squid converged; +4 etc. are real
+    # catches now (were dropped as ambiguous). They record as a 'multi' catch.
+    assert _resolve_catch((None, None, None), 16, 21) == ("multi", 1, "score")
+    assert _resolve_catch(("green", 1, "landing"), 0, 4) == ("multi", 1, "score")
