@@ -376,31 +376,45 @@ default unchanged. Validated on the botrun_225352 frames: **163/176 read "0 PTS"
 → 0, zero misreads** (13 had no cast bar → `None` → fallback); "26 BEST" → 26; the
 P/T/B/E/S/T label fragments all score ≤0.35 vs the 0.6 match floor.
 
-The **noise blob** left of the "0" is the red charge thermometer's bright
-highlight at `bar_x-38..-28` (present only mid-charge; the digit's left edge is at
-`bar_x-21`). `SCORE_DX0 = -26` starts the crop past it with a ~5px margin, so the
-leftmost component is the lone leading digit.
+Two **noise blobs** are cropped out, one per axis. Left of the digit: the red
+charge thermometer's bright highlight at `bar_x-38..-28` (present only mid-charge;
+the digit's left edge is at `bar_x-21`) — `SCORE_DX0 = -26` starts the crop past it
+with a ~5px margin. Below the digit: intermittent bright scenery (foam/splash) at
+the crop's bottom-left forms a digit-sized component that becomes a spurious
+leading digit (live botrun_120520: it broke ~1/3 of reads) — `SCORE_DY1 = 23`
+crops to the digit band (the digits sit in the top, ~rows 2–10) so the bottom
+noise is filtered as too short. With both, the leftmost component is the lone
+leading digit. (Both were invisible in the bootstrap charging frames, which is why
+the first cut used the full region.)
 
 ### Digit templates: bootstrap + capture flow
 
 The reader matches each white-fill glyph against `assets/digit_templates/<d>.png`,
 captured **through the same white-fill pipeline** the live reader uses (the
-catching lesson — a template from another pipeline mismatches). 0/2/6 are seeded
-from botrun_225352 ("0 PTS" / "26 BEST"). The rest (1,3,4,5,7,8,9) come from a live
-run: `uv run fishing --save-frames` saves each cast's before/after PTS crop to
-`assets/captures/botrun_*/score_*.png` (the score climbs 0→9 across casts), then
+catching lesson — a template from another pipeline mismatches). 0/2/6 were seeded
+from botrun_225352 ("0 PTS" / "26 BEST"); 1/3/4/5/8/9 were added from the
+botrun_120520 live run (score climbed 0→16). **Only 7 is still missing** (no
+readable frame caught a 7). The capture flow: `uv run fishing --save-frames` saves
+each cast's before/after PTS crop to `assets/captures/botrun_*/score_*.png`, then
 `fishing-capture-digits` dumps the isolated glyphs + a contact sheet to label and
-copy into `digit_templates/`. Until a digit is captured the reader returns `None`
-for any score containing it and falls back — safe, just lower coverage.
+copy into `digit_templates/`.
+
+An **incomplete template set misreads, it doesn't just blank**: with only 0/2/6
+present, live 3/8/9 all false-matched "6" (the closest survivor above the 0.6
+floor) — verified on botrun_120520, where the old reader read 6 for true 3/8/9 and
+the full set reads each at 1.0. That's lossy but still SAFE: the collapsed reads
+produce delta==0 or unmapped deltas, which the asymmetric `_resolve_catch` turns
+into missed/None outcomes, never a fabricated catch. Still, capture the full set
+(grab 7) so the score signal is trustworthy on every frame, not just those whose
+digits are all captured.
 
 ### Open / to validate live
 
-- **Multi-digit PTS layout** is assumed left-aligned (number's left edge fixed at
-  `bar_x-21`, grows rightward, "PTS" shifts right) — so `DX0=-26` captures the
-  leading digit at any digit count. Unverified (the bootstrap run never scored);
-  if it's right-aligned a 2+ digit leading digit could clip → wrong read → `None`
-  delta → heuristic fallback (degrades safely). Confirm from a live multi-digit
-  frame and adjust `SCORE_DX0`/`DX1` if needed.
+- **Multi-digit PTS layout is left-aligned** — CONFIRMED on botrun_120520
+  ("10 PTS"…"16 PTS"): the leading digit's left edge stays fixed at `bar_x-21` and
+  the number grows rightward (PTS shifts right), so `DX0=-26`/`DX1=45` capture
+  2-digit scores cleanly. (A rare per-frame anchor jitter can shift the crop ~2px
+  and clip a read → a negative/None delta → safe fallback; seen once in 62 crops.)
 - **Score-update lag.** The after-read happens once `_measure_landing` returns —
   on a measured catch that can be only ~0.2–0.4s after the landing (early exit on
   the bobber reeling in), within the window where the counter may not have ticked

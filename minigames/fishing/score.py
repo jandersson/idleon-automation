@@ -32,7 +32,14 @@ DIGIT_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
 SCORE_DX0 = -26
 SCORE_DX1 = 45
 SCORE_DY0 = 11
-SCORE_DY1 = 30
+# DY1 crops to the digit band only. The digits sit in the TOP of the region
+# (~rows 2-10 of the crop); below them, intermittent bright scenery (foam/splash)
+# at the crop's bottom-left forms a digit-sized component that becomes a spurious
+# leading digit (live botrun_120520: it broke ~1/3 of reads). Cutting the crop at
+# row ~11 drops that noise (it's filtered as too short) while keeping the digits
+# (#63). Was 30 (the full region) when only the bootstrap charging frames — which
+# don't show this scenery — were available.
+SCORE_DY1 = 23
 
 # Point value -> caught fish kind, for turning a score DELTA into a catch.
 # (Wiki: green 1, eel 2, squid 3, whale 5.)
