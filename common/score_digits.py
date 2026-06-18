@@ -93,15 +93,65 @@ def _binarize_glyph(gray: np.ndarray) -> np.ndarray:
     return _strip_horizontal_lines(binary)
 
 
-def digit_components(crop: np.ndarray) -> list[tuple[np.ndarray, tuple[int, int, int, int]]]:
+def _default_binarize(crop: np.ndarray) -> np.ndarray:
+    """The shared default: Otsu-minority on the grayscale crop (what catching
+    uses). Adapts to a uniform background but can BRIDGE the digits when the
+    background carries its own dark lines — see ``binarize_white_fill``."""
+    return _binarize_glyph(_to_gray(crop))
+
+
+# White-fill binarization (fishing's busy tan-dock background, #63). The score
+# digits render as a bright near-white FILL with a dark outline; on a uniform
+# background Otsu-minority isolates them, but over the fishing dock the dark
+# plank grooves binarize alongside the dark outlines and BRIDGE the glyphs into
+# the scenery (and the "PTS" label), so the leading digit can't be read. Keying
+# on the bright fill itself — high Value, low Saturation — rejects the tan dock
+# (saturated), the dark planks/outlines (low Value), and the coloured charge
+# bar (saturated), leaving the clean white glyph fills. Tuned on the
+# botrun_225352 frames: the fill reads V~255 S~80-100, the dock S~115-123.
+WHITE_FILL_V_MIN = 190
+WHITE_FILL_S_MAX = 110
+
+
+def binarize_white_fill(crop: np.ndarray, v_min: int = WHITE_FILL_V_MIN,
+                        s_max: int = WHITE_FILL_S_MAX) -> np.ndarray:
+    """Isolate WHITE-FILLED digit glyphs by brightness + desaturation, for busy
+    backgrounds where Otsu-minority bridges the digits into background lines
+    (fishing's tan dock with plank grooves, #63). Returns a 0/255 binary the
+    same H x W as ``crop``.
+
+    A colour crop is gated in HSV (``V >= v_min`` and ``S <= s_max``); a
+    single-channel crop falls back to a pure brightness threshold (no S gate).
+    The horizontal-line strip still runs so a banner underline can't bridge."""
+    if crop.size == 0:
+        return np.zeros(crop.shape[:2], dtype=np.uint8)
+    if crop.ndim == 2:
+        binary = (crop >= v_min).astype(np.uint8) * 255
+        return _strip_horizontal_lines(binary)
+    bgr = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR) if crop.shape[2] == 4 else crop
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    sat, val = hsv[:, :, 1], hsv[:, :, 2]
+    binary = (((val >= v_min) & (sat <= s_max)).astype(np.uint8)) * 255
+    return _strip_horizontal_lines(binary)
+
+
+def digit_components(
+    crop: np.ndarray,
+    binarize: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> list[tuple[np.ndarray, tuple[int, int, int, int]]]:
     """Isolate digit-height components from a score-region crop.
 
     Returns ``[(patch, (x, y, w, h)), ...]`` sorted left-to-right, each patch a
     binary (0/255) glyph. Components are filtered to plausible single-digit
     size; the trailing label is excluded later by failing to match as a digit,
     but absurdly wide blobs are dropped so they don't waste a match.
+
+    ``binarize`` selects the foreground-isolation strategy (default: Otsu-minority
+    on gray, ``_default_binarize``). Pass ``binarize_white_fill`` for busy
+    backgrounds. Templates MUST be captured through the same binarizer the live
+    reader uses, so the component shapes match (the catching lesson).
     """
-    binary = _binarize_glyph(_to_gray(crop))
+    binary = (binarize or _default_binarize)(crop)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     comps: list[tuple[np.ndarray, tuple[int, int, int, int]]] = []
     for label_id in range(1, num_labels):  # 0 is background
@@ -158,15 +208,20 @@ def match_digit(patch: np.ndarray, canon_templates: dict[int, list[np.ndarray]])
     return best_digit, best_score
 
 
-def read_pts_from_crop(crop: np.ndarray, canon_templates: dict[int, list[np.ndarray]]) -> int | None:
+def read_pts_from_crop(
+    crop: np.ndarray,
+    canon_templates: dict[int, list[np.ndarray]],
+    binarize: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> int | None:
     """Read the leading number from a score-region crop, or None.
 
     Walks the digit-height components left-to-right and matches each; the score
     is the leading run of matched digits, stopping at the first component that
-    isn't a digit (the label, noise, or an uncaptured glyph).
+    isn't a digit (the label, noise, or an uncaptured glyph). ``binarize``
+    selects the foreground-isolation strategy (see ``digit_components``).
     """
     digits: list[str] = []
-    for patch, _box in digit_components(crop):
+    for patch, _box in digit_components(crop, binarize):
         digit, _score = match_digit(patch, canon_templates)
         if digit is None:
             break
@@ -217,15 +272,20 @@ def save_digit_template(template_dir: Path, digit: int, patch: np.ndarray,
     return path
 
 
-def make_pts_reader(template_dir: Path) -> Callable[[np.ndarray | None], int | None]:
+def make_pts_reader(
+    template_dir: Path,
+    binarize: Callable[[np.ndarray], np.ndarray] | None = None,
+) -> Callable[[np.ndarray | None], int | None]:
     """Build a ``read_pts(crop) -> int | None`` bound to a template library.
-    Templates load and canonicalize once at make-time, not per call."""
+    Templates load and canonicalize once at make-time, not per call.
+    ``binarize`` selects the foreground-isolation strategy (default Otsu-minority;
+    pass ``binarize_white_fill`` for busy backgrounds — see ``digit_components``)."""
     canon = {d: [_canon(t) for t in variants]
              for d, variants in load_digit_templates(template_dir).items()}
 
     def read_pts(crop: np.ndarray | None) -> int | None:
         if crop is None or crop.size == 0:
             return None
-        return read_pts_from_crop(crop, canon)
+        return read_pts_from_crop(crop, canon, binarize)
 
     return read_pts
