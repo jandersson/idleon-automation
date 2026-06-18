@@ -183,3 +183,76 @@ def choose_target(
             best_key = key
             best = {**f, "target_dist": dist, "value": value}
     return best
+
+
+# --- Moving-target lead --------------------------------------------------
+# The targets SLIDE back and forth along the bar, starting ~cast 5 and growing
+# in speed/amplitude through a game (measured: ~±15-22 px/s late-game; see
+# docs/fishing_minigame.md). The bot otherwise aims at the fish's decision-time
+# x, but over the ~1.3s from decision to landing the fish slides 14-32px away —
+# the dominant miss cause that caps the streak at ~3. These pure helpers lead
+# the aim to the fish's PREDICTED landing position.
+#
+# SHIPPED LOGGING-FIRST as a parity A/B (aim_mode 'model_lead' vs 'model_nolead')
+# — the effective catch radius is only ~10px and the cast model's own error has
+# a heavy tail, so a lead with a few-px error budget can be NET-NEGATIVE. Promote
+# off the A/B only on a disjoint-CI make-rate win under matched velocity bins
+# (the #23/#38 discipline). Two safeguards earn their keep below.
+FLIGHT_S = 0.7              # lure flight (decision-anchor -> landing); constant first guess
+LEAD_TIME_FALLBACK_S = 1.3  # decision -> landing time (hold ~0.6 + flight ~0.7) until hold_ms is fit
+# Below this the apparent velocity is at the integer-centroid noise floor (a
+# ±1px jitter over ~0.12s aliases to ~±8px/s) or the fish is near a turn — either
+# way, don't lead.
+MIN_LEAD_VEL_PX_S = 8.0
+# Turn-cap: the slide is monotonic only ~0.8s but the lead spans ~1.3s, so a
+# reversal can fall inside the flight. Bounding the lead to ~one catch radius
+# keeps an over-lead-past-a-turn from converting a make into a miss.
+MAX_LEAD_PX = 12.0
+MIN_LEAD_SAMPLES = 3        # fewer can't beat the ±1px centroid jitter
+MIN_LEAD_SPAN_S = 0.12      # too short a baseline can't resolve sub-pixel motion
+
+
+def theil_sen_velocity(samples: list[tuple[float, float]],
+                       min_samples: int = MIN_LEAD_SAMPLES,
+                       min_span_s: float = MIN_LEAD_SPAN_S) -> float | None:
+    """Robust x-velocity (px/s) from ``[(t, x), ...]`` fish sightings, or None
+    when unresolved. Theil-Sen (median of pairwise slopes, like fit_cast_model)
+    beats the ±1px integer-centroid jitter that aliases a 2-frame delta to
+    ±20px/s. Returns None below ``min_samples``, when the time span is too short
+    to resolve sub-pixel motion, or when consecutive samples REVERSE direction (a
+    turn / pure noise → don't lead). Pure."""
+    pts = [(float(t), float(x)) for t, x in samples]
+    if len(pts) < min_samples:
+        return None
+    if pts[-1][0] - pts[0][0] < min_span_s:
+        return None
+    deltas = [pts[i + 1][1] - pts[i][1] for i in range(len(pts) - 1)]
+    if any(d > 0 for d in deltas) and any(d < 0 for d in deltas):
+        return None  # direction reversed across the window -> at a turn / noisy
+    slopes = [(xj - xi) / (tj - ti)
+              for i, (ti, xi) in enumerate(pts)
+              for tj, xj in pts[i + 1:] if tj != ti]
+    return _median(slopes) if slopes else None
+
+
+def lead_fish_dist(target_dist_px: float, velocity_px_s: float | None,
+                   lead_time_s: float, reach_lo: float, reach_hi: float,
+                   min_vel_px_s: float = MIN_LEAD_VEL_PX_S,
+                   max_lead_px: float = MAX_LEAD_PX) -> tuple[float, float, bool]:
+    """Lead a sliding fish: the target distance (px from the cast origin) adjusted
+    to the fish's PREDICTED position at landing. Returns
+    ``(led_dist, effective_lead_px, clamped)``.
+
+    No lead (``led == target``) when ``velocity`` is None or below the noise/turn
+    floor. The lead is turn-capped to ``±max_lead_px`` and reach-clamped to
+    ``[reach_lo, reach_hi]`` — the cast model would silently swallow an
+    out-of-reach lead, so ``clamped`` flags it. Operates on the scalar distance
+    from the FIXED left-edge origin, so a +velocity (fish sliding outward/right)
+    increases the distance and −velocity decreases it; there's no abs() direction
+    flip. Pure."""
+    if velocity_px_s is None or abs(velocity_px_s) < min_vel_px_s:
+        return target_dist_px, 0.0, False
+    lead = max(-max_lead_px, min(max_lead_px, velocity_px_s * lead_time_s))
+    led = target_dist_px + lead
+    clamped_led = max(reach_lo, min(reach_hi, led))
+    return clamped_led, clamped_led - target_dist_px, clamped_led != led
