@@ -45,7 +45,7 @@ from minigames.fishing.fish_log import (
 )
 from minigames.fishing.cast_model import (
     FISH_VALUE, MIN_SAMPLES, fit_cast_model, charge_for_distance,
-    distance_for_charge, choose_target,
+    distance_for_charge, choose_target, lands_on_mine_only,
 )
 
 _HERE = Path(__file__).parent
@@ -228,6 +228,24 @@ def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tu
     return (play_region["width"] // 2, int(play_region["height"] * 0.66))
 
 
+def _explore_charge(model, origin_x, mines, fish, tries=6):
+    """A random exploration charge whose predicted landing avoids a mine-only
+    spot (wiki: a mine with no fish fails; a fish even over a mine scores).
+    Model casts target a fish and are already safe, so this only guards the
+    explore/fallback casts that fire at no particular fish. With no model the
+    landing can't be predicted (just return a random charge); falls back to the
+    last draw if every try lands on a mine."""
+    c = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
+    if model is None or not mines:
+        return c
+    for _ in range(tries):
+        landing_x = origin_x + distance_for_charge(model, c)
+        if not lands_on_mine_only(landing_x, mines, fish):
+            return c
+        c = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
+    return c
+
+
 def run():
     parser = argparse.ArgumentParser(description="Fishing minigame bot")
     parser.add_argument(
@@ -388,8 +406,8 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
 
         # Confine detection to the cast bar — over the raw frame the world
         # scenery (tan dock, shore plants) floods the colour masks (#63).
-        fish = find_fish(frame, bar=bar)
         mines = find_mines(frame, bar=bar)
+        fish = find_fish(frame, bar=bar, mines=mines)
         if not fish:
             # Bar present but no fish this poll (detection gap / between spawns).
             time.sleep(POLL_INTERVAL)
@@ -399,14 +417,15 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
 
         if explore:
-            target_charge = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
+            target_charge = _explore_charge(model, origin_x, mines, fish)
             target, aim_mode = None, "explore"
         else:
             target = choose_target(fish, model, origin_x)
             if target is None:
-                target_charge = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
+                target_charge = _explore_charge(model, origin_x, mines, fish)
                 aim_mode = "fallback"
             else:
+                # Targets a fish, which scores even over a mine — no avoidance needed.
                 target_charge = charge_for_distance(model, target["target_dist"])
                 aim_mode = "model"
         predicted = distance_for_charge(model, target_charge) if model else None

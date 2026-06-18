@@ -11,6 +11,7 @@ from minigames.fishing.cast_model import (
     charge_for_distance,
     reachable,
     choose_target,
+    lands_on_mine_only,
 )
 
 
@@ -107,3 +108,15 @@ def test_choose_target_with_no_model_takes_everything():
     fish = [{"x": 9_999, "kind": "whale"}, {"x": 10, "kind": "green"}]
     chosen = choose_target(fish, None, 0)
     assert chosen["kind"] == "whale"  # highest value, reachable since no model
+
+
+def test_lands_on_mine_only():
+    mines = [{"x": 200}]
+    # mine with no fish -> fail spot
+    assert lands_on_mine_only(202, mines, fish=[], tol_px=15)
+    # a fish over the mine -> scores, not a fail spot
+    assert not lands_on_mine_only(202, mines, fish=[{"x": 200, "kind": "green"}], tol_px=15)
+    # open water (no mine near) -> fine
+    assert not lands_on_mine_only(100, mines, fish=[], tol_px=15)
+    # mine too far from the landing -> fine
+    assert not lands_on_mine_only(250, mines, fish=[], tol_px=15)

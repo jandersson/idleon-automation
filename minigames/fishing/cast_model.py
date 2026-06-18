@@ -138,6 +138,18 @@ def reachable(model: CastModel | None, distance_px: float, tol_px: float = 0.0) 
     return (lo - tol_px) <= distance_px <= (hi + tol_px)
 
 
+def lands_on_mine_only(landing_x: float, mines: list[dict], fish: list[dict],
+                       tol_px: float = 15.0) -> bool:
+    """Whether a cast landing at play-region x `landing_x` hits a MINE with no
+    fish there — the only way to fail (wiki: landing on a fish counts even with a
+    mine under it; only a mine-only spot fails). `mines`/`fish` are detector
+    dicts with 'x'. Used to keep exploratory casts off mine-only spots (a cast
+    that targets a fish lands on the fish, so it's already safe)."""
+    if not any(abs(m["x"] - landing_x) <= tol_px for m in mines):
+        return False
+    return not any(abs(f["x"] - landing_x) <= tol_px for f in fish)
+
+
 def choose_target(
     fish: list[dict],
     model: CastModel | None,
