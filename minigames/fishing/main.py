@@ -166,6 +166,16 @@ MAX_START_ATTEMPTS = 3
 # would false-trigger. Game-over template detection (game_over.png) is primary
 # when that asset exists.
 BAR_GONE_GAMEOVER_S = 3.0
+# Bar present but NO FISH detected: a brief gap is normal (between spawns / a
+# detection blink), but a SUSTAINED stretch means the detector can't see this
+# area's fish — a NEW WORLD AREA shifts the scenery behind the overlay and can
+# break the colour/shape gates. The bot would otherwise spin here SILENTLY
+# forever. Warn once the stretch exceeds this, and with --save-frames dump the
+# no-fish frame this often so the miss is diagnosable offline (#72). NOT an
+# auto-recovery (casting blind into an unknown area would just farm mines) — it
+# surfaces the problem; the fix is detector tuning on the captured frames.
+NO_FISH_WARN_S = 4.0
+NO_FISH_SAVE_EVERY_S = 2.0
 
 
 def _measure_landing(win_left, win_top, play, settle_s, poll_s,
@@ -537,6 +547,9 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
     last_active_time = time.time()   # wall-clock the cast bar was last seen
     streak = 0
     charge_attempt = 0   # every charge_and_release call (ready or not) — frame tag
+    no_fish_since = None  # wall-clock the bar went fish-less (None = fish seen) (#72)
+    nofish_warned = False
+    last_nofish_save = 0.0
     while True:
         check_failsafe()
         try:
@@ -612,9 +625,30 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         mines = find_mines(frame, bar=bar)
         fish = find_fish(frame, bar=bar, mines=mines)
         if not fish:
-            # Bar present but no fish this poll (detection gap / between spawns).
+            # Bar present but no fish this poll. A brief gap is normal (between
+            # spawns / a detection blink), but a SUSTAINED stretch means the
+            # detector can't see this area's fish (a new biome shifts the scenery
+            # behind the overlay). Without this the bot spins here SILENTLY forever
+            # and --save-frames captures nothing (frames only save post-cast), so
+            # the miss is undiagnosable. Warn once it persists + dump the no-fish
+            # frame periodically with --save-frames (#72).
+            now = time.time()
+            if no_fish_since is None:
+                no_fish_since = now
+            stuck_s = now - no_fish_since
+            if stuck_s > NO_FISH_WARN_S and not nofish_warned:
+                print(f"cast bar present but NO FISH detected for {stuck_s:.0f}s — "
+                      f"the detector likely can't see this area's fish. Bot is "
+                      f"waiting, not frozen. Re-run with --save-frames (or use "
+                      f"fishing-observe) to capture the scene for detector tuning.")
+                nofish_warned = True
+            if frames_dir is not None and now - last_nofish_save > NO_FISH_SAVE_EVERY_S:
+                save_frame(frames_dir / f"nofish_{datetime.now():%H%M%S}_{int(stuck_s)}s.png", full)
+                last_nofish_save = now
             time.sleep(POLL_INTERVAL)
             continue
+        no_fish_since = None     # fish back -> re-arm the warning for a later stretch
+        nofish_warned = False
 
         origin_x, origin_y = _cast_origin(play, bar)
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
