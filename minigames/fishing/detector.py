@@ -43,7 +43,9 @@ FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # floods 68% of frames with dock false positives (#63). It's matched by its
     # distinctive curled SHAPE instead (find_eel, assets/eel.png) — template
     # match 1.00 on the eel vs <=0.63 across 263 no-eel frames.
-    "squid": ((132, 60, 30), (150, 255, 170)),    # Squid (purple, DARK V~60)
+    # Squid (purple, DARK V~60). Validated live on the first real squid
+    # (cast09/botrun_120520): detected in 5/6 frames, no false positives (#63).
+    "squid": ((132, 60, 30), (150, 255, 170)),
     # Whale (blue) overlaps the blue bar (H~109) — separated by saturation (bar
     # S~186, whale sprite S~79). Provisional until a whale is seen live.
     "whale": ((100, 40, 110), (118, 130, 255)),

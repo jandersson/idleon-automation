@@ -335,6 +335,27 @@ frames; threshold 0.75. Corpus-wide it fires **only in the two streak-3 runs**
 for their 2 points. Caveat: one template/pose so far — add crops if other eel
 animations under-match.
 
+### First live squid + eel cluster (cast09, botrun_120520, 2026-06-18)
+
+A streak finally surfaced a **squid** (purple) sitting beside an **eel** (yellow
+curled) and a **mine** — squid partly overlapping the eel. Findings:
+
+- **Squid HSV is validated.** `FISH_HSV["squid"]` (H132–150, dark V) — until now
+  sprite-derived and unverified — detected the squid as `'squid'` in **5/6**
+  pre-lure frames (x≈247), no false positives. The provisional range holds on a
+  real squid.
+- **Eel under-matches under occlusion.** With the squid overlapping it, the eel
+  template scores **0.633** — just under the 0.75 threshold — so `find_eel`
+  returns None even though the eel is clearly there. Part one-pose, part
+  occlusion. (Eel *catches* are still recorded by the score +2 delta regardless;
+  the miss only costs eel *targeting* this frame.)
+- **The squid wasn't caught though reachable-now.** It sat at x≈247; the model
+  reach is 75–283px now, but at this run's startup the reliable edge was ~210px,
+  so the squid was likely just beyond reach at fire time — `choose_target`
+  correctly took the reachable green (x70) instead. As the cast model's far
+  support firms up, reachable squids (3 pts) should start getting targeted; worth
+  watching that high-value fish near the reach edge actually get chosen.
+
 ## PTS score delta is the ground-truth catch signal (#58/#63, 2026-06-18)
 
 The bobber-disappearance / eel-absence heuristics miss catches they can't see:
