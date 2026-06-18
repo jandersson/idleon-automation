@@ -225,10 +225,19 @@ LEAD_TIME_FALLBACK_S = 1.3  # decision -> landing time (hold ~0.6 + flight ~0.7)
 # ±1px jitter over ~0.12s aliases to ~±8px/s) or the fish is near a turn — either
 # way, don't lead.
 MIN_LEAD_VEL_PX_S = 8.0
-# Turn-cap: the slide is monotonic only ~0.8s but the lead spans ~1.3s, so a
-# reversal can fall inside the flight. Bounding the lead to ~one catch radius
-# keeps an over-lead-past-a-turn from converting a make into a miss.
-MAX_LEAD_PX = 12.0
+# Turn-cap: bounds an over-lead past a reversal (targets bounce within a fixed
+# range, reflecting at the limits — #74). Raised 12 -> 18 on measured data: the
+# applied-lead velocities (~8-15 px/s) give an intended lead of v*1.3s ~ 16-20px,
+# so a 12px cap was BINDING on 88% of leads — under-leading by ~4-8px at the
+# ~10px catch-radius scale (a likely reason the lead was ~neutral in the #67 A/B).
+# Meanwhile a reversal INSIDE one flight is rare (1/409 casts in the saved frames:
+# the bounce period is long vs the ~1.3s flight, so the fish moves ~monotonically
+# through it), so the cap can safely track the real displacement. 18 unclips the
+# median/most leads while still bounding a gross over-lead on the rare in-flight
+# turn. A full reflect-aware predictor (#74) is the principled fix for that rare
+# case but is lower-value than this, since the range grows through the game and
+# must be estimated live. Tunable; the model_lead A/B re-validates it.
+MAX_LEAD_PX = 18.0
 MIN_LEAD_SAMPLES = 3        # fewer can't beat the ±1px centroid jitter
 MIN_LEAD_SPAN_S = 0.12      # too short a baseline can't resolve sub-pixel motion
 

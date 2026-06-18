@@ -580,17 +580,29 @@ at **~±15–22 px/s** late-game, then it settles at a turn point.
 
 **Mechanic confirmed (user, 2026-06-18):** each target oscillates within a
 **FIXED RANGE and REFLECTS at both end-limits** — a constant-speed 1-D billiard
-bounce (triangle wave), not a decaying drift or a sinusoid. So within a ~1.3s
-flight a fish can hit a limit and reverse — confirmed in the flight-frame
-trajectories (cast08 227→224→231, cast11 176→181→179, and the recurring
-"slide then settle at a limit" shape). This is why the single-velocity LINEAR
-lead is structurally mismatched (it can't reflect): the `MAX_LEAD_PX=12` cap
-*accidentally* approximates the typical half-range, landing near the settle point
-on slide-then-settle casts (so the lead is ~neutral, not harmful, in the #67 A/B)
-but wrong on mid-flight reversals. A **bounce-aware** lead — predict the folded
-triangle-wave position at landing from (x, v, direction, the two limits, flight
-time) — is the proposed successor (#74); the open piece is estimating the range
-limits live.
+bounce (triangle wave), not a decaying drift or a sinusoid.
+
+**Measured from 409 tracked casts + the lead telemetry (#74):**
+- **Onset + growth:** targets are STATIONARY for casts 1–6 (median window-span
+  0px), motion onsets ~cast 7, amplitude ramps and plateaus ~cast 14 at a
+  median span ~10–13px (max 23). The range grows through the game, then plateaus.
+- **In-flight reversals are RARE: 1/409** — the bounce period is long vs the
+  ~1.3s flight, so within a single cast the fish moves ~monotonically ~10–20px.
+- **The `MAX_LEAD_PX` cap was the binding problem, not the missing reflection.**
+  Applied-lead velocities ~8–15 px/s give an intended lead `v*1.3s` ~16–20px, so
+  the old 12px cap was BINDING on **88%** of leads — under-leading by ~4–8px at
+  the ~10px catch-radius scale (a likely reason the lead was ~neutral in #67).
+  Raised **12 → 18** to match the measured displacement; a reversal inside one
+  flight is rare enough that the cap can safely track the real slide. Re-validated
+  via the `model_lead` A/B.
+
+A full **bounce-aware** lead — predict the folded triangle-wave position at
+landing from (x, v, direction, the two limits, flight time) — remains the
+principled fix for the rare in-flight reversal (#74), but is lower-value than the
+cap raise: reversals are ~0.25% of moving casts, and the range grows through the
+game so the limits must be estimated LIVE (the ~1.4s landing-poll window captures
+a full turn-to-turn swing only 1/409, so even measuring the range needs longer
+continuous observation than is logged today).
 
 The bot aimed at
 the fish's DECISION-time x with zero lead, but ~1.3s elapses from decision to
