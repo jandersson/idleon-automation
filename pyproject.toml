@@ -79,6 +79,7 @@ fishing-observe = "minigames.fishing.observe:run"
 fishing-capture = "minigames.fishing.capture:run"
 fishing-calibrate = "minigames.fishing.calibrate:run"
 fishing-pick-play-region = "minigames.fishing.pick_play_region:run"
+fishing-capture-digits = "minigames.fishing.capture_digits:run"
 
 [build-system]
 requires = ["hatchling"]
