@@ -576,7 +576,23 @@ The streak stalls at ~3 (so eels/squid/whale rarely unlock, and the run is all
 greens). Cause, measured from the saved botrun frames + `fishing.db`: **the
 targets SLIDE back and forth along the bar**, starting ~cast 5 and growing in
 speed/amplitude through a game. Within one cast the motion is monotonic/linear
-at **~±15–22 px/s** late-game, then it settles at a turn point. The bot aimed at
+at **~±15–22 px/s** late-game, then it settles at a turn point.
+
+**Mechanic confirmed (user, 2026-06-18):** each target oscillates within a
+**FIXED RANGE and REFLECTS at both end-limits** — a constant-speed 1-D billiard
+bounce (triangle wave), not a decaying drift or a sinusoid. So within a ~1.3s
+flight a fish can hit a limit and reverse — confirmed in the flight-frame
+trajectories (cast08 227→224→231, cast11 176→181→179, and the recurring
+"slide then settle at a limit" shape). This is why the single-velocity LINEAR
+lead is structurally mismatched (it can't reflect): the `MAX_LEAD_PX=12` cap
+*accidentally* approximates the typical half-range, landing near the settle point
+on slide-then-settle casts (so the lead is ~neutral, not harmful, in the #67 A/B)
+but wrong on mid-flight reversals. A **bounce-aware** lead — predict the folded
+triangle-wave position at landing from (x, v, direction, the two limits, flight
+time) — is the proposed successor (#74); the open piece is estimating the range
+limits live.
+
+The bot aimed at
 the fish's DECISION-time x with zero lead, but ~1.3s elapses from decision to
 landing (closed-loop charge hold ~0.6s + lure flight ~0.7s), so the fish slides
 **14–32px** off the lure by the time it lands — past the ~10px effective catch
