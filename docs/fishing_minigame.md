@@ -450,6 +450,28 @@ digits are all captured.
 - The eel template is still one pose — the score delta now catches an eel (+2)
   regardless of the template matching, which is the point.
 
+## Player position — anchor the crop to the bar, not a fixed rectangle (#58, 2026-06-18)
+
+A session scored 0 after the player stood **slightly differently**. Cause: the bot
+ran `find_cast_bar` on a FIXED `regions.json` play crop (a window-fraction
+rectangle). The minigame UI is player-anchored, so a small move shifted the cast
+bar until its **left edge ran off the crop's left edge** (the calibrated crop had
+only ~2px of margin: bar left at full-x 434, crop left at 432). `find_cast_bar`
+then returned a CLIPPED bar (width 278 vs the true 304, wrong left edge) — and the
+charge thermometer (`bar_x-48`), score region (`bar_x-26`), and cast origin all
+anchor to that edge, so they read garbage. Charge fired at a constant ~19
+regardless of aim; score read nothing; every cast missed.
+
+Fix: detect the bar on the **full window** (its true position, never clipped),
+then derive a **dynamic play crop anchored to the bar** (`_play_crop_from_bar`,
+clamped to the window) — `frame` is a slice of the full window, `bar` its position
+within the crop, and `cast_bar_full` reconstructs to the true bar exactly. Now the
+crop follows the player. Verified offline on the calibrated frame AND a simulated
+−40px player shift (both: correct anchor, score, charge, fish); a multi-agent
+adversarial review found no correctness defects. The `regions.json` "play" crop is
+no longer read by the bot (it self-anchors) — `fishing-pick-play-region` is only
+needed by the observe/calibrate tools now.
+
 ## Converged multi-catch — a delta is a SUM, not one fish (#58, 2026-06-18)
 
 The sliding mechanic has a second consequence: fish **slide together and

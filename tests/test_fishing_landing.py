@@ -4,11 +4,41 @@ The lure must SETTLE (>= MIN_LANDING_DETECTIONS sightings near the farthest x)
 for a landing to count — a single mid-arc / false-match flicker is rejected so
 it doesn't pollute the fill->distance fit (#58). The IO poll is separate.
 """
-from minigames.fishing.main import _landing_from_detections, _classify_catch
+from minigames.fishing.main import (
+    _landing_from_detections, _classify_catch, _play_crop_from_bar,
+    PLAY_PAD_L, PLAY_PAD_V,
+)
 
 
 def _f(x, kind="green"):
     return {"x": x, "kind": kind}
+
+
+# --- _play_crop_from_bar: the dynamic, player-position-independent crop --------
+# A fixed crop clipped the bar's left edge off-screen when the player moved,
+# mis-anchoring the charge/score/origin and breaking a whole session (#58). The
+# crop now follows the detected bar; the load-bearing invariant is that
+# reconstructing full-window coords from (crop, bar-in-crop) recovers the TRUE bar.
+
+def test_play_crop_anchors_to_the_bar():
+    play, bar = _play_crop_from_bar((434, 233, 304, 7), win_w=960, win_h=572)
+    assert bar == (PLAY_PAD_L, PLAY_PAD_V, 304, 7)          # bar sits inside the crop, not clipped
+    assert (play["left"] + bar[0], play["top"] + bar[1]) == (434, 233)
+
+
+def test_play_crop_clamps_at_window_edges_keeping_invariant():
+    # Bar near the top-left corner: the crop can't go negative, so the bar isn't
+    # fully padded — but the reconstruction invariant must still hold.
+    play, bar = _play_crop_from_bar((10, 5, 300, 7), win_w=960, win_h=572)
+    assert play["left"] == 0 and play["top"] == 0
+    assert (play["left"] + bar[0], play["top"] + bar[1]) == (10, 5)
+
+
+def test_play_crop_invariant_holds_anywhere():
+    for bx, by in [(0, 0), (434, 233), (200, 233), (700, 500), (650, 560)]:
+        play, bar = _play_crop_from_bar((bx, by, 300, 7), 960, 572)
+        assert play["left"] + bar[0] == bx and play["top"] + bar[1] == by
+        assert play["width"] > 0 and play["height"] > 0
 
 
 def test_catch_when_fish_near_landing_vanishes():

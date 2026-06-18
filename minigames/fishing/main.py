@@ -45,7 +45,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.capture import grab_region
 from common.monitor import save_frame
 from common.input import charge_and_release, click, random_delay, check_failsafe
-from common.regions import get_region
 from common.session_log import session_log
 from common.window import get_bounds, WindowNotFoundError
 from common.git_info import current_code_commit
@@ -293,6 +292,33 @@ def _cast_origin(play_region: dict, bar: tuple[int, int, int, int] | None) -> tu
     return (play_region["width"] // 2, int(play_region["height"] * 0.66))
 
 
+# Dynamic play-crop padding around the DETECTED cast bar (full-window coords).
+# The play crop is anchored to the bar — NOT a fixed regions.json rectangle — so
+# it follows the player-anchored minigame. A fixed crop barely contained the bar
+# (2px of margin) and clipped its left edge off-screen when the player stood a
+# little differently, so the charge bar / score / cast origin anchored to that
+# edge all read garbage and the whole session failed (#58). Left pad clears the
+# cast origin (the bar's left edge); the vertical pad covers the fish that sit
+# above/below the bar (detector.BAR_VPAD).
+PLAY_PAD_L = 55
+PLAY_PAD_R = 30
+PLAY_PAD_V = 30
+
+
+def _play_crop_from_bar(bar_full, win_w, win_h,
+                        pad_l=PLAY_PAD_L, pad_r=PLAY_PAD_R, pad_v=PLAY_PAD_V):
+    """A dynamic play-crop rect (window-relative ``{left, top, width, height}``)
+    around the cast bar detected on the FULL window, plus the bar's position
+    WITHIN that crop. Anchoring the crop to the bar (clamped to the window) keeps
+    detection player-position-independent. Pure."""
+    bx, by, bw, bh = bar_full
+    pl, pt = max(0, bx - pad_l), max(0, by - pad_v)
+    pr, pb = min(win_w, bx + bw + pad_r), min(win_h, by + bh + pad_v)
+    play = {"left": pl, "top": pt, "width": pr - pl, "height": pb - pt}
+    bar = (bx - pl, by - pt, bw, bh)
+    return play, bar
+
+
 def _explore_charge(model, origin_x, mines, fish, tries=6):
     """A random exploration charge whose predicted landing avoids a mine-only
     spot (wiki: a mine with no fish fails; a fish even over a mine scores).
@@ -429,27 +455,18 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             time.sleep(1)
             continue
 
-        play = get_region(_HERE, "play", win_w, win_h)
-        if play is None:
-            print("No 'play' region in regions.json. Run fishing-pick-play-region first.")
-            time.sleep(2)
-            continue
+        # Detect the cast bar on the FULL window (not a fixed regions.json crop,
+        # which clipped the bar's left edge off-screen when the player stood a bit
+        # differently — breaking the charge/score/origin anchored to it, #58). The
+        # bar is the 'minigame active' signal: it only exists during play (a
+        # colour count would false-trigger on the entry scene).
+        full = grab_region(win_left, win_top, win_w, win_h)
+        bar_full = find_cast_bar(full)
 
-        frame = grab_region(
-            win_left + play["left"], win_top + play["top"],
-            play["width"], play["height"],
-        )
-
-        # The cast bar is the 'minigame active' signal — it exists only during
-        # play (a fish/colour count would false-trigger on the entry scene).
-        bar = find_cast_bar(frame)
-
-        if bar is None:
+        if bar_full is None:
             if not game_running:
                 # --- Startup: click the PLAY GAME prompt (like catching/mining).
-                # The prompt sits above the player, not in the cast-bar region,
-                # so match it on the FULL window.
-                full = grab_region(win_left, win_top, win_w, win_h)
+                # The prompt sits above the player; match it on the full window.
                 btn = find_play_button(full)
                 if btn is not None:
                     if time.time() - last_start_click < START_CLICK_COOLDOWN_S:
@@ -480,7 +497,13 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             time.sleep(POLL_INTERVAL)
             continue
 
-        # --- Cast bar present: the minigame is active ---
+        # --- Cast bar present: the minigame is active. Anchor a dynamic play
+        # crop to the detected bar so everything downstream (fish, origin, score,
+        # charge, landing) is player-position-independent. `frame` is a slice of
+        # the full window; `bar` is the bar's position within it. ---
+        play, bar = _play_crop_from_bar(bar_full, win_w, win_h)
+        frame = full[play["top"]:play["top"] + play["height"],
+                     play["left"]:play["left"] + play["width"]].copy()
         if not game_running:
             game_running = True
             print(f"Minigame active (cast bar at {bar}) — casting.")
