@@ -23,7 +23,12 @@ overrides and rescues the far-cast / eel catches the bobber-disappearance
 heuristic misses (#58/#63). The score read falls back to that heuristic whenever
 a digit isn't captured yet / the crop is unreadable (read is None). Grow the
 digit-template library with `fishing --save-frames` + `fishing-capture-digits`.
-Open: warm-fish HSV verification + grey-mine detection (#63).
+
+The targets SLIDE (~cast 5+), so for a single-fish model cast the bot samples the
+fish's velocity over a few quick polls and LEADS the aim to its predicted landing
+(cast_model.lead_fish_dist) — shipped as a parity A/B (aim_mode model_lead vs
+model_nolead) to prove it before defaulting, since the catch radius is tight
+(#58). Open: warm-fish HSV verification + grey-mine detection (#63).
 """
 import argparse
 import os
@@ -53,6 +58,7 @@ from minigames.fishing.fish_log import (
 from minigames.fishing.cast_model import (
     FISH_VALUE, MIN_SAMPLES, fit_cast_model, charge_for_distance,
     distance_for_charge, choose_target, lands_on_mine_only,
+    theil_sen_velocity, lead_fish_dist, LEAD_TIME_FALLBACK_S,
 )
 from minigames.fishing.score import read_score, kind_from_delta, score_crop
 
@@ -119,6 +125,18 @@ MIN_LANDING_DETECTIONS = 2
 # offsets: ~2-11px (run 14 casts 6/9), so 15 covers a hit while excluding a
 # fish the lure clearly overshot (cast 3: fish 203, lure 226 = miss).
 CATCH_RADIUS = 15
+# Moving-target lead: the targets SLIDE back and forth (~cast 5+, growing
+# through a game; see docs). For a single-fish model cast the bot samples the
+# fish over a few quick polls BEFORE firing to estimate its slide velocity
+# (Theil-Sen), then leads the aim to the predicted landing — shipped as a parity
+# A/B (aim_mode model_lead vs model_nolead, cast_model.lead_fish_dist). The
+# samples come from frames grabbed before the cast decision, so the closed-loop
+# cast isn't biased by the small added latency and no disk write goes between the
+# decision and the hold. Both arms sample (matched latency); only the lead arm
+# applies the lead.
+LEAD_SAMPLES = 4            # fish sightings for the velocity fit (incl. the decision frame)
+LEAD_SAMPLE_DT_S = 0.05     # spacing between velocity polls (span ~0.15s, above the noise floor)
+
 # Wait between casts (the next charge can't start until the lure resets).
 CAST_COOLDOWN_S = 0.6
 # Auto-start (like catching/mining): click the PLAY GAME prompt to begin ONE
@@ -285,6 +303,30 @@ def _explore_charge(model, origin_x, mines, fish, tries=6):
             return c
         c = random.randint(EXPLORE_CHARGE_MIN, EXPLORE_CHARGE_MAX)
     return c
+
+
+def _sample_fish_velocity(win_left, win_top, play, bar, kind, seed_x,
+                          n=LEAD_SAMPLES, dt=LEAD_SAMPLE_DT_S):
+    """Track one fish over a few quick polls to estimate its slide velocity for
+    the moving-target lead. Returns ``([(monotonic_t, x), ...], latest_x)``: the
+    first sample is seeded from the caller's decision-frame detection, then n-1
+    more are taken `dt` apart. Stops early if the fish drops out — a gap would
+    fake a large velocity, so the buffer is kept contiguous. IO only; the robust
+    velocity fit is cast_model.theil_sen_velocity. Used for both A/B arms (matched
+    latency); the samples are grabbed BEFORE the cast decision, so the closed-loop
+    cast isn't biased and nothing is written between the decision and the hold."""
+    samples = [(time.monotonic(), float(seed_x))]
+    latest = seed_x
+    for _ in range(n - 1):
+        time.sleep(dt)
+        crop = grab_region(win_left + play["left"], win_top + play["top"],
+                           play["width"], play["height"])
+        same = [f for f in find_fish(crop, bar=bar) if f["kind"] == kind]
+        if not same:
+            break              # dropped the fish -> keep the buffer contiguous
+        latest = min(same, key=lambda f: abs(f["x"] - latest))["x"]
+        samples.append((time.monotonic(), float(latest)))
+    return samples, latest
 
 
 def run():
@@ -457,6 +499,11 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         origin_x, origin_y = _cast_origin(play, bar)
         explore = model is None or (stats["n_casts"] + 1) % EXPLORE_EVERY_N == 0
 
+        # Moving-target lead telemetry (defaults = no lead).
+        lead_vx = lead_time_s = None
+        lead_px_int = lead_px_eff = 0.0
+        lead_clamped = lead_n = 0
+
         if explore:
             target_charge = _explore_charge(model, origin_x, mines, fish)
             target, aim_mode = None, "explore"
@@ -466,9 +513,38 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
                 target_charge = _explore_charge(model, origin_x, mines, fish)
                 aim_mode = "fallback"
             else:
-                # Targets a fish, which scores even over a mine — no avoidance needed.
-                target_charge = charge_for_distance(model, target["target_dist"])
-                aim_mode = "model"
+                # The targets slide, so the decision-time x is stale by landing.
+                # For a SINGLE fish, sample its velocity over a few quick polls
+                # and refresh the target x (both A/B arms — matched latency).
+                if len(fish) == 1:
+                    samples, latest = _sample_fish_velocity(
+                        win_left, win_top, play, bar, target["kind"], target["x"])
+                    lead_n = len(samples)
+                    lead_vx = theil_sen_velocity(samples)
+                    target = {**target, "x": latest,
+                              "target_dist": abs(latest - origin_x)}
+                base_dist = target["target_dist"]
+                # Parity A/B: lead the slide on even casts (model_lead), hold the
+                # un-led aim on odd (model_nolead), so the two accumulate under
+                # matched conditions — promote off the A/B only on disjoint-CI
+                # evidence (#48). Only the lead arm applies the velocity.
+                lead_arm = stats["n_casts"] % 2 == 0
+                if lead_arm and lead_vx is not None and model is not None:
+                    lead_time_s = LEAD_TIME_FALLBACK_S
+                    lo, hi = model.reach_px()
+                    led_dist, lead_px_eff, clamped = lead_fish_dist(
+                        base_dist, lead_vx, lead_time_s, lo, hi)
+                    lead_px_int = lead_vx * lead_time_s
+                    # Re-check mine-avoidance at the LED landing — leading moves it
+                    # off the fish's cell, so 'aimed at a fish = safe' no longer
+                    # holds; drop the lead (aim at the fish) on a mine-only spot.
+                    if lands_on_mine_only(origin_x + led_dist, mines, fish):
+                        led_dist, lead_px_eff = base_dist, 0.0
+                    lead_clamped = 1 if clamped else 0
+                    target_charge = charge_for_distance(model, led_dist)
+                else:
+                    target_charge = charge_for_distance(model, base_dist)
+                aim_mode = "model_lead" if lead_arm else "model_nolead"
         predicted = distance_for_charge(model, target_charge) if model else None
 
         # Closed-loop cast: hold while polling the charge bar, release at
@@ -512,10 +588,14 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             charge_dbg["polls"] += 1
             return c
 
+        hold_t0 = time.monotonic()
         charge, ready = charge_and_release(
             cx, cy, target_charge, _read_charge,
             poll_s=CHARGE_POLL_S, ready_grace_s=CHARGE_READY_GRACE_S,
             max_hold_s=CHARGE_MAX_HOLD_S)
+        # Measured closed-loop hold (the data to fit the lead's decision->landing
+        # time and replace LEAD_TIME_FALLBACK_S; hold_ms was logged None before).
+        hold_ms = round((time.monotonic() - hold_t0) * 1000)
 
         if not ready:
             # Rod not ready: the fill never crossed the floor within the grace
@@ -541,7 +621,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             attempt_idx=1,
             cast_idx=stats["n_casts"],
             fired_at=fired_at,
-            hold_ms=None,           # closed-loop: charge is the control, not a fixed hold
+            hold_ms=hold_ms,        # measured closed-loop hold (for the lead time fit)
             aim_mode=aim_mode,
             cast_origin_x=origin_x,
             cast_origin_y=origin_y,
@@ -556,6 +636,12 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             window_w=win_w,
             window_h=win_h,
             score_before=score_before,
+            arm_fish_vx_px_s=lead_vx,
+            lead_time_s=lead_time_s,
+            lead_px_intended=(lead_px_int or None),
+            lead_px_effective=lead_px_eff,
+            lead_clamped=lead_clamped,
+            lead_n_samples=(lead_n or None),
             code_commit=code_commit,
             source="bot",
         )

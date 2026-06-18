@@ -289,7 +289,9 @@ not `made`) — this fixes points/streak reporting and unlocking higher fish.
   play crop and landings scatter (46→157, 50→156, 53→226). The reliable range is
   ~fill 15–44. Near/mid model casts land within ~2–10px; far casts overshoot.
 - **The fish are stationary** (the detector reads a constant x across a cast's
-  landing-poll frames) — no moving-target lead needed.
+  landing-poll frames) — no moving-target lead needed. **SUPERSEDED (2026-06-18,
+  see "Targets slide" below): the targets DO slide, starting ~cast 5; runs 11–14
+  just ended before the slide set in.**
 - **Cross-run offset**: run 13's casts landed ~25px shorter than run 12's for
   similar fills — likely a cast-origin/player-position effect; adds noise to the
   fill→distance fit. Worth pinning the origin more robustly if it persists.
@@ -447,6 +449,56 @@ digits are all captured.
   path) and that far-cast zeros aren't lagging.
 - The eel template is still one pose — the score delta now catches an eel (+2)
   regardless of the template matching, which is the point.
+
+## Targets slide — the moving-target lead (the streak stall, #58, 2026-06-18)
+
+The streak stalls at ~3 (so eels/squid/whale rarely unlock, and the run is all
+greens). Cause, measured from the saved botrun frames + `fishing.db`: **the
+targets SLIDE back and forth along the bar**, starting ~cast 5 and growing in
+speed/amplitude through a game. Within one cast the motion is monotonic/linear
+at **~±15–22 px/s** late-game, then it settles at a turn point. The bot aimed at
+the fish's DECISION-time x with zero lead, but ~1.3s elapses from decision to
+landing (closed-loop charge hold ~0.6s + lure flight ~0.7s), so the fish slides
+**14–32px** off the lure by the time it lands — past the ~10px effective catch
+radius. (Cast-distance error alone is only ~0–10px; the slide is the dominant,
+fixable miss.) Per-cast trajectories: c18 fish 194→182 vs lure 203; c22 143→131
+vs 163; c27 88→74 vs 94 (cast accurate to the *stale* target, fish gone).
+
+### The lead — shipped logging-first as a parity A/B
+
+`cast_model.lead_fish_dist` aims at the fish's PREDICTED landing position; for a
+single fish the bot samples its slide velocity over a few quick polls before
+firing (`_sample_fish_velocity` → `theil_sen_velocity`). Design vetted against
+two failure modes a naïve lead would hit (a multi-agent design+adversarial pass):
+
+- **A 2-frame velocity is below the noise floor.** Centroids are integer px; at
+  ~20px/s the true motion over 50ms is <1.1px, so a ±1px jitter aliases to
+  ±20px/s. Fix: **Theil-Sen** slope over ≥3 samples spanning ≥0.12s, refusing to
+  lead when consecutive samples reverse direction (a turn / noise) or |v|<8px/s.
+- **A fixed lead-TIME is wrong** — the hold is closed-loop (varies with charge),
+  so the model (charge→distance) carries no time info. Fix: log the measured
+  `hold_ms` (was always NULL) toward fitting `time≈f(charge)`; until then use the
+  `LEAD_TIME_FALLBACK_S=1.3` constant, on the lead arm only.
+
+Safeguards: the lead is **turn-capped to ±12px** (the slide is monotonic only
+~0.8s but the lead spans ~1.3s, so a reversal can fall inside the flight —
+capping bounds an over-lead to ~one catch radius), **reach-clamped** (the model
+would silently swallow an out-of-reach lead — flagged via `lead_clamped`), and
+**mine-rechecked** at the led landing (leading moves it off the fish's cell, so
+"aimed at a fish = safe" no longer holds). It operates on the scalar distance
+from the fixed origin, so −velocity correctly *decreases* distance (no abs-flip).
+
+**It's an experiment, not a switch** (the effective catch radius is ~10px and the
+cast model's own error is heavy-tailed, so a few-px lead error could be
+net-negative). Casts alternate `aim_mode` `model_lead` / `model_nolead` by
+parity; both arms sample velocity (matched latency) and log
+`arm_fish_vx_px_s, lead_time_s, lead_px_intended, lead_px_effective,
+lead_clamped, lead_n_samples` + `hold_ms`. Promote off the A/B only on a
+disjoint-CI make-rate win under matched velocity bins (the #23/#38 discipline):
+filter `aim_mode='model_lead' AND lead_px_effective!=0` vs `model_nolead`,
+stratify by `arm_fish_vx_px_s`, compare `made` with Wilson CIs. v1 is single-fish
+only (~91% of casts); multi-fish keeps the un-led aim. Pure helpers are
+unit-tested (`tests/test_fishing_lead.py`); the live velocity sampling is manual.
 
 ## Sources
 

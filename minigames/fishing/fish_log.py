@@ -104,6 +104,19 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # Which signal decided the outcome: 'score' (delta authoritative), 'landing'
     # (fish-disappearance), 'eel_absence' (eel gone from the bar), or NULL.
     ("detect_source", "TEXT"),
+    # Moving-target lead telemetry (the targets slide; aim_mode 'model_lead' vs
+    # 'model_nolead' is a parity A/B). arm_fish_vx_px_s = measured Theil-Sen slide
+    # velocity at fire (NULL if unresolved); lead_time_s = decision->landing time
+    # used; lead_px_intended = vel*time (pre-cap); lead_px_effective = what was
+    # actually applied (post turn-cap, reach-clamp, mine-recheck); lead_clamped =
+    # 1 if reach-clamped; lead_n_samples = velocity-buffer depth. With hold_ms now
+    # populated, the lead is fully reconstructable + A/B-comparable post-hoc.
+    ("arm_fish_vx_px_s", "REAL"),
+    ("lead_time_s", "REAL"),
+    ("lead_px_intended", "REAL"),
+    ("lead_px_effective", "REAL"),
+    ("lead_clamped", "INTEGER"),
+    ("lead_n_samples", "INTEGER"),
 ]
 # Rod-not-ready aborts this run: closed-loop casts skipped because the bar
 # stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now
