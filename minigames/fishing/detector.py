@@ -34,6 +34,12 @@ ASSETS = Path(__file__).parent / "assets"
 # Detection is restricted to the cast bar (find_cast_bar) — over the raw frame
 # the tan dock reads as `eel` and shore plants as `green` (heavy false
 # positives). See docs/fishing_minigame.md.
+#
+# RETIRED for active detection: green/squid (and eel) are masked-ZNCC SPRITES now
+# (biome-invariant, #75/#77) — find_fish SKIPS any kind in SPRITE_KINDS here, so
+# only `whale` is detected via HSV (no sprite captured yet, #69). The green/squid
+# ranges below are retained for reference/tests + as the eventual whale-sprite
+# cross-check; the green H88 cap is now historical (the sprite path made it moot).
 FISH_HSV: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     # Green Fish: in-game fill is H76 S79 V255 — the S floor must be LOW (was
     # 100, which excluded the fish entirely). The hue is capped at 88: the
@@ -237,12 +243,17 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
         mines = find_mines(frame, bar=bar)
     hsv = _to_hsv(frame)
     fish: list[dict] = []
-    for kind, (low, high) in FISH_HSV.items():   # green, squid, whale (square sprites)
+    for kind, (low, high) in FISH_HSV.items():
+        # HSV is RETIRED for any kind that has a masked-ZNCC sprite (#75): green/
+        # squid/eel are sprite-only now (biome-invariant — they match the sprite's
+        # pixels, not an absolute hue), so the HSV loop runs ONLY for kinds without
+        # a sprite — currently just `whale` (uncaptured, #69). This is the last
+        # biome-dependent fish path; it goes away when a whale sprite is captured.
+        if kind in SPRITE_KINDS:
+            continue
         mask = _restrict(_mask(hsv, low, high), bar)
         for x, y in _blob_centroids(mask, min_area, FISH_ASPECT_RANGE, FISH_MIN_FILL):
             fish.append({"x": x, "y": y, "kind": kind})
-    # (Eel is no longer matched here — it's a masked-ZNCC SPRITE kind now, handled
-    # in the sprite merge below, #77. Green/squid are HSV here AND sprites.)
     if include_megalodon:
         meg = cv2.bitwise_or(_mask(hsv, *MEGALODON_HSV_LOW), _mask(hsv, *MEGALODON_HSV_HIGH))
         for x, y in _blob_centroids(_restrict(meg, bar), min_area,
@@ -251,15 +262,14 @@ def find_fish(frame: np.ndarray, min_area: int = FISH_MIN_AREA,
                 continue          # mine's red core, not a megalodon
             fish.append({"x": x, "y": y, "kind": "megalodon"})
     # Background-invariant sprite detections (masked ZNCC) for green/squid/eel
-    # (#75/#77), merged ADDITIVELY: a fish counts if EITHER the HSV gate above OR
-    # the sprite match fires. A sprite det suppresses an HSV det only as a
-    # SAME-KIND duplicate (the redundant green/squid blob at the same spot) —
-    # never a different kind. The dedup MUST be kind-aware: a green/squid sprite
-    # must not delete a converged whale(5)/megalodon sitting within DEDUP_PX, which
-    # have no sprite template and would otherwise vanish from choose_target in
-    # exactly the converged-cluster regime where the high-value fish matters most
-    # (#75 review). So HSV still covers whale/megalodon and the ~1% of green/squid
-    # a pose misses, while sprites add the green/squid/eel HSV drops in a new biome.
+    # (#75/#77) — the PRIMARY (and now ONLY) path for those kinds; HSV above is
+    # retired for them, so biome can't affect their detection. Merged with the
+    # remaining HSV kinds (whale, megalodon): a sprite det suppresses an HSV det
+    # only as a SAME-KIND duplicate — but green/squid/eel are no longer in `fish`,
+    # so in practice the merge just appends the HSV whale/megalodon (different
+    # kinds, never deduped). The kind-aware dedup is kept defensively: were a
+    # green/squid ever re-added to HSV, it must not delete a converged
+    # whale(5)/megalodon within DEDUP_PX (the #75-review regression).
     sprites = find_fish_sprites(frame, bar)
     # Preserve the eel-in-mine safety from the old curled-template path: drop an
     # eel sprite det centred inside a mine (a chance match on a mine core).

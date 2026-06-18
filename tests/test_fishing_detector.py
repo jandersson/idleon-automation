@@ -33,6 +33,10 @@ def _fill(img, y0, y1, x0, x1, hsv):
 # bar: high-saturation blue (H~110 S~186 V~136); green fish: H~78.
 _BAR_HSV = [110, 186, 136]
 _GREEN_HSV = [78, 200, 180]
+# whale: blue like the bar but LOW saturation (H~109 S~90) — the only kind still
+# detected by HSV (green/squid/eel are sprite-only now, #75/#77), so it's the test
+# vehicle for the HSV machinery (shape gate, bar restriction, mine-keep).
+_WHALE_HSV = [109, 90, 200]
 
 
 def test_find_cast_bar_locates_wide_blue_strip():
@@ -115,13 +119,15 @@ def test_in_a_mine():
     assert not _in_a_mine(360, 104, mines)   # well outside
 
 
-def test_find_fish_keeps_green_on_a_mine():
-    # A green fish sitting inside a mine bbox is a real catchable fish (landing
-    # on a fish over a mine still scores), so it is kept, not excluded.
+def test_find_fish_keeps_hsv_fish_on_a_mine():
+    # An HSV fish (whale) sitting inside a mine bbox is a real catchable fish
+    # (landing on a fish over a mine still scores), so it is kept, not excluded —
+    # only the eel-sprite/megalodon paths drop an in-mine match. (green/squid are
+    # sprite-only now and likewise kept on a mine.)
     img = _bgra()
-    _fill(img, 96, 112, 296, 312, _GREEN_HSV)
+    _fill(img, 96, 112, 296, 312, _WHALE_HSV)
     mines = [{"x": 304, "y": 104, "bbox": (292, 92, 28, 24)}]
-    assert any(d["kind"] == "green" for d in find_fish(img, mines=mines))
+    assert any(d["kind"] == "whale" for d in find_fish(img, mines=mines))
 
 
 def test_find_eel_matches_its_sprite_and_ignores_green():
@@ -157,32 +163,20 @@ def test_find_charge_fill_reads_thermometer_left_of_cast_bar():
 
 def test_shape_filter_rejects_thin_scenery_edge():
     # The fish is a square solid sprite; the tan-scenery / bar-edge false
-    # positives are thin and wide. A square fish is kept, a thin green strip
-    # (same hue) is rejected by the aspect gate (#63).
+    # positives are thin and wide. A square fish is kept, a thin strip (same hue)
+    # is rejected by the aspect gate (#63). Tested on whale, the remaining HSV kind.
     img = _bgra()
     _fill(img, 95, 109, 100, 600, _BAR_HSV)      # bar
-    _fill(img, 96, 108, 300, 320, _GREEN_HSV)    # square fish ON the bar (kept)
-    _fill(img, 100, 104, 130, 260, _GREEN_HSV)   # thin wide green strip (rejected)
+    _fill(img, 96, 108, 300, 320, _WHALE_HSV)    # square fish ON the bar (kept)
+    _fill(img, 100, 104, 130, 260, _WHALE_HSV)   # thin wide strip (rejected)
     bar = find_cast_bar(img)
-    xs = [d["x"] for d in find_fish(img, bar=bar) if d["kind"] == "green"]
+    xs = [d["x"] for d in find_fish(img, bar=bar) if d["kind"] == "whale"]
     assert any(290 <= x <= 332 for x in xs)          # square fish kept
     assert all(not (175 <= x <= 215) for x in xs)    # thin strip (~x195) dropped
 
-
-def test_green_bound_excludes_turquoise_water_keeps_seafoam_fish():
-    # A bright-beach biome puts turquoise WATER at H~90-92, which the old green
-    # upper bound (92) let flood the bar window and bury the fish -> find_fish
-    # returned nothing and the bot sat stuck (#72). The bound is now 88: a
-    # seafoam-green fish (H<=88) is still detected, but a turquoise square (H91)
-    # on the same bar is NOT classified as a fish. Guards against widening it back.
-    img = _bgra()
-    _fill(img, 95, 109, 100, 600, _BAR_HSV)         # bar
-    _fill(img, 96, 112, 300, 317, [85, 200, 180])   # seafoam fish (H85) ON the bar
-    _fill(img, 96, 112, 380, 397, [91, 120, 200])   # turquoise water square (H91)
-    bar = find_cast_bar(img)
-    fish = [d for d in find_fish(img, bar=bar) if d["kind"] == "green"]
-    assert any(292 <= d["x"] <= 325 for d in fish)          # the fish is found
-    assert all(not (372 <= d["x"] <= 405) for d in fish)    # the H91 water is not
+# (The #72 green-hue-bound test was removed: HSV green is RETIRED — green is
+# sprite-only now, so a turquoise hue can't flood it. The flat-block rejection is
+# covered by test_find_fish_sprites_rejects_a_flat_colour_blob.)
 
 
 # --- masked-ZNCC sprite detection (#75): background-invariant fish detection ---
@@ -263,16 +257,18 @@ def test_merge_keeps_converged_whale_next_to_a_green_sprite():
 
 
 def test_bar_restriction_keeps_on_bar_fish_drops_scenery():
+    # The HSV _restrict confines detection to the bar band. Tested on whale (the
+    # remaining HSV kind); green/squid are sprite-confined to the band the same way.
     img = _bgra()
     _fill(img, 95, 109, 100, 600, _BAR_HSV)      # bar
-    _fill(img, 96, 108, 300, 322, _GREEN_HSV)    # green fish ON the bar
-    _fill(img, 165, 185, 350, 372, _GREEN_HSV)   # green 'plant' OFF the bar
+    _fill(img, 96, 108, 300, 322, _WHALE_HSV)    # whale ON the bar
+    _fill(img, 165, 185, 350, 372, _WHALE_HSV)   # blue 'scenery' OFF the bar
     bar = find_cast_bar(img)
     on = find_fish(img, bar=bar)
     unrestricted = find_fish(img, bar=None)
     # the on-bar fish survives the restriction...
-    assert any(d["kind"] == "green" and 290 <= d["x"] <= 332 for d in on)
-    # ...and the off-bar plant (y~175) does not
+    assert any(d["kind"] == "whale" and 290 <= d["x"] <= 332 for d in on)
+    # ...and the off-bar scenery (y~175) does not
     assert all(d["y"] < 130 for d in on)
-    # the unrestricted search catches the plant too (the false positive)
+    # the unrestricted search catches the scenery too (the false positive)
     assert len(unrestricted) > len(on)
