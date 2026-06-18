@@ -415,8 +415,13 @@ Scope + open items:
   ~0.20 gap to background and the now kind-aware dedup (a spurious green/squid
   sprite can no longer delete an eel/whale), but tunable if a new biome shows a
   phantom green/squid.
-- HSV green/squid are retained as a fallback; retiring them (sprite-only for those
-  kinds) is the eventual step once ZNCC is proven live across biomes.
+- **HSV is now RETIRED for green/squid** (done): `find_fish` skips any kind in
+  `SPRITE_KINDS`, so green/squid/eel are **sprite-only** — fully biome-invariant
+  (no absolute-hue path left for them). `whale` is the only kind still on HSV (no
+  sprite captured, #69) — the last biome-dependent fish detection. Cost: on the
+  single-biome corpus, sprite-only keeps **99.1% of green / 98.7% of squid** vs the
+  prior additive (sprite|HSV) — the ~1% HSV-only margin, traded for biome-invariance.
+  The green H88 cap (#72) is now historical (HSV green no longer runs).
 
 ## PTS score delta is the ground-truth catch signal (#58/#63, 2026-06-18)
 
