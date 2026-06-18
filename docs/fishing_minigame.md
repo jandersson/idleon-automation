@@ -400,11 +400,17 @@ the converged-cluster regime where it matters (caught by a multi-agent review).
 
 Scope + open items:
 - **Whale** has no sprite (never captured, #69) → stays HSV-only; provisional.
-- **Eel** keeps its own curled-shape template (`find_eel`), but on UNMASKED CCOEFF
-  (threshold 0.75) — which under-matches under occlusion (0.63 with a squid
-  overlap). **Migrating the eel to this masked-ZNCC framework** (add an eel mask,
-  fold into `find_fish_sprites`) should fix that and unify the three detectors —
-  follow-up under #75.
+- **Eel** is now a masked-ZNCC sprite too (#77, done): its colour == the warm dock,
+  so HSV can't mask it, but a **GrabCut body mask** (corners=bg, centre=fg) segments
+  the curl, and masked ZNCC matches its pixels. This fixed the occlusion under-match
+  (the squid-overlapped eel: 0.63/undetected unmasked → ~0.97 masked) and recovered
+  52 eels the old path missed. `find_eel` is now a thin wrapper over
+  `find_fish_sprites`. The partial `eel.png` ("half an eel") was the bad data behind
+  the old 3-pose struggle and is dropped (`fish_eel_1/2` are full eels). Cross-kind:
+  the green template structurally matches eels at ~0.82 (shared fish silhouette
+  under ZNCC), but the highest-confidence-per-location dedup keeps the eel (~0.98) —
+  244/244 eel frames labelled correctly. Eel masks come from GrabCut (not HSV like
+  green/squid) precisely because the eel's colour == its background.
 - Threshold 0.55 sits ~0.04 below the validated true-fish floor; safe given the
   ~0.20 gap to background and the now kind-aware dedup (a spurious green/squid
   sprite can no longer delete an eel/whale), but tunable if a new biome shows a
