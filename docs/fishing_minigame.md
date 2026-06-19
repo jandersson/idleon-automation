@@ -305,6 +305,46 @@ beach fill, and (c) is anchor-jitter tolerant (the narrow column may also have
 hurt — the old reader's wide window tolerated drift). Validate against the
 captured hold frames AND a live calibration session before re-enabling.
 
+## Release-lead — the "lead cast" (overshoot fix, 2026-06-19)
+
+The closed loop released the moment the fill reading reached `target_charge`, but
+the fill keeps rising during the ~poll+mouseUp latency between the decision and
+the click landing, so the cast **overshot** — worse the faster the bar rose. In
+the DB the overshoot (`charge_level − target_charge_level`) correlates with the
+rise rate (r=0.58) at an implied latency ~0.076s: the common slow casts overshoot
+~1, but the far targets (the eel at 245px, explore casts) blew past by 6–57
+charge and flew long/off-crop. The eel miss that surfaced this (session 13:54
+cast 11): aimed 48 (correct for 245px), released at **51**, landed **286px** —
+~41px past the eel.
+
+Fix (`common.input._charge_step` / `charge_and_release`): a **velocity-predictive
+release** — fire when the fill is projected to reach target by the time the click
+lands, `charge + rise_rate · CHARGE_RELEASE_LEAD_S`. The rate is measured live
+over the last `CHARGE_RATE_SAMPLES=4` polls (smooths the coarse per-poll jumps),
+so the lead **scales with the rate**: fast casts get a big lead, the common slow
+casts barely move — it can't overcorrect a slow cast. `CHARGE_RELEASE_LEAD_S=0.05`
+is set *below* the measured 0.076s latency so the residual is a slight overshoot,
+never an undershoot (a short cast misses too, and undershoot would be a NEW
+failure); a `CHARGE_RELEASE_LEAD_MAX=12` cap stops a noisy rate spike from
+releasing wildly early.
+
+**Model consistency (subtle, load-bearing).** `charge_and_release` returns the
+**projected** cast power (`reading + lead`), not the bare release reading. The
+cast-distance model is `charge_level → landed_dist` and is inverted to aim; the
+fill that sets the distance is the value *at the click*, ≈ `reading + lead`.
+Logging the bare reading (which the lead pulls ~`lead` below target) would
+double-count the lead when the model refits and bias aiming toward undershoot.
+The projected value tracks the actual cast power, so the model — and historical
+pre-lead rows, whose bare reading also ≈ actual power — stay consistent.
+
+Validation is the **landing**, not the charge read: `landed_dist_px` vs
+`target_dist_px` should tighten on far targets across the next sessions (and watch
+for any systematic *undershoot*, which would mean `CHARGE_RELEASE_LEAD_S` is too
+high). The per-poll DB charge-vs-target overshoot is no longer the signal (the
+projected return makes it ~0 by construction). Far-target overshoot that the lead
+can't fully cancel (the bar saturates ~60, so a far aim has no headroom) is the
+residual; capping far aims below saturation is a possible follow-up.
+
 ## Catches are detected by the fish DISAPPEARING (2026-06-17, run 14)
 
 A caught fish is consumed and **vanishes** the instant the lure lands on it. The

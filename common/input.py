@@ -52,22 +52,57 @@ def hold(x: int, y: int, duration_ms: int, jitter: int = 3):
         pyautogui.mouseUp()
 
 
+# Release-lead (the "lead cast"): the fill keeps rising during the ~mouseUp+poll
+# latency between the release DECISION and the click landing, so releasing exactly
+# when charge >= target overshoots — and the faster the bar rises, the worse it is
+# (measured: overshoot correlates with rise rate, r=0.58, implied latency ~0.076s;
+# the far eel and explore casts blew past target by 6-57 charge). So release when
+# the fill is PROJECTED to reach target by the time the click lands:
+# charge + rise_rate * CHARGE_RELEASE_LEAD_S. The lead scales with the live rate,
+# so slow casts (the common, already-accurate case) barely move while fast casts
+# get a big lead — it can't overcorrect a slow cast. CHARGE_RELEASE_LEAD_S is set
+# BELOW the measured latency so the residual is a slight overshoot, never an
+# undershoot (a short cast misses too, and undershoot would be a NEW failure).
+CHARGE_RELEASE_LEAD_S = 0.05    # release this many seconds of rise before target
+CHARGE_RELEASE_LEAD_MAX = 12    # cap the predicted lead (charge px) — a noisy rate
+                                # spike can't trigger a wildly early release
+CHARGE_RATE_SAMPLES = 4         # rise rate is measured over the last N polls
+                                # (smooths the per-poll jitter of the coarse fill)
+
+
+def _release_lead(charge_rate: float,
+                  release_lead_s: float = CHARGE_RELEASE_LEAD_S) -> float:
+    """Charge (px) the fill is predicted to rise during the release latency:
+    ``rate * lead_s``, clamped non-negative and capped. Used both to DECIDE the
+    release and to ESTIMATE the landed cast power (reading + this lead) — see
+    charge_and_release's return."""
+    return min(max(0.0, charge_rate) * release_lead_s, CHARGE_RELEASE_LEAD_MAX)
+
+
 def _charge_step(charge: int, elapsed_s: float, seen_charging: bool,
                  target_charge: int, ready_grace_s: float,
-                 max_hold_s: float) -> str:
+                 max_hold_s: float, charge_rate: float = 0.0,
+                 release_lead_s: float = CHARGE_RELEASE_LEAD_S) -> str:
     """Closed-loop charge decision for one poll of charge_and_release. Pure.
 
     Returns one of:
-      'release' — the charge reached target_charge, or max_hold_s elapsed: cast.
+      'release' — the charge is PROJECTED to reach target_charge by the time the
+                  release lands (charge + rise rate * lead), or max_hold_s
+                  elapsed: cast.
       'abort'   — the rod isn't ready (never started charging within
                   ready_grace_s, e.g. the previous lure is still reeling in):
                   don't cast.
       'hold'    — keep charging.
 
+    `charge_rate` is the measured fill rise (charge px / second); the release is
+    led by ``charge_rate * release_lead_s`` (capped, never negative) to cancel the
+    poll+click latency that else overshoots. ``charge_rate=0`` (the default)
+    reproduces the old release-at-target behaviour exactly.
+
     `seen_charging` is sticky: True once the fill has crossed the ready floor
     (set by the caller, not a lone red pixel), so a rod that IS charging never
     trips the not-ready abort on a transient low/zero read."""
-    if charge >= target_charge:
+    if charge + _release_lead(charge_rate, release_lead_s) >= target_charge:
         return "release"
     if elapsed_s >= max_hold_s:
         return "release"
@@ -93,7 +128,11 @@ def charge_and_release(x: int, y: int, target_charge: int, read_charge,
     height (detector.find_charge_level). Called repeatedly with the button held.
 
     Returns (actual_charge, ready):
-      actual_charge — the bar fill at release (the model's training feature).
+      actual_charge — the PROJECTED cast power at release: the fill reading plus
+        the release-lead (the rise still to come during the click latency), which
+        estimates the fill when the cast actually fires. This is the model's
+        training feature, so it tracks what set the distance, not the pre-latency
+        reading the lead pulls below target.
       ready — False when the rod wasn't ready: the fill never reached
         ready_floor through ready_grace_s, so the cast was aborted early. The
         caller should SKIP it (don't log it as a cast, don't count it) and retry
@@ -114,16 +153,32 @@ def charge_and_release(x: int, y: int, target_charge: int, read_charge,
     pyautogui.mouseDown()
     charge = 0
     seen_charging = False
+    samples: list[tuple[float, int]] = []   # recent (t, charge) for the rise rate
     start = time.time()
     try:
         while True:
             check_failsafe()
+            now = time.time()
             charge = read_charge()
             seen_charging = seen_charging or charge >= ready_floor
-            step = _charge_step(charge, time.time() - start, seen_charging,
-                                target_charge, ready_grace_s, max_hold_s)
+            samples.append((now, charge))
+            del samples[:-CHARGE_RATE_SAMPLES]   # keep the last N polls
+            rate = 0.0
+            if len(samples) >= 2:
+                dt = samples[-1][0] - samples[0][0]
+                if dt > 0:
+                    rate = max(0.0, (samples[-1][1] - samples[0][1]) / dt)
+            step = _charge_step(charge, now - start, seen_charging,
+                                target_charge, ready_grace_s, max_hold_s,
+                                charge_rate=rate)
             if step == "release":
-                return charge, True
+                # Return the PROJECTED cast power (reading + the release-lead),
+                # not the bare reading: the fill keeps rising through the click
+                # latency, so projected ~= the fill when the cast actually fires.
+                # This keeps the charge_level -> distance model consistent — the
+                # bare reading (which the lead pulls ~lead below target) would
+                # double-count the lead and bias the model toward undershoot.
+                return int(round(charge + _release_lead(rate))), True
             if step == "abort":
                 return 0, False
             time.sleep(poll_s)
