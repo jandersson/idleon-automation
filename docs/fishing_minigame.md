@@ -497,6 +497,68 @@ into missed/None outcomes, never a fabricated catch. Still, capture the full set
 (grab 7) so the score signal is trustworthy on every frame, not just those whose
 digits are all captured.
 
+### Background-invariant reader — masked-ZNCC glyphs (#82, 2026-06-19)
+
+The white-fill binarizer above is **position-invariant but not background-
+invariant**, and that broke when the player moved areas. The board POSITION is
+already invariant — `find_cast_bar` locates the bar anywhere (verified on a beach
+frame where the bar sits at x=60 vs the calibrated x=434) and the score crop
+anchors to it — so the gap was purely the READER. After an area move the digits
+render over **pale-desaturated turquoise water** (S~80–100, bright); that passes
+the white-fill gate (V≥190 & S≤110) and **floods** the binary, drowning the
+digits → `read_score` returned None. Coverage was bimodal by area: 100% in the
+calibration spot, 0–12% across ~25 sessions after the move (`bar_screen_x/y`
+logging, 1927a4e, pinned it to area, not biome). **No fixed threshold fixes it**:
+`S≤60` reads the beach but regresses 36 dock reads (dock digit *edges* are S
+60–110, overlapping the pale background), and dilating to recover thickness
+merges digits. The binarize-then-match architecture with an absolute threshold
+was the wall.
+
+The fix mirrors the move that made fish detection biome-invariant (#75): match
+each digit by its **glyph pattern via masked ZNCC**, dropping binarization. Per
+digit (`common/score_digits.py`, `read_pts_zncc`):
+
+- **Template = the grayscale glyph** (bright fill ~255 + dark outline/interior
+  ~16–26); **mask = the ink** (the bright fill dilated 1px to grab the outline).
+  The decisive observation: inside the glyph footprint every pixel is *intrinsic*
+  to the rendered glyph — on the beach the "0" hole/outline read 4–26 (dark), the
+  fill 255 (bright), and only the bbox **corners** show background. So a mask
+  hugging the ink is fully background-invariant; the world only shows outside it.
+- **Localize + match together** by sliding each template over the crop
+  (`common.templates.masked_zncc_map` — the vectorized exact-ZNCC map, three
+  `TM_CCORR` correlations, verified == `masked_match_confidence` to ~1e-4). Keep
+  every peak ≥ `GLYPH_ZNCC_THRESHOLD=0.7`, dedup overlapping peaks across digits
+  by x (highest ZNCC wins), assemble the leading left-to-right run, and **break
+  at the first large x-gap** so a stray match in the "PTS"/"BEST" label can't
+  extend the number. No foreground segmentation — the background-dependent part.
+- **Threshold 0.7 sits in a wide gap**: true digits peak at ZNCC ~0.97+ (p1 over
+  882 labelled instances = 0.971) while the label letters and the space-before-
+  PTS score ≤0.62. The thin **"1"** is the only false-positive risk (it matches
+  the "P" stem / a gap at z~0.56–0.62); the high threshold rejects those — at
+  z<0.65 a spurious trailing "1" produced "151" for true "15".
+
+Validated (`scripts/validate_fishing_glyphs2.py`, 1530 dock crops + the failing
+beach frame): the beach reads **0**; vs the white-fill reader **0 value→different
+regressions, 661 same, 841 recoveries**, all spot-checked correct (incl. 2-digit
+"19"/"13" and a busy noisy background). The one value→None (`c31_after`) **corrects
+a wrong old read** (old "1" on a frame whose score was 16 — impossible). Old-vs-old
+comparison alone is insufficient (hallucinations hide in the recovery bucket where
+old=None), so correctness was also checked by **per-session monotonicity** (a
+session's score never decreases): **0 non-monotonic reads at 0.7**.
+
+Templates are grayscale `assets/digit_glyphs/<d>.png` + `<d>_mask.png` (median
+over many corpus instances), built by **`fishing-build-glyphs`** (bootstraps
+labels from the white-fill reader on the dock corpus, where it works). The
+white-fill path (`binarize_white_fill`, `digit_templates/`) is retained for
+reference and still drives catching (Otsu default); `fishing-capture-digits` is
+its capture tool. Fixing the reader also **restores squid/whale detection in
+non-calibration areas** — they're attributed via the score delta, so a blanked
+score lost them (#82).
+
+Open refinement: digit matching is **scale-1.0 only** (all data is 960×572); a
+window resize would shrink the glyphs and break the read. The cast-bar height is
+a ready scale reference for a multi-scale digit sweep — filed as a follow-up.
+
 ### Open / to validate live
 
 - **Multi-digit PTS layout is left-aligned** — CONFIRMED on botrun_120520

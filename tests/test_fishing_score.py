@@ -14,6 +14,8 @@ import pytest
 from common import score_digits as SD
 from minigames.fishing import score as FS
 
+_GLYPHS = SD.load_glyph_templates(FS.DIGIT_GLYPHS_DIR)
+
 
 # --- kind_from_delta: the score-delta -> catch mapping ---------------------
 
@@ -136,6 +138,108 @@ def test_white_fill_reader_round_trip(tmp_path):
 def _then(crop, draw, x):
     draw(crop, x)
     return crop
+
+
+# --- masked-ZNCC glyph reader: background-invariant PTS reading (#82) --------
+# Compose synthetic crops from the REAL committed glyph templates (assets/
+# digit_glyphs) — the glyph ink is neutral (white fill, dark outline), so it's
+# pasted as gray over a COLOURED background, simulating the player-anchored
+# digits over whatever scenery sits behind them. No live captures.
+
+def _paste_digit(crop_bgr, digit, x, y=2):
+    """Paint digit `digit`'s glyph ink (neutral gray) onto crop_bgr at (x, y),
+    leaving the surrounding background untouched (the ink is opaque, the rest
+    shows scenery — the live situation)."""
+    glyph, mask = _GLYPHS[digit][0]
+    h, w = glyph.shape
+    roi = crop_bgr[y:y + h, x:x + w]
+    sel = mask > 0
+    roi[sel] = glyph[sel][:, None]        # gray ink -> equal BGR channels
+
+
+def _render(bg_bgr, placements, size=(14, 60)):
+    """A BGR score crop: a flat coloured background with digits placed at the
+    given (digit, x) spots."""
+    crop = np.zeros((size[0], size[1], 3), np.uint8)
+    crop[:] = bg_bgr
+    for digit, x in placements:
+        _paste_digit(crop, digit, x)
+    return crop
+
+
+# tan dock vs pale turquoise water (the #82 area move): the two backgrounds the
+# white-fill binarizer could not both handle with one threshold.
+_DOCK_BGR = (70, 140, 200)
+_WATER_BGR = (210, 205, 150)
+
+
+def test_zncc_reader_reads_single_digit_over_any_background():
+    for bg in (_DOCK_BGR, _WATER_BGR, (0, 0, 0), (255, 255, 255)):
+        for d in range(10):
+            crop = _render(bg, [(d, 12)])
+            assert SD.read_pts_zncc(crop, _GLYPHS) == d, (d, bg)
+
+
+def test_zncc_reader_is_background_invariant_same_number():
+    # The core #82 property: the SAME number reads identically over the dock and
+    # the pale water that broke the binarizer.
+    placements = [(1, 10), (5, 18)]
+    dock = SD.read_pts_zncc(_render(_DOCK_BGR, placements), _GLYPHS)
+    water = SD.read_pts_zncc(_render(_WATER_BGR, placements), _GLYPHS)
+    assert dock == water == 15
+
+
+def test_zncc_reader_assembles_multi_digit_left_to_right():
+    assert SD.read_pts_zncc(_render(_DOCK_BGR, [(2, 10), (6, 18)]), _GLYPHS) == 26
+    assert SD.read_pts_zncc(_render(_WATER_BGR, [(1, 10), (9, 17)]), _GLYPHS) == 19
+
+
+def test_zncc_reader_stops_at_a_label_block():
+    # A solid bright block after the digits (the "PTS"/"BEST" label) is flat ->
+    # low ZNCC against every digit, so it neither reads as a digit nor extends
+    # the number.
+    crop = _render(_WATER_BGR, [(7, 10)])
+    crop[3:11, 26:48] = (245, 245, 245)        # wide solid block past the digit
+    assert SD.read_pts_zncc(crop, _GLYPHS) == 7
+
+
+def test_zncc_reader_returns_none_on_no_digits():
+    # Flat background and random colour noise both have no glyph -> None (never
+    # a fabricated 0; callers treat None as 'unknown').
+    assert SD.read_pts_zncc(_render(_WATER_BGR, []), _GLYPHS) is None
+    rng = np.random.default_rng(0)
+    noise = rng.integers(0, 256, size=(14, 60, 3), dtype=np.uint8)
+    # colour noise is high-variance but not a glyph; the gate (0.7) rejects it.
+    assert SD.read_pts_zncc(noise, _GLYPHS) is None
+    assert SD.read_pts_zncc(None, _GLYPHS) is None
+
+
+def test_zncc_reader_handles_bgra_crop():
+    # The live path passes an mss BGRA crop; _to_gray must convert it.
+    crop = _render(_DOCK_BGR, [(8, 12)])
+    bgra = cv2.cvtColor(crop, cv2.COLOR_BGR2BGRA)
+    assert SD.read_pts_zncc(bgra, _GLYPHS) == 8
+
+
+def test_glyph_templates_load_complete_set():
+    # The reader needs all 10 digits; each has a same-shape mask.
+    assert set(_GLYPHS) == set(range(10))
+    for d, variants in _GLYPHS.items():
+        for glyph, mask in variants:
+            assert glyph.shape == mask.shape and mask.max() == 255
+
+
+def test_make_zncc_reader_matches_module_reader():
+    reader = SD.make_zncc_pts_reader(FS.DIGIT_GLYPHS_DIR)
+    crop = _render(_DOCK_BGR, [(3, 10), (4, 18)])
+    assert reader(crop) == 34 == SD.read_pts_zncc(crop, _GLYPHS)
+    assert reader(None) is None
+
+
+def test_read_score_uses_zncc_reader_and_keeps_interface():
+    # read_score(full_frame, cast_bar) crops via score_crop then reads. A None
+    # anchor still yields None (unchanged contract).
+    assert FS.read_score(np.zeros((50, 80, 3), np.uint8), None) is None
 
 
 # --- the shared default stays unchanged (catching's path) -------------------

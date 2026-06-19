@@ -4,8 +4,12 @@ The "N PTS" counter renders below-left of the cast bar in the FULL window (NOT
 in the play crop). Read before vs after a cast, its delta says exactly what was
 caught: +1 green, +2 eel, +3 squid, +5 whale, 0 a miss — fixing the cases the
 bobber/disappearance heuristics miss (far casts that don't settle, occluded
-overlaps). Uses the shared common.score_digits reader with fishing's own digit
-templates (assets/digit_templates), grown by `fishing-capture-digits`.
+overlaps). Reads each digit by its glyph pattern via masked ZNCC over the local
+background (common.score_digits, fishing's own grayscale glyph templates in
+assets/digit_glyphs, grown by `fishing-build-glyphs`) — background-invariant, so
+it survives the player moving to an area with different scenery behind the
+player-anchored counter (#82). Superseded the white-fill binarizer, which
+flooded on pale-desaturated water.
 
 The score region is anchored to the detected cast bar (like the charge
 thermometer), so it follows the player-anchored overlay. Offsets measured on the
@@ -15,10 +19,10 @@ from pathlib import Path
 
 import numpy as np
 
-from common.score_digits import binarize_white_fill, make_pts_reader
+from common.score_digits import make_zncc_pts_reader
 
 _HERE = Path(__file__).parent
-DIGIT_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
+DIGIT_GLYPHS_DIR = _HERE / "assets" / "digit_glyphs"
 
 # Score crop offset from the cast bar's (x, y), full-window coords. The PTS
 # NUMBER sits just left of and below the bar's left end; the crop runs through
@@ -54,12 +58,19 @@ DELTA_KIND = {1: "green", 2: "eel", 3: "squid"}
 # multi-catch, or a +5 that can't be told from a whale).
 MULTI_KIND = "multi"
 
-# White-fill binarization (not the shared Otsu-minority default): the fishing
-# score renders over a busy tan dock whose dark plank grooves bridge the digits
-# under Otsu. Keying on the bright white glyph fill rejects the dock, the planks,
-# and the coloured bar. Templates in DIGIT_TEMPLATES_DIR are captured through
-# this same binarizer (fishing-capture-digits), so live components match (#63).
-_read_pts = make_pts_reader(DIGIT_TEMPLATES_DIR, binarize=binarize_white_fill)
+# Background-invariant masked-ZNCC reader (#82). The earlier white-fill
+# binarizer (V>=190 & S<=110) FLOODED on the pale-desaturated water of a new
+# area (S~80-100, bright) behind the player-anchored digits -> read_score
+# returned None; no fixed threshold separates that background from the dock
+# digit edges (S 60-110), so the binarize architecture was the wall. The glyph
+# matcher reads each digit by its pixel pattern over the local background (mask =
+# the intrinsic ink: bright fill + dark outline/interior), so the score is
+# background-invariant. Templates in DIGIT_GLYPHS_DIR (grayscale glyph +
+# _mask.png) are grown by `fishing-build-glyphs`. Validated on the failing pale-
+# water beach frame (reads 0) and zero-regression over the 1530-crop dock corpus
+# (scripts/validate_fishing_glyphs2.py); threshold 0.7 sits in the wide gap
+# between true digits (ZNCC ~0.97+) and the "PTS" label / gaps (<=0.62).
+_read_pts = make_zncc_pts_reader(DIGIT_GLYPHS_DIR)
 
 
 def score_crop(full_frame: np.ndarray, cast_bar_full):

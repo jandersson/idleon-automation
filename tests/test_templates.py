@@ -6,6 +6,7 @@ import pytest
 from common.templates import (
     ScaleLockMatcher,
     masked_match_confidence,
+    masked_zncc_map,
     match_multiscale,
     match_multiscale_center,
     match_multiscale_masked,
@@ -265,3 +266,52 @@ def test_masked_match_confidence_out_of_bounds_is_zero():
     template, mask, _ = _sprite_with_border()
     img = np.full((100, 100, 3), 50, dtype=np.uint8)
     assert masked_match_confidence(img, template, mask, top_left=(80, 80), scale=1.0) == 0.0
+
+
+# --- masked_zncc_map: the vectorized localizing counterpart -----------------
+
+def _gray_glyph_with_border():
+    """A grayscale glyph (the digit-reader case: bright fill, dark outline) with
+    a 1px outer border that stands in for background baked into a tight crop, and
+    a mask covering the glyph ink (fill + outline) only."""
+    rng = np.random.default_rng(seed=11)
+    ink = rng.integers(0, 256, size=(8, 6), dtype=np.uint8)
+    tmpl = np.zeros((10, 8), dtype=np.uint8)
+    tmpl[1:9, 1:7] = ink
+    mask = np.zeros((10, 8), dtype=np.uint8)
+    mask[1:9, 1:7] = 255
+    return tmpl, mask, ink
+
+
+def test_masked_zncc_map_equals_pointwise_confidence():
+    """masked_zncc_map must equal masked_match_confidence at every position —
+    it's the same score computed as a full correlation map (so the digit reader
+    can localize without a separate confirm pass)."""
+    tmpl, mask, _ = _gray_glyph_with_border()
+    rng = np.random.default_rng(seed=3)
+    img = rng.integers(0, 256, size=(16, 30), dtype=np.uint8)
+    zmap = masked_zncc_map(img, tmpl, mask)
+    assert zmap.shape == (16 - 10 + 1, 30 - 8 + 1)
+    for y in range(zmap.shape[0]):
+        for x in range(zmap.shape[1]):
+            ref = masked_match_confidence(img, tmpl, mask, (x, y), 1.0)
+            assert abs(float(zmap[y, x]) - ref) < 1e-3
+
+
+def test_masked_zncc_map_peaks_on_the_glyph_over_any_background():
+    """The property the score reader needs: the map peaks (~1.0) exactly at the
+    glyph location, and that peak is background-invariant — paste the ink over a
+    dark and a bright flat background and the peak stays put and high."""
+    tmpl, mask, ink = _gray_glyph_with_border()
+    for bg in (20, 230):
+        img = np.full((16, 30), bg, dtype=np.uint8)
+        img[3:11, 10:16] = ink            # ink only; the border stays background
+        zmap = masked_zncc_map(img, tmpl, mask)
+        py, px = np.unravel_index(int(np.argmax(zmap)), zmap.shape)
+        assert float(zmap[py, px]) > 0.99
+        assert abs(px - 9) <= 1 and abs(py - 2) <= 1   # template top-left = ink - (1,1)
+
+
+def test_masked_zncc_map_none_when_template_too_big():
+    tmpl, mask, _ = _gray_glyph_with_border()
+    assert masked_zncc_map(np.zeros((5, 5), np.uint8), tmpl, mask) is None

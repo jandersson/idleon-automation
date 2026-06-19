@@ -182,6 +182,56 @@ def masked_match_confidence(
     return float((a * b).sum() / denom)
 
 
+def masked_zncc_map(
+    image_gray: np.ndarray,
+    template_gray: np.ndarray,
+    mask: np.ndarray,
+) -> np.ndarray | None:
+    """Masked ZNCC at EVERY top-left position, vectorized — the localizing
+    counterpart to masked_match_confidence (which scores one fixed location).
+
+    Same background-invariant score (mean-subtracted NCC over the masked
+    template pixels, the world behind the overlay dropped), but computed as a
+    full correlation map so a caller can find where a glyph/sprite sits without
+    a separate localization pass. Single-channel (grayscale) only: the masked
+    digit glyphs are colourless (white fill, dark outline), so intensity carries
+    all the structure; pass a gray image + gray template + 0/255 mask.
+
+    Returns a float32 map of ZNCC in [-1, 1], shape
+    ``(H - th + 1, W - tw + 1)`` (same as cv2.matchTemplate), or None when the
+    template is larger than the image or the masked template is flat (no
+    variance to correlate). Positions where the masked image patch is flat read
+    0.0 (mean-subtraction kills them), exactly like masked_match_confidence.
+
+    Identity used (means are over the N masked pixels, per output position):
+      ZNCC = Σ_mask (T-T̄)(I-Ī) / (‖T-T̄‖ · ‖I-Ī‖)
+    The numerator is ``correlate(I, Mc)`` with ``Mc = mask·(T-T̄)`` (the masked,
+    centred template, zero outside the mask); ‖I-Ī‖ per position comes from the
+    masked running sum and sum-of-squares (``correlate(I, M)`` and
+    ``correlate(I², M)``). Verified equal to masked_match_confidence to ~1e-4.
+    """
+    img = image_gray.astype(np.float32)
+    tmpl = template_gray.astype(np.float32)
+    m = (mask > 0).astype(np.float32)
+    n = float(m.sum())
+    if (n < 1 or img.shape[0] < tmpl.shape[0] or img.shape[1] < tmpl.shape[1]):
+        return None
+    tmpl_mean = float((m * tmpl).sum() / n)
+    tmpl_c = m * (tmpl - tmpl_mean)
+    tmpl_norm = float(np.sqrt((tmpl_c * tmpl_c).sum()))
+    if tmpl_norm == 0.0:
+        return None
+    cross = cv2.matchTemplate(img, tmpl_c, cv2.TM_CCORR)
+    sum_i = cv2.matchTemplate(img, m, cv2.TM_CCORR)
+    sum_i2 = cv2.matchTemplate(img * img, m, cv2.TM_CCORR)
+    var_i = sum_i2 - (sum_i * sum_i) / n
+    denom = tmpl_norm * np.sqrt(np.maximum(var_i, 0.0))
+    out = np.zeros_like(cross)
+    nz = denom > 1e-6
+    out[nz] = cross[nz] / denom[nz]
+    return out
+
+
 def match_multiscale_zncc_center(
     image: np.ndarray,
     template: np.ndarray,

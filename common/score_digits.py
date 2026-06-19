@@ -36,6 +36,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from common.templates import masked_zncc_map
+
 # Connected-component filters. A digit glyph is ~6-10px wide, ~10px tall; a
 # merged "PTS"/"BEST" label is much wider. Reject specks below the minima and
 # anything much wider than a single digit.
@@ -287,5 +289,130 @@ def make_pts_reader(
         if crop is None or crop.size == 0:
             return None
         return read_pts_from_crop(crop, canon, binarize)
+
+    return read_pts
+
+
+# --- Masked-ZNCC digit reader (background-invariant, #82) -------------------
+# The binarize-then-match reader above keys on an ABSOLUTE foreground threshold
+# (Otsu-minority, or white-fill V>=190/S<=110). That breaks where the LOCAL
+# background defeats the threshold: fishing moved to a pale-desaturated water
+# area (S~80-100, bright) behind the player-anchored "N PTS" digits, which
+# passes the white-fill gate and FLOODS the binary, drowning the digits ->
+# read_score returns None. No fixed threshold separates the dock digit edges
+# (S 60-110) from that pale background (S 80-100); the binarize architecture is
+# the wall (#82).
+#
+# This reader drops binarization entirely and matches each digit by its GLYPH
+# PATTERN via masked ZNCC -- the move that made fish detection biome-invariant
+# (#75). Each template is the grayscale glyph (bright fill ~255 + dark outline
+# ~16-26 + dark interior) with a mask hugging that ink (fill dilated by 1px to
+# grab the outline). EVERY masked pixel is intrinsic to the rendered glyph -- on
+# any background the fill stays white and the outline/interior stay dark, while
+# the background only shows OUTSIDE the mask -- so the score is background-
+# invariant. A true digit peaks at ZNCC ~0.97+ while the "PTS"/"BEST" label and
+# the gaps score <=0.62; GLYPH_ZNCC_THRESHOLD sits in that gap. Localization and
+# matching happen together (slide each template across the crop), so it needs no
+# foreground segmentation -- the part that was background-dependent. Templates:
+# <dir>/<d>.png + <d>_mask.png (grayscale glyph + ink mask), grown by the
+# fishing-build-glyphs tool.
+GLYPH_ZNCC_THRESHOLD = 0.7   # true digits >=0.97, label/gaps <=0.62 -> wide margin
+GLYPH_DEDUP_PX = 4           # merge per-digit peaks within this x (one glyph)
+GLYPH_MAX_GAP_PX = 5         # break the leading run before a far-right stray match
+GLYPH_MAX_PEAKS = 6          # per template, cap the NMS loop (a repeated digit, e.g. "11")
+
+
+def load_glyph_templates(template_dir: Path) -> dict[int, list[tuple[np.ndarray, np.ndarray]]]:
+    """Load grayscale glyph + ink-mask pairs, keyed digit -> list of variants.
+
+    ``<d>.png`` + ``<d>_mask.png`` is the primary pair; ``<d>_<tag>.png`` +
+    ``<d>_<tag>_mask.png`` add background/pose variants (the patch matches if ANY
+    correlates). A glyph without a same-shape mask is skipped (the mask is
+    load-bearing -- it defines which pixels are intrinsic). Missing digits are
+    absent, so the reader returns None on inputs needing them."""
+    out: dict[int, list[tuple[np.ndarray, np.ndarray]]] = {}
+    for path in sorted(template_dir.glob("*.png")):
+        if path.stem.endswith("_mask"):
+            continue
+        digit_str = path.stem.split("_")[0]
+        if not digit_str.isdigit():
+            continue
+        digit = int(digit_str)
+        if not 0 <= digit <= 9:
+            continue
+        glyph = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        mask = cv2.imread(str(path.with_name(path.stem + "_mask.png")), cv2.IMREAD_GRAYSCALE)
+        if glyph is None or mask is None or glyph.shape != mask.shape:
+            continue
+        out.setdefault(digit, []).append((glyph, mask))
+    return out
+
+
+def read_pts_zncc(
+    crop: np.ndarray | None,
+    glyph_templates: dict[int, list[tuple[np.ndarray, np.ndarray]]],
+    thresh: float = GLYPH_ZNCC_THRESHOLD,
+    dedup_px: int = GLYPH_DEDUP_PX,
+    max_gap_px: int = GLYPH_MAX_GAP_PX,
+    max_peaks: int = GLYPH_MAX_PEAKS,
+) -> int | None:
+    """Read the leading number from a score crop by masked-ZNCC glyph matching,
+    or None. Background-invariant: each digit is matched by its own glyph pixels
+    (no binarization), so the score reads over any scenery behind the overlay.
+
+    Slides every digit template across the crop (``masked_zncc_map``), keeps each
+    peak clearing ``thresh``, dedups overlapping peaks across digits by x
+    proximity (highest ZNCC wins), then assembles the leading left-to-right run --
+    stopping at the first large x-gap so a stray match in the "PTS"/"BEST" label
+    can't extend the number. None when nothing clears the gate (unreadable /
+    degraded frame); callers treat None as 'unknown', never 0."""
+    if crop is None or crop.size == 0 or not glyph_templates:
+        return None
+    gray = _to_gray(crop)
+    dets: list[tuple[float, int, int, int, float]] = []  # (cx, x_left, x_right, digit, zncc)
+    for digit, variants in glyph_templates.items():
+        for glyph, mask in variants:
+            th, tw = glyph.shape
+            zmap = masked_zncc_map(gray, glyph, mask)
+            if zmap is None:
+                continue
+            work = zmap.copy()
+            for _ in range(max_peaks):
+                py, px = np.unravel_index(int(np.argmax(work)), work.shape)
+                z = float(work[py, px])
+                if z < thresh:
+                    break
+                dets.append((px + tw / 2.0, int(px), int(px + tw), digit, z))
+                work[max(0, py - th // 2):py + th // 2 + 1,
+                     max(0, px - tw // 2):px + tw // 2 + 1] = -2.0
+    if not dets:
+        return None
+    dets.sort(key=lambda d: -d[4])           # highest confidence first
+    kept: list[tuple[float, int, int, int, float]] = []
+    for d in dets:
+        if all(abs(d[0] - k[0]) > dedup_px for k in kept):
+            kept.append(d)
+    kept.sort(key=lambda d: d[0])            # left-to-right
+    digits = [kept[0]]
+    for k in kept[1:]:
+        if k[1] - digits[-1][2] <= max_gap_px:
+            digits.append(k)
+        else:
+            break                            # a far-right stray (label/noise)
+    return int("".join(str(k[3]) for k in digits))
+
+
+def make_zncc_pts_reader(
+    template_dir: Path,
+    thresh: float = GLYPH_ZNCC_THRESHOLD,
+) -> Callable[[np.ndarray | None], int | None]:
+    """Build a background-invariant ``read_pts(crop) -> int | None`` bound to a
+    glyph-template library (loaded once at make-time). The masked-ZNCC analogue
+    of make_pts_reader, for busy/varying backgrounds where the binarize readers
+    flood (#82)."""
+    glyphs = load_glyph_templates(template_dir)
+
+    def read_pts(crop: np.ndarray | None) -> int | None:
+        return read_pts_zncc(crop, glyphs, thresh)
 
     return read_pts
