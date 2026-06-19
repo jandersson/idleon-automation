@@ -263,6 +263,40 @@ is kept for the post-release read / back-compat. The fill→distance model still
 needs fresh data: runs 8–10 logged no real casts, so the bot explores target
 fills and logs `(charge_level=fill_at_release, landed_dist)` until it fits.
 
+### Background-invariant charge read (#83, 2026-06-19)
+
+The thermometer reader had the same area-dependence as the score reader (#82,
+same root): an **absolute red gate** (`V≥90 & S≤... S≥120` over a `bar_x-50..-22`
+window, rows-with-red) read the fill **stuck-low (1–5px) on ~10% of casts** after
+an area move. On the bright turquoise-water area the fill desaturates to a pale
+orange (H~14, **S~118, V~88**) the gate misses, so `charge_and_release` never saw
+the fill rise and **timed out at max-hold, firing at uncontrolled high charge**
+(`landed_dist_px` NULL, make-rate ~32% vs ~47%). DB confirms it's positional: the
+calibration band (`bar_screen_x`~450) ran 0–4% stuck-low, the beach-era sessions
+11–26%.
+
+**No fixed gate can fix it**: that washed-out fill is the **same colour as the
+EMPTY tube under the orange-sunset calibration area** (H~15, S~135, V~83) — an
+absolute threshold can't tell "pale fill" from "empty tube". The invariant signal
+is **relative**: the fill is **redder (higher red-channel dominance, R−max(G,B))
+than the background immediately beside the tube**, while an empty tube shows the
+same scenery as its surroundings. `find_charge_fill` now reads the tube interior
+(`bar_x-36..-28`) per row and counts rows where its red-dominance beats the
+background just left/right of the tube (`CHARGE_FILL_MARGIN=18`); the background
+reference takes the **less-red side** so warm scenery on one side can't suppress
+the read. Backgrounds behind/around the overlay (turquoise water, orange sunset)
+fall out of the difference.
+
+Validated (`scripts/validate_fishing_charge.py`): the pale-water beach frame
+reads **9 (stuck) → 67 (full tube)**; across **176 calibration charged frames the
+new reader matches the old to within 3px** (median abs-diff 3, **0 divergences
+>10**), so the working area and its fill→distance model are undisturbed; empty
+tubes read ~0 (no false-full → no undercharged cast). Live confirmation is the DB
+`charge_level` per cast — the next beach-area session should drop the
+`charge_level≤5` rate from ~10–26% toward the calibration 0–4%. The diagnostic
+per-poll frame save stays OFF (it stalled the hot loop and caused release
+overshoot); the DB read is the validation channel.
+
 ## Catches are detected by the fish DISAPPEARING (2026-06-17, run 14)
 
 A caught fish is consumed and **vanishes** the instant the lure lands on it. The

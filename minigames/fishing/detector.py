@@ -508,36 +508,85 @@ def find_charge_level(frame: np.ndarray) -> int:
 
 # The LIVE charge meter is a vertical RED thermometer that fills bottom-up while
 # the button is held, anchored just LEFT of (and extending above) the cast bar —
-# NOT at any crop edge. Measured live (run 10, 960x572): with the cast bar at
-# full-window (434,233), the tube fills within x[386,412], y[170,252], i.e. an
-# offset of bar_x-48..bar_x-22 and bar_y-63..bar_y+19. So it's read from the FULL
-# window anchored to the detected cast bar, with margin (offsets below). The red
-# fill HEIGHT is the charge level; the bobber/scenery red sits elsewhere (on/right
-# of the bar), outside this left-of-bar window. See docs/fishing_minigame.md.
-CHARGE_BAR_DX0 = -50   # search window, relative to the cast bar's left edge (x)
-CHARGE_BAR_DX1 = -22
-CHARGE_BAR_DY0 = -64   # relative to the cast bar's top (y); thermometer rises above it
-CHARGE_BAR_DY1 = 18    # tuned on run-10 frames: empty->0, full->56, clean ramp
+# NOT at any crop edge. Measured (960x572): the tube OUTLINE sits at bar_x-37 /
+# bar_x-27, its INTERIOR at bar_x-36..bar_x-28, spanning bar_y-63..bar_y+19.
+#
+# BACKGROUND-INVARIANT read (#83). An ABSOLUTE red gate (the old V>=90 & S>=120)
+# read the fill STUCK-LOW after an area move: on the bright turquoise-water area
+# the fill desaturates to a pale orange (H~14, S~118, V~88) the gate misses, so
+# the closed-loop never saw the fill rise and fired at uncontrolled max charge
+# (~10% of casts). No fixed gate works, either — that pale fill is the SAME colour
+# as the EMPTY tube under the orange-sunset calibration area (H~15, S~135, V~83),
+# so an absolute threshold can't tell "washed-out fill" from "empty tube".
+#
+# The invariant signal is RELATIVE: the fill is REDDER (higher red-channel
+# dominance, R - max(G,B)) than the background IMMEDIATELY BESIDE the tube, while
+# an EMPTY tube shows the same scenery as its surroundings (no excess red). So
+# per row, compare the tube interior's red-dominance to the background just
+# left/right of it; a row is filled where the interior beats the adjacent
+# background by CHARGE_FILL_MARGIN. This reads the fill the same whether the
+# scenery behind/around it is turquoise water or orange sunset. Validated to
+# within ~3px of the old reader across 176 calibration frames (full 63->66,
+# partial 46->49, empty 0->3) and reads the pale-water beach frame 9->67. See
+# docs/fishing_minigame.md.
+CHARGE_TUBE_DX0 = -36   # tube interior, relative to the cast bar's left edge (x)
+CHARGE_TUBE_DX1 = -28
+CHARGE_LBG_DX0 = -46    # background reference just LEFT of the tube
+CHARGE_LBG_DX1 = -40
+CHARGE_RBG_DX0 = -25    # background reference just RIGHT of the tube (toward the bar)
+CHARGE_RBG_DX1 = -19
+CHARGE_TUBE_DY0 = -63   # tube vertical extent, relative to the cast bar's top (y)
+CHARGE_TUBE_DY1 = 19
+CHARGE_FILL_MARGIN = 18  # interior must beat the adjacent background's red-dominance by this
+
+
+def _charge_reddom_rows(bgr: np.ndarray, bx: int, by: int, dx0: int, dx1: int,
+                        h: int, w: int) -> np.ndarray | None:
+    """Per-row median red-channel dominance (R - max(G,B)) of the vertical strip
+    bar_x+dx0..bar_x+dx1 over the tube y-band, or None if the strip is off-frame.
+    All strips share the tube y-band so their per-row arrays align for subtraction."""
+    x0, x1 = max(0, bx + dx0), max(0, min(w, bx + dx1))
+    y0, y1 = max(0, by + CHARGE_TUBE_DY0), max(0, min(h, by + CHARGE_TUBE_DY1))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    strip = bgr[y0:y1, x0:x1].astype(np.int16)
+    reddom = strip[:, :, 2] - np.maximum(strip[:, :, 0], strip[:, :, 1])
+    return np.median(reddom, axis=1)
 
 
 def find_charge_fill(full_frame: np.ndarray,
                      cast_bar_full: tuple[int, int, int, int] | None) -> int:
-    """Red-fill height (px) of the vertical charge thermometer — the LIVE
-    cast-power signal during the hold. `full_frame` is the whole window;
-    `cast_bar_full` is the cast bar's (x, y, w, h) in FULL-window coords (the
-    anchor). Returns 0 when empty or the anchor is missing. The closed-loop cast
-    polls this and releases at a target fill."""
+    """Fill height (px) of the vertical charge thermometer — the LIVE cast-power
+    signal during the hold. `full_frame` is the whole window; `cast_bar_full` is
+    the cast bar's (x, y, w, h) in FULL-window coords (the anchor). Returns 0 when
+    empty or the anchor is missing. The closed-loop cast polls this and releases
+    at a target fill.
+
+    Background-invariant (#83): a row counts as filled where the tube interior is
+    more RED-DOMINANT than the background just beside the tube (the fill is redder
+    than its surroundings; an empty tube isn't), so it reads the same over any
+    scenery — see the module comment above."""
     if cast_bar_full is None:
         return 0
-    bx, by, _bw, _bh = cast_bar_full
+    bx, by = cast_bar_full[0], cast_bar_full[1]
     h, w = full_frame.shape[:2]
-    x0, x1 = max(0, bx + CHARGE_BAR_DX0), max(0, min(w, bx + CHARGE_BAR_DX1))
-    y0, y1 = max(0, by + CHARGE_BAR_DY0), max(0, min(h, by + CHARGE_BAR_DY1))
-    if x1 <= x0 or y1 <= y0:
+    bgr = cv2.cvtColor(full_frame, cv2.COLOR_BGRA2BGR) if full_frame.ndim == 3 and full_frame.shape[2] == 4 else full_frame
+    interior = _charge_reddom_rows(bgr, bx, by, CHARGE_TUBE_DX0, CHARGE_TUBE_DX1, h, w)
+    if interior is None:
         return 0
-    hsv = _to_hsv(full_frame[y0:y1, x0:x1])
-    red = cv2.bitwise_or(_mask(hsv, *CHARGE_RED_LOW), _mask(hsv, *CHARGE_RED_HIGH))
-    return int(np.count_nonzero((red > 0).any(axis=1)))   # rows with red = fill height
+    left = _charge_reddom_rows(bgr, bx, by, CHARGE_LBG_DX0, CHARGE_LBG_DX1, h, w)
+    right = _charge_reddom_rows(bgr, bx, by, CHARGE_RBG_DX0, CHARGE_RBG_DX1, h, w)
+    # The truer background is the LESS-red side (avoids over-subtracting where one
+    # side has warm scenery). Fall back to whichever reference is on-frame.
+    if left is not None and right is not None:
+        bg = np.minimum(left, right)
+    elif left is not None:
+        bg = left
+    elif right is not None:
+        bg = right
+    else:
+        return 0
+    return int(np.count_nonzero(interior - bg > CHARGE_FILL_MARGIN))
 
 
 def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
