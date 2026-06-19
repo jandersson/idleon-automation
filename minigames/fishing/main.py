@@ -668,6 +668,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         lead_vx = lead_time_s = None
         lead_px_int = lead_px_eff = 0.0
         lead_clamped = lead_n = 0
+        lead_clamp_reason = None
 
         if explore:
             target_charge = _explore_charge(model, origin_x, mines, fish)
@@ -707,7 +708,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
                 if lead_arm and lead_vx is not None and model is not None:
                     lead_time_s = LEAD_TIME_FALLBACK_S
                     lo, hi = model.reach_px()
-                    led_dist, lead_px_eff, clamped = lead_fish_dist(
+                    led_dist, lead_px_eff, lead_clamp_reason = lead_fish_dist(
                         base_dist, lead_vx, lead_time_s, lo, hi)
                     lead_px_int = lead_vx * lead_time_s
                     # Re-check mine-avoidance at the LED landing — leading moves it
@@ -715,7 +716,9 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
                     # holds; drop the lead (aim at the fish) on a mine-only spot.
                     if lands_on_mine_only(origin_x + led_dist, mines, fish):
                         led_dist, lead_px_eff = base_dist, 0.0
-                    lead_clamped = 1 if clamped else 0
+                        lead_clamp_reason = "mine"   # lead dropped: led onto a mine
+                    lead_clamped = 1 if lead_clamp_reason else 0
+                    lead_clamp_reason = lead_clamp_reason or None
                     target_charge = charge_for_distance(model, led_dist)
                 else:
                     target_charge = charge_for_distance(model, base_dist)
@@ -816,6 +819,7 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             lead_px_intended=(lead_px_int or None),
             lead_px_effective=lead_px_eff,
             lead_clamped=lead_clamped,
+            lead_clamp_reason=lead_clamp_reason,
             lead_n_samples=(lead_n or None),
             code_commit=code_commit,
             source="bot",

@@ -268,21 +268,26 @@ def theil_sen_velocity(samples: list[tuple[float, float]],
 def lead_fish_dist(target_dist_px: float, velocity_px_s: float | None,
                    lead_time_s: float, reach_lo: float, reach_hi: float,
                    min_vel_px_s: float = MIN_LEAD_VEL_PX_S,
-                   max_lead_px: float = MAX_LEAD_PX) -> tuple[float, float, bool]:
+                   max_lead_px: float = MAX_LEAD_PX) -> tuple[float, float, str]:
     """Lead a sliding fish: the target distance (px from the cast origin) adjusted
     to the fish's PREDICTED position at landing. Returns
-    ``(led_dist, effective_lead_px, clamped)``.
+    ``(led_dist, effective_lead_px, clamp_reason)``.
 
-    No lead (``led == target``) when ``velocity`` is None or below the noise/turn
-    floor. The lead is turn-capped to ``±max_lead_px`` and reach-clamped to
-    ``[reach_lo, reach_hi]`` — the cast model would silently swallow an
-    out-of-reach lead, so ``clamped`` flags it. Operates on the scalar distance
-    from the FIXED left-edge origin, so a +velocity (fish sliding outward/right)
-    increases the distance and −velocity decreases it; there's no abs() direction
-    flip. Pure."""
+    `clamp_reason` says WHY the effective lead differs from the raw velocity*time:
+    ``""`` (uncapped / no lead), ``"turn"`` (the ±max_lead_px turn-cap bound),
+    ``"reach"`` (reach-clamped into [reach_lo, reach_hi]), or ``"turn+reach"``
+    (both). It replaces the old reach-only `clamped` bool, which hid the turn-cap —
+    the very thing the MAX_LEAD_PX raise needs measured (#85). An empty string is
+    falsy, so existing `if clamp_reason` / `not clamp_reason` truth tests still read
+    as "was it capped". Operates on the scalar distance from the FIXED left-edge
+    origin, so a +velocity (fish sliding outward/right) increases the distance and
+    −velocity decreases it; there's no abs() direction flip. Pure."""
     if velocity_px_s is None or abs(velocity_px_s) < min_vel_px_s:
-        return target_dist_px, 0.0, False
-    lead = max(-max_lead_px, min(max_lead_px, velocity_px_s * lead_time_s))
+        return target_dist_px, 0.0, ""
+    raw = velocity_px_s * lead_time_s
+    lead = max(-max_lead_px, min(max_lead_px, raw))
     led = target_dist_px + lead
     clamped_led = max(reach_lo, min(reach_hi, led))
-    return clamped_led, clamped_led - target_dist_px, clamped_led != led
+    reason = "+".join(r for r, on in (("turn", abs(raw) > max_lead_px),
+                                      ("reach", clamped_led != led)) if on)
+    return clamped_led, clamped_led - target_dist_px, reason

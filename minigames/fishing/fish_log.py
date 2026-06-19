@@ -117,6 +117,10 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("lead_px_effective", "REAL"),
     ("lead_clamped", "INTEGER"),
     ("lead_n_samples", "INTEGER"),
+    # WHY the lead was capped (the old lead_clamped bool only saw the reach-clamp,
+    # never the turn-cap it was meant to measure, #85): '' / 'turn' / 'reach' /
+    # 'turn+reach' / 'mine' (dropped to 0 on a mine-only led spot). NULL = no lead.
+    ("lead_clamp_reason", "TEXT"),
 ]
 # Rod-not-ready aborts this run: closed-loop casts skipped because the bar
 # stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now

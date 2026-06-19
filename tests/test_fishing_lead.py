@@ -20,41 +20,48 @@ WIDE = (50.0, 300.0)   # (reach_lo, reach_hi) wide enough not to clamp
 
 
 def test_no_velocity_means_no_lead():
-    assert lead_fish_dist(150, None, 1.3, *WIDE) == (150, 0.0, False)
+    # 3rd element is the clamp_reason (#85): "" = no lead / uncapped.
+    assert lead_fish_dist(150, None, 1.3, *WIDE) == (150, 0.0, "")
 
 
 def test_below_floor_velocity_means_no_lead():
-    led, eff, clamped = lead_fish_dist(150, MIN_LEAD_VEL_PX_S - 0.1, 1.3, *WIDE)
-    assert (led, eff, clamped) == (150, 0.0, False)
+    assert lead_fish_dist(150, MIN_LEAD_VEL_PX_S - 0.1, 1.3, *WIDE) == (150, 0.0, "")
 
 
 def test_small_clean_lead_applies_exactly():
-    # v=10 (>= the 8px/s floor) over 1.0s = 10px < the 12px turn-cap -> as-is.
-    led, eff, clamped = lead_fish_dist(150, 10.0, 1.0, *WIDE)
-    assert led == 160 and eff == 10.0 and not clamped
+    # v=10 over 1.0s = 10px < the turn-cap -> applied as-is, no clamp reason.
+    led, eff, reason = lead_fish_dist(150, 10.0, 1.0, *WIDE)
+    assert led == 160 and eff == 10.0 and reason == ""
 
 
 def test_outward_slide_is_turn_capped():
-    # v=15 over 1.3s = 19.5px, capped to MAX_LEAD_PX (a reversal can fall in the flight).
-    led, eff, clamped = lead_fish_dist(150, 15.0, 1.3, *WIDE)
-    assert eff == MAX_LEAD_PX and led == 150 + MAX_LEAD_PX and not clamped
+    # v=15 over 1.3s = 19.5px > MAX_LEAD_PX -> turn-capped, flagged "turn" (#85: the
+    # old reach-only bool reported NOT-clamped here, hiding the cap the raise measures).
+    led, eff, reason = lead_fish_dist(150, 15.0, 1.3, *WIDE)
+    assert eff == MAX_LEAD_PX and led == 150 + MAX_LEAD_PX and reason == "turn"
 
 
 def test_inward_slide_decreases_distance_no_abs_flip():
     # A fish sliding toward the origin (-v) must DECREASE target_dist, not flip it.
-    led, eff, clamped = lead_fish_dist(150, -10.0, 1.0, *WIDE)
-    assert led == 140 and eff == -10.0 and not clamped
+    led, eff, reason = lead_fish_dist(150, -10.0, 1.0, *WIDE)
+    assert led == 140 and eff == -10.0 and reason == ""
 
 
 def test_inward_slide_turn_capped_symmetric():
-    led, eff, clamped = lead_fish_dist(150, -22.0, 1.3, *WIDE)
-    assert eff == -MAX_LEAD_PX and led == 150 - MAX_LEAD_PX
+    led, eff, reason = lead_fish_dist(150, -22.0, 1.3, *WIDE)
+    assert eff == -MAX_LEAD_PX and led == 150 - MAX_LEAD_PX and reason == "turn"
 
 
 def test_reach_clamp_flags_and_trims_the_lead():
-    # Near the far reach edge, a +12 lead would overshoot; it clamps and flags.
-    led, eff, clamped = lead_fish_dist(295, 15.0, 1.3, 50.0, 300.0)
-    assert led == 300 and clamped and 0 < eff < MAX_LEAD_PX
+    # Near the far reach edge, the lead overshoots -> turn-cap AND reach-clamp fire.
+    led, eff, reason = lead_fish_dist(295, 15.0, 1.3, 50.0, 300.0)
+    assert led == 300 and reason == "turn+reach" and 0 < eff < MAX_LEAD_PX
+
+
+def test_reach_clamp_only_when_under_the_turn_cap():
+    # A small lead (under the turn-cap) that still overshoots reach -> "reach" alone.
+    led, eff, reason = lead_fish_dist(298, 9.0, 1.0, 50.0, 300.0)   # raw 9 < cap, 298+9=307>300
+    assert led == 300 and reason == "reach"
 
 
 # --- theil_sen_velocity -----------------------------------------------------
@@ -89,4 +96,4 @@ def test_velocity_zero_for_stationary_fish():
     # Stationary -> ~0 velocity, which lead_fish_dist treats as no lead.
     v = theil_sen_velocity([(0.0, 120), (0.1, 120), (0.2, 120)])
     assert v == 0.0
-    assert lead_fish_dist(120, v, 1.3, *WIDE) == (120, 0.0, False)
+    assert lead_fish_dist(120, v, 1.3, *WIDE) == (120, 0.0, "")
