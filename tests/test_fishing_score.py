@@ -194,6 +194,16 @@ def test_zncc_reader_assembles_multi_digit_left_to_right():
     assert SD.read_pts_zncc(_render(_WATER_BGR, [(1, 10), (9, 17)]), _GLYPHS) == 19
 
 
+def test_zncc_reader_reads_many_repeats_of_one_digit():
+    # A digit VALUE repeated more than GLYPH_MAX_PEAKS times must not truncate or
+    # corrupt: the per-template NMS ceiling scales with crop width, so "1111111"
+    # reads whole (regression for the fixed hard cap of 6).
+    crop = _render(_DOCK_BGR, [(1, 6 + 6 * i) for i in range(7)], size=(14, 70))
+    assert SD.read_pts_zncc(crop, _GLYPHS) == 1111111
+    crop8 = _render(_WATER_BGR, [(8, 6 + 7 * i) for i in range(6)], size=(14, 70))
+    assert SD.read_pts_zncc(crop8, _GLYPHS) == 888888
+
+
 def test_zncc_reader_stops_at_a_label_block():
     # A solid bright block after the digits (the "PTS"/"BEST" label) is flat ->
     # low ZNCC against every digit, so it neither reads as a digit nor extends

@@ -319,7 +319,9 @@ def make_pts_reader(
 GLYPH_ZNCC_THRESHOLD = 0.7   # true digits >=0.97, label/gaps <=0.62 -> wide margin
 GLYPH_DEDUP_PX = 4           # merge per-digit peaks within this x (one glyph)
 GLYPH_MAX_GAP_PX = 5         # break the leading run before a far-right stray match
-GLYPH_MAX_PEAKS = 6          # per template, cap the NMS loop (a repeated digit, e.g. "11")
+GLYPH_MAX_PEAKS = 6          # per template, the FLOOR of the NMS-loop ceiling; the
+                             # real ceiling scales with crop width so a digit value
+                             # repeated many times (e.g. "1111111") isn't truncated
 
 
 def load_glyph_templates(template_dir: Path) -> dict[int, list[tuple[np.ndarray, np.ndarray]]]:
@@ -377,7 +379,12 @@ def read_pts_zncc(
             if zmap is None:
                 continue
             work = zmap.copy()
-            for _ in range(max_peaks):
+            # Run until the next peak drops below thresh — each iteration zeros a
+            # tw-wide block so it always terminates. The ceiling scales with how
+            # many of this glyph fit across the crop (a value repeated N>max_peaks
+            # times, e.g. "1111111", must not truncate), with max_peaks as a floor.
+            ceiling = max(max_peaks, gray.shape[1] // max(1, tw) + 2)
+            for _ in range(ceiling):
                 py, px = np.unravel_index(int(np.argmax(work)), work.shape)
                 z = float(work[py, px])
                 if z < thresh:
