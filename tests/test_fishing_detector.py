@@ -145,55 +145,20 @@ def test_find_eel_matches_its_sprite_and_ignores_green():
     assert find_eel(green_only, bar=find_cast_bar(green_only)) is None
 
 
-def _paint_charge_tube(img, bar, fill_h, bg_hsv=None):
-    """Optionally repaint the frame a background colour, then paint a red
-    thermometer fill of height fill_h in the tube interior (bar_x-36..-28),
-    rising from the tube bottom (bar_y+19) — the live geometry find_charge_fill
-    anchors to."""
-    bx, by = bar[0], bar[1]
-    if bg_hsv is not None:
-        _fill(img, 0, img.shape[0], 0, img.shape[1], bg_hsv)
-    y_bot = by + 19
-    if fill_h > 0:
-        _fill(img, y_bot - fill_h, y_bot, bx - 36, bx - 28, [3, 220, 230])  # red fill
-
-
-def test_find_charge_fill_reads_fill_height():
+def test_find_charge_fill_reads_thermometer_left_of_cast_bar():
     # The live charge meter is a vertical red thermometer LEFT of the cast bar;
-    # find_charge_fill reads its fill HEIGHT anchored to the cast bar's
-    # full-window (x,y). A 30px fill reads ~30; no fill / no anchor read 0.
+    # find_charge_fill reads its red-fill HEIGHT anchored to the cast bar's
+    # full-window (x,y). Paint a partial red fill in the anchored window and
+    # assert the height; an empty anchor reads 0.
+    img = _bgra(h=300, w=900)
     bar = (434, 233, 304, 7)        # cast bar in full-window coords (as live)
-    img = _bgra(h=320, w=900)
-    _paint_charge_tube(img, bar, fill_h=30)
-    assert 27 <= find_charge_fill(img, bar) <= 33
-    assert find_charge_fill(_bgra(h=320, w=900), bar) == 0     # empty -> 0
+    # thermometer search window is bar_x-50..-22, bar_y-64..+18 => x384..412, y169..251
+    # paint a 20px-tall red fill at the bottom of that window
+    _fill(img, 231, 251, 392, 404, [3, 220, 230])   # red, ~20 rows, inside the window
+    h = find_charge_fill(img, bar)
+    assert 18 <= h <= 22
+    assert find_charge_fill(_bgra(h=300, w=900), bar) == 0     # empty -> 0
     assert find_charge_fill(img, None) == 0                    # no anchor -> 0
-
-
-def test_find_charge_fill_is_background_invariant():
-    # The #83 property: the SAME fill height reads the same over turquoise water
-    # and orange sunset — the two areas where an ABSOLUTE red gate diverged (the
-    # washed-out fill over bright water was indistinguishable from an empty tube
-    # over orange sunset). The relative red-vs-adjacent-background read holds.
-    bar = (434, 233, 304, 7)
-    reads = []
-    for bg in ([90, 150, 200], [15, 180, 205]):   # turquoise water, orange sunset
-        img = _bgra(h=320, w=900)
-        _paint_charge_tube(img, bar, fill_h=35, bg_hsv=bg)
-        reads.append(find_charge_fill(img, bar))
-    assert all(31 <= r <= 39 for r in reads), reads
-    assert abs(reads[0] - reads[1]) <= 4           # background swap barely moves it
-
-
-def test_find_charge_fill_empty_tube_over_warm_background_reads_zero():
-    # An EMPTY tube shows the same scenery as its surroundings, so even over a
-    # warm/reddish background it must read ~0 — the interior is not redder than
-    # the background beside it. (The case a naive absolute/red-dominance reader
-    # false-filled, firing an undercharged cast.)
-    bar = (434, 233, 304, 7)
-    img = _bgra(h=320, w=900)
-    _fill(img, 0, 320, 0, 900, [15, 180, 205])     # all orange, no fill in the tube
-    assert find_charge_fill(img, bar) <= 5
 
 
 def test_shape_filter_rejects_thin_scenery_edge():

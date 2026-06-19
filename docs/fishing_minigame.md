@@ -263,39 +263,47 @@ is kept for the post-release read / back-compat. The fill→distance model still
 needs fresh data: runs 8–10 logged no real casts, so the bot explores target
 fills and logs `(charge_level=fill_at_release, landed_dist)` until it fits.
 
-### Background-invariant charge read (#83, 2026-06-19)
+### Charge read: relative read attempted and REVERTED (#83 still open, 2026-06-19)
 
-The thermometer reader had the same area-dependence as the score reader (#82,
-same root): an **absolute red gate** (`V≥90 & S≤... S≥120` over a `bar_x-50..-22`
-window, rows-with-red) read the fill **stuck-low (1–5px) on ~10% of casts** after
-an area move. On the bright turquoise-water area the fill desaturates to a pale
-orange (H~14, **S~118, V~88**) the gate misses, so `charge_and_release` never saw
-the fill rise and **timed out at max-hold, firing at uncontrolled high charge**
-(`landed_dist_px` NULL, make-rate ~32% vs ~47%). DB confirms it's positional: the
-calibration band (`bar_screen_x`~450) ran 0–4% stuck-low, the beach-era sessions
+The thermometer reader has the same area-dependence as the score reader (#82,
+same root): the **absolute red gate** (`V≥90 & S≥120` over a `bar_x-50..-22`
+window, rows-with-red) reads the fill **stuck-low (1–5px) on ~10% of casts** in
+the bright turquoise-water area, where the fill desaturates to a pale orange
+(H~14, **S~118, V~88**) the gate misses → `charge_and_release` never sees the fill
+rise → fires at uncontrolled max charge. DB confirms it's positional: the
+calibration band (`bar_screen_x`~450) runs 0–4% stuck-low, the beach-era sessions
 11–26%.
 
-**No fixed gate can fix it**: that washed-out fill is the **same colour as the
-EMPTY tube under the orange-sunset calibration area** (H~15, S~135, V~83) — an
-absolute threshold can't tell "pale fill" from "empty tube". The invariant signal
-is **relative**: the fill is **redder (higher red-channel dominance, R−max(G,B))
-than the background immediately beside the tube**, while an empty tube shows the
-same scenery as its surroundings. `find_charge_fill` now reads the tube interior
-(`bar_x-36..-28`) per row and counts rows where its red-dominance beats the
-background just left/right of the tube (`CHARGE_FILL_MARGIN=18`); the background
-reference takes the **less-red side** so warm scenery on one side can't suppress
-the read. Backgrounds behind/around the overlay (turquoise water, orange sunset)
-fall out of the difference.
+A purely **relative** read was tried (commit 8fd2e35): the fill is redder
+(red-channel dominance R−max(G,B)) than the background beside the tube, measured
+in a narrow tube column (`bar_x-36..-28`) vs the background just left/right. It
+read the beach frame 9→67 and **matched the old reader within 3px across 176
+calibration STILL frames** — but **regressed the live calibration area to 24%
+stuck-low** (session 2026-06-19T13:18, n=21, vs the old reader's 0–4%) and was
+**reverted**.
 
-Validated (`scripts/validate_fishing_charge.py`): the pale-water beach frame
-reads **9 (stuck) → 67 (full tube)**; across **176 calibration charged frames the
-new reader matches the old to within 3px** (median abs-diff 3, **0 divergences
->10**), so the working area and its fill→distance model are undisturbed; empty
-tubes read ~0 (no false-full → no undercharged cast). Live confirmation is the DB
-`charge_level` per cast — the next beach-area session should drop the
-`charge_level≤5` rate from ~10–26% toward the calibration 0–4%. The diagnostic
-per-poll frame save stays OFF (it stalled the hot loop and caused release
-overshoot); the DB read is the validation channel.
+**Why it regressed — the lesson.** The offline frames were all FULL or EMPTY
+tubes; the failure is a *dynamic* state the static frames don't show. The relative
+read returns **~3 on an empty/reeling tube** (contrast noise), and
+`charge_and_release` treats `fill ≥ ready_floor(2)` as "rod charging" — so the
+reeling-rod casts the old reader correctly read as **0** (→ not-ready → *skipped*,
+never logged) instead **latched "charging" and held to max-hold**, logging wasted
+casts (idx 9 even caught an eel at logged `charge=3` — a real charging tube
+under-read). The old absolute gate's empty=0 is load-bearing for the not-ready
+guard. **Don't ship a charge-reader change validated only on static full/empty
+frames** — the reeling/rising dynamics are where it breaks, and there were no
+hold-frame captures to validate against.
+
+**Redo plan (#83 reopened).** `main.py` now saves the first + last hold frame per
+cast under `--save-frames` (cached, written *after* release so the hot loop
+doesn't stall — the per-poll save that caused overshoot stays off). One beach +
+one calibration `--save-frames` session will capture the rising-fill and
+reeling-tube states; then a relative read can be fitted that (a) reads empty as
+**0** (so the `ready_floor` not-ready guard still skips reeling casts — e.g. a
+contiguous-from-tube-bottom run, or a small absolute floor), (b) reads the pale
+beach fill, and (c) is anchor-jitter tolerant (the narrow column may also have
+hurt — the old reader's wide window tolerated drift). Validate against the
+captured hold frames AND a live calibration session before re-enabling.
 
 ## Catches are detected by the fish DISAPPEARING (2026-06-17, run 14)
 

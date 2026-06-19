@@ -755,15 +755,21 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         score_before = read_score(full_before, cast_bar_full)
 
         def _read_charge():
-            # Fast poll: grab + read only. NO per-poll frame save — writing a
+            # Fast poll: grab + read only. NO per-poll frame SAVE — writing a
             # full-window PNG each poll stalled the loop ~40ms and the fast-
-            # rising bar overshot the target by 20+ on those polls (run 11: the
-            # 3 big overshoots were all save-stalls). The bar is located now;
-            # find_charge_fill is validated, so the diagnostic save is gone.
+            # rising bar overshot the target by 20+ (run 11). Under --save-frames
+            # we only KEEP a reference to the first + last hold frame (no copy, no
+            # disk in the loop) and write them AFTER release — diagnostic data for
+            # the charge-reader redo (#83), which needs the rising/reeling states
+            # the static captures miss.
             full = grab_region(win_left, win_top, win_w, win_h)
             c = find_charge_fill(full, cast_bar_full)
             charge_dbg["peak"] = max(charge_dbg["peak"], c)
             charge_dbg["polls"] += 1
+            if frames_dir is not None:
+                if charge_dbg.get("first_frame") is None:
+                    charge_dbg["first_frame"] = (full, c)
+                charge_dbg["last_frame"] = (full, c)
             return c
 
         hold_t0 = time.monotonic()
@@ -774,6 +780,18 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
         # Measured closed-loop hold (the data to fit the lead's decision->landing
         # time and replace LEAD_TIME_FALLBACK_S; hold_ms was logged None before).
         hold_ms = round((time.monotonic() - hold_t0) * 1000)
+
+        # Diagnostic (--save-frames only): the hold's first + last full frame,
+        # named with the charge each read and whether the rod was ready — to
+        # debug find_charge_fill on the reeling/rising states static captures
+        # miss (#83 redo). Written here, after release, so the poll loop never
+        # stalls (the per-poll save caused the run-11 overshoot).
+        if frames_dir is not None and charge_dbg.get("first_frame") is not None:
+            ff, fc = charge_dbg["first_frame"]
+            lf, lc = charge_dbg["last_frame"]
+            rtag = "rdy" if ready else "notrdy"
+            save_frame(frames_dir / f"charge{charge_attempt:03d}_first_c{fc}_{rtag}.png", ff)
+            save_frame(frames_dir / f"charge{charge_attempt:03d}_last_c{lc}_rel{charge}_{rtag}.png", lf)
 
         if not ready:
             # Rod not ready: the fill never crossed the floor within the grace
