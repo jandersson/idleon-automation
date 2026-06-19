@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-06-19T05:05:25",
-  "total_shots": 1696,
-  "total_makes": 600,
+  "generated_at": "2026-06-19T05:59:04",
+  "total_shots": 1700,
+  "total_makes": 601,
   "make_rate": 0.354,
   "sessions": [
     {
@@ -1074,6 +1074,13 @@
       "makes": 1,
       "explore_shots": 0,
       "explore_makes": 0
+    },
+    {
+      "started": "2026-06-19T05:58:16",
+      "shots": 4,
+      "makes": 1,
+      "explore_shots": 0,
+      "explore_makes": 0
     }
   ],
   "buckets": [
@@ -1620,11 +1627,11 @@
     {
       "hoop_x_bucket": 610,
       "hoop_y_bucket": 350,
-      "shots": 8,
+      "shots": 11,
       "makes": 2,
-      "mp_shots": 8,
+      "mp_shots": 11,
       "mp_makes": 2,
-      "last_session": "2026-06-15T18:24:46"
+      "last_session": "2026-06-19T05:58:16"
     },
     {
       "hoop_x_bucket": 610,
@@ -2979,11 +2986,11 @@
     {
       "hoop_x_bucket": 710,
       "hoop_y_bucket": 450,
-      "shots": 99,
-      "makes": 69,
-      "mp_shots": 49,
-      "mp_makes": 35,
-      "last_session": "2026-06-19T05:04:34"
+      "shots": 100,
+      "makes": 70,
+      "mp_shots": 50,
+      "mp_makes": 36,
+      "last_session": "2026-06-19T05:58:16"
     },
     {
       "hoop_x_bucket": 710,
@@ -14783,6 +14790,29 @@
     {
       "hoop_x": 715,
       "hoop_y": 450,
+      "platform_y": 430,
+      "offset": -15,
+      "target_y": 435,
+      "clamped": 0,
+      "direction": "up",
+      "required_direction": "up",
+      "perturbation": 0,
+      "lives_diff": null,
+      "ball_apex_y": 67,
+      "ball_x_at_rim_height": 689,
+      "ball_landing_x": 631,
+      "window_w": 960,
+      "window_h": 572,
+      "score_before_int": 0,
+      "score_after_int": 1,
+      "score_increment": 1,
+      "predicted_offset": -15,
+      "code_commit": "2859b7fde95f-dirty.55cad730",
+      "predictor_kind": "make_prob"
+    },
+    {
+      "hoop_x": 715,
+      "hoop_y": 450,
       "platform_y": 431,
       "offset": -21,
       "target_y": 429,
@@ -17269,7 +17299,7 @@
     {
       "required_direction": "down",
       "region": "band",
-      "shots": 182,
+      "shots": 183,
       "makes": 83
     },
     {
@@ -17287,7 +17317,7 @@
     {
       "required_direction": "up",
       "region": "band",
-      "shots": 295,
+      "shots": 296,
       "makes": 75
     },
     {
@@ -17299,8 +17329,8 @@
     {
       "required_direction": "up",
       "region": "mid_far",
-      "shots": 308,
-      "makes": 209
+      "shots": 309,
+      "makes": 210
     }
   ]
 }
