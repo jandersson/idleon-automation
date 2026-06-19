@@ -121,6 +121,13 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # never the turn-cap it was meant to measure, #85): '' / 'turn' / 'reach' /
     # 'turn+reach' / 'mine' (dropped to 0 on a mine-only led spot). NULL = no lead.
     ("lead_clamp_reason", "TEXT"),
+    # The cast bar's FULL-WINDOW (screen) position = the player's area. The score
+    # reader, charge thermometer, and cast origin all anchor to it and read over the
+    # scenery behind it, so reader failures are position-dependent (#82/#83); logging
+    # this lets a failure be correlated with the exact area (cast_origin_x is only
+    # crop-relative ~55, so it can't). NULL on pre-this-commit rows.
+    ("bar_screen_x", "INTEGER"),
+    ("bar_screen_y", "INTEGER"),
 ]
 # Rod-not-ready aborts this run: closed-loop casts skipped because the bar
 # stayed 0 (previous lure still reeling in) — the cast-too-soon waste, now

@@ -813,6 +813,13 @@ def _run_inner(session_started, db, code_commit, model, stats, save_frames=False
             n_mines=len(mines),
             window_w=win_w,
             window_h=win_h,
+            # The cast bar's FULL-WINDOW position (the player's area). Everything
+            # anchors to it — the score crop, charge thermometer, cast origin — and
+            # those non-fish readers read over the scenery BEHIND it, so a failure
+            # is position-dependent (same biome, different area; #82/#83). cast_origin_x
+            # is only crop-relative (~55), so this is the missing screen-position state.
+            bar_screen_x=cast_bar_full[0],
+            bar_screen_y=cast_bar_full[1],
             score_before=score_before,
             arm_fish_vx_px_s=lead_vx,
             lead_time_s=lead_time_s,
