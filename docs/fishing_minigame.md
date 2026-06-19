@@ -338,12 +338,22 @@ The projected value tracks the actual cast power, so the model — and historica
 pre-lead rows, whose bare reading also ≈ actual power — stay consistent.
 
 Validation is the **landing**, not the charge read: `landed_dist_px` vs
-`target_dist_px` should tighten on far targets across the next sessions (and watch
-for any systematic *undershoot*, which would mean `CHARGE_RELEASE_LEAD_S` is too
-high). The per-poll DB charge-vs-target overshoot is no longer the signal (the
-projected return makes it ~0 by construction). Far-target overshoot that the lead
-can't fully cancel (the bar saturates ~60, so a far aim has no headroom) is the
-residual; capping far aims below saturation is a possible follow-up.
+`target_dist_px`. The per-poll DB charge-vs-target overshoot is no longer the
+signal (the projected return makes it ~0 by construction). Far-target overshoot
+that the lead can't fully cancel (the bar saturates ~60, so a far aim has no
+headroom) is the residual; capping far aims below saturation is a possible
+follow-up (#88).
+
+**First live session (2026-06-19T14:25, n=30):** overshoot eliminated (0 casts
+>15px long; the far-eel +41 gone) and make rate 60% / eels 4/6 — but a systematic
+**−12px undershoot** appeared (mean −12, 8 casts <−15). Cause (#89): the cast
+model fits on ALL history (`fetch_cast_samples` has no recency window), so the
+hundreds of pre-lead rows — logged on the old charge scale — dominate, while the
+projected return puts post-lead rows on a different scale; the model keeps
+predicting the old (higher) distance per charge → aims a touch low. It converges
+only slowly under the all-data fit. Not clearly harmful yet (make rate is within
+the noisy pre-lead range, and a slight undershoot may help since fish slide toward
+the origin) — monitoring before scoping the fit to the current regime (#89).
 
 ## Catches are detected by the fish DISAPPEARING (2026-06-17, run 14)
 
