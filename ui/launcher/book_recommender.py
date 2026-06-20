@@ -46,7 +46,9 @@ def recommend_books(
 
     Returns a list of dicts (best first):
         {index, name, klass, level, cap, gap, importance}
-    where gap = max_book_level - cap.
+    where gap = max_book_level - cap and `klass` is the talent's class line
+    (Barbarian, Wizard, Beginner, …) — the Library "subgenre" shelf the book
+    is checked out from, surfaced per-row in the Books tab.
     """
     out: list[dict] = []
     n = min(len(skill_levels), len(skill_levels_max))

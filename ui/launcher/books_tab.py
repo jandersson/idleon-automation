@@ -73,6 +73,16 @@ def build(parent: ttk.Frame, app) -> None:
 _IMPORTANCE_TAG = {1: "★", 2: "▲", 3: "•", 4: "·"}
 
 
+def _subgenre(r: dict) -> str:
+    """The Library shelf a recommended book is checked out from.
+
+    The in-game Talent Book Library is navigated base-class → subclass, so a
+    talent's class line (Barbarian, Wizard, Beginner, Special, …) is the
+    "subgenre" section the user browses to find that book. `recommend_books`
+    already carries it as `klass`; this just formats it for the row."""
+    return f"📖 {r.get('klass') or '?'}"
+
+
 def refresh(app) -> None:
     for child in app.books_inner.winfo_children():
         child.destroy()
@@ -112,6 +122,8 @@ def refresh(app) -> None:
             row.pack(fill="x")
             tag = _IMPORTANCE_TAG.get(r["importance"], "•")
             ttk.Label(row, text=f"{tag} {r['name']}", width=26).pack(side="left")
+            ttk.Label(row, text=_subgenre(r), width=15,
+                      foreground=theme.ACCENT).pack(side="left")
             ttk.Label(row, text=f"{r['character']}", width=14,
                       style="Muted.TLabel").pack(side="left")
             ttk.Label(row, text=f"cap {r['cap']} → up to {max_book}  (+{r['gap']})",
@@ -136,6 +148,8 @@ def refresh(app) -> None:
             row.pack(fill="x")
             tag = _IMPORTANCE_TAG.get(r["importance"], "•")
             ttk.Label(row, text=f"{tag} {r['name']}", width=26).pack(side="left")
+            ttk.Label(row, text=_subgenre(r), width=15,
+                      foreground=theme.ACCENT).pack(side="left")
             ttk.Label(row, text=f"cap {r['cap']} → up to {max_book}  (+{r['gap']})",
                       foreground=theme.INFO).pack(side="left")
 

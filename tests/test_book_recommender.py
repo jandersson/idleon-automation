@@ -74,6 +74,32 @@ def test_account_ranking_flattens_and_tags_characters():
     assert all("character" in r for r in recs)
 
 
+def test_candidates_carry_class_subgenre():
+    # Every recommendation surfaces its talent class line as `klass` — the
+    # Library "subgenre" shelf the book is checked out from (shown per-row).
+    recs = _rec([100, 0, 0, 100], [100, -1, -1, 100])
+    assert {r["index"]: r["klass"] for r in recs} == {0: "Warrior", 3: "Warrior"}
+
+
+def test_account_candidates_carry_class_subgenre():
+    talents = {
+        "Warr": {"skill_levels": [100], "skill_levels_max": [100], "character_class": 8},
+        "Mage": {"skill_levels": [0, 0, 100], "skill_levels_max": [-1, -1, 100],
+                 "character_class": 31},
+    }
+    recs = recommend_books_account(talents, META, MAXBOOK)
+    assert {(r["character"], r["index"]): r["klass"] for r in recs} == {
+        ("Warr", 0): "Warrior", ("Mage", 2): "Mage",
+    }
+
+
+def test_subgenre_label_formats_class_with_fallback():
+    from ui.launcher.books_tab import _subgenre
+    assert _subgenre({"klass": "Barbarian"}) == "📖 Barbarian"
+    assert _subgenre({"klass": None}) == "📖 ?"
+    assert _subgenre({}) == "📖 ?"
+
+
 def test_account_ranking_empty_when_nothing_at_cap():
     talents = {"A": {"skill_levels": [50], "skill_levels_max": [100], "character_class": 8}}
     assert recommend_books_account(talents, META, MAXBOOK) == []
