@@ -124,6 +124,42 @@ def test_book_path_shows_genre_and_subgenre():
     assert _book_path({}) == "📖 ?"
 
 
+def test_is_special_flags_star_talents():
+    from ui.launcher.books_tab import _is_special
+    # Star/special talents (VIP Bookshelf) are split out; class talents aren't.
+    assert _is_special({"klass": "Special"}) is True
+    assert _is_special({"klass": "Barbarian"}) is False
+    assert _is_special({"klass": "Beginner"}) is False
+    assert _is_special({"klass": None}) is False
+    assert _is_special({}) is False
+
+
+def test_special_talents_at_cap_uses_start_threshold():
+    from ui.launcher.book_recommender import special_talents_at_cap
+    # At/above start(=3): idx3 at cap; idx4 inactive; idx5 has headroom.
+    sl = [9, 9, 9, 50, 0, 10]
+    slm = [9, 9, 9, 50, -1, 80]
+    assert special_talents_at_cap(sl, slm, start=3) == [
+        {"index": 3, "level": 50, "cap": 50},
+    ]
+    # Below the threshold is ignored even at cap — those are class talents.
+    assert special_talents_at_cap([100], [100], start=3) == []
+
+
+def test_special_talents_account_keeps_lowest_cap_instance():
+    from ui.launcher.book_recommender import special_talents_account
+    # slot 1 at cap on both chars (A cap 50, B cap 130) → keep A (most room);
+    # slot 2 at cap only on B. Sorted lowest-cap first.
+    talents = {
+        "A": {"skill_levels": [0, 50, 0], "skill_levels_max": [-1, 50, 100]},
+        "B": {"skill_levels": [0, 130, 72], "skill_levels_max": [-1, 130, 72]},
+    }
+    assert special_talents_account(talents, start=1) == [
+        {"index": 1, "level": 50, "cap": 50, "character": "A"},
+        {"index": 2, "level": 72, "cap": 72, "character": "B"},
+    ]
+
+
 def test_account_ranking_empty_when_nothing_at_cap():
     talents = {"A": {"skill_levels": [50], "skill_levels_max": [100], "character_class": 8}}
     assert recommend_books_account(talents, META, MAXBOOK) == []

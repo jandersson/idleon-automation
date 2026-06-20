@@ -108,3 +108,60 @@ def recommend_books_account(
             out.append({**c, "character": name})
     out.sort(key=lambda c: (c["importance"], -c["gap"], -c["cap"]))
     return out
+
+
+# SkillLevels slots at/above this index are the star/special-talent block.
+# The mapped class talents top out at index 599 (Elemental Sorcerer 585-599;
+# IdleonToolbox builds.json skillIndex maxes at 599), so anything active above
+# it is a special talent. These are raised by random Star Talent Books (VIP
+# Bookshelf / drops), NOT class-Library checkouts — they have talent-specific
+# caps (no 396 ceiling) and can't be targeted, so they get a separate path
+# from recommend_books. The block is unmapped (no authoritative index->name
+# source; see talent_data.py), so they're reported by save slot, not name.
+STAR_TALENT_INDEX_START = 600
+
+
+def special_talents_at_cap(
+    skill_levels: list[int],
+    skill_levels_max: list[int],
+    start: int = STAR_TALENT_INDEX_START,
+) -> list[dict]:
+    """At-cap star/special talents for one character (save slots >= `start`).
+
+    "At cap" (level >= max) is the whole signal: a higher Star Talent Book
+    would buy usable levels. Returns one dict per at-cap slot:
+        {index, level, cap}
+    """
+    out: list[dict] = []
+    n = min(len(skill_levels), len(skill_levels_max))
+    for i in range(start, n):
+        cap = skill_levels_max[i]
+        lvl = skill_levels[i]
+        if cap is None or lvl is None or cap == INACTIVE:
+            continue
+        if lvl >= cap:
+            out.append({"index": i, "level": lvl, "cap": cap})
+    return out
+
+
+def special_talents_account(
+    talents: dict[str, dict],
+    start: int = STAR_TALENT_INDEX_START,
+) -> list[dict]:
+    """Distinct at-cap star/special slots across the whole account.
+
+    Star talents are per-character (each applies their own books), so a slot
+    can be at cap on one character and higher on another. Keep the instance
+    with the LOWEST cap — the character with the most room a fresh star book
+    unlocks. Sorted lowest-cap first (most to gain). Each dict adds
+    `character`. `talents` is the `read_talents()` shape.
+    """
+    best: dict[int, dict] = {}
+    for name, t in talents.items():
+        for s in special_talents_at_cap(
+            t.get("skill_levels") or [], t.get("skill_levels_max") or [], start
+        ):
+            i = s["index"]
+            if i not in best or s["cap"] < best[i]["cap"]:
+                best[i] = {**s, "character": name}
+    return sorted(best.values(), key=lambda s: (s["cap"], s["index"]))

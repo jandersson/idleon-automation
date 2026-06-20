@@ -15,7 +15,9 @@ from tkinter import ttk
 
 from common.idleon_save import read_talents, read_book_checkouts
 from ui.launcher import theme
-from ui.launcher.book_recommender import recommend_books, recommend_books_account
+from ui.launcher.book_recommender import (
+    recommend_books, recommend_books_account, special_talents_account,
+)
 
 try:
     from ui.launcher.talent_data import TALENT_META, class_name, base_genre
@@ -35,6 +37,7 @@ except Exception:  # not sourced yet / malformed — degrade to index names
 DEFAULT_MAX_BOOK_LEVEL = 396
 TOP_N_PER_CHARACTER = 8
 TOP_N_ACCOUNT = 12  # account-wide "spend the shared pool here next" list
+TOP_N_SPECIAL = 12  # star/VIP-bookshelf "nab if you can" list
 
 
 def build(parent: ttk.Frame, app) -> None:
@@ -91,6 +94,17 @@ def _book_path(r: dict) -> str:
     return f"📖 {genre} › {subgenre}"
 
 
+def _is_special(r: dict) -> bool:
+    """Whether a class-Library candidate is actually a star/special talent.
+
+    A guard for the regular checkout lists: any mapped talent whose genre is
+    "Special" (the named-but-mostly-inactive 15-44 block) belongs to the VIP
+    Bookshelf, not a class checkout, so it's filtered out of the targetable
+    lists. The ACTIVE star block (save slots 600+) is unmapped and handled
+    separately via special_talents_account()."""
+    return base_genre(r.get("klass")) == "Special"
+
+
 def refresh(app) -> None:
     for child in app.books_inner.winfo_children():
         child.destroy()
@@ -112,20 +126,26 @@ def refresh(app) -> None:
         app.books_status.config(text="no characters with talent data in the save")
         return
 
+    # Class-library checkouts (targetable). _is_special guards against the
+    # mapped 15-44 "Special" block sneaking in — the ACTIVE star talents live
+    # in the unmapped 600+ block, read separately below.
+    account = recommend_books_account(talents, TALENT_META, max_book)
+    regular = [r for r in account if not _is_special(r)]
+    special = special_talents_account(talents)
+
     # Account-wide section first: checkouts are a shared pool, so this is
     # the "spend your next books here" list across every character.
-    account = recommend_books_account(talents, TALENT_META, max_book)
     acct_card = ttk.LabelFrame(
         app.books_inner,
-        text=f"Account-wide — best books to check out next ({len(account)} total)",
+        text=f"Account-wide — best books to check out next ({len(regular)} total)",
         padding=6,
     )
     acct_card.pack(fill="x", padx=4, pady=4)
-    if not account:
+    if not regular:
         ttk.Label(acct_card, text="nothing at cap below the max book level",
                   style="Muted.TLabel").pack(anchor="w")
     else:
-        for r in account[:TOP_N_ACCOUNT]:
+        for r in regular[:TOP_N_ACCOUNT]:
             row = ttk.Frame(acct_card)
             row.pack(fill="x")
             tag = _IMPORTANCE_TAG.get(r["importance"], "•")
@@ -137,12 +157,41 @@ def refresh(app) -> None:
             ttk.Label(row, text=f"cap {r['cap']} → up to {max_book}  (+{r['gap']})",
                       foreground=theme.INFO).pack(side="left")
 
-    # Per-character breakdown below.
+    # Star/special talents at cap — not a targetable checkout, so their own
+    # section. Read straight from the save's 600+ block; unmapped, so shown by
+    # slot, not name (this block has no authoritative index→name source).
+    if special:
+        sp_card = ttk.LabelFrame(
+            app.books_inner,
+            text=f"Special / Star talents at cap — nab if you can ({len(special)})",
+            padding=6,
+        )
+        sp_card.pack(fill="x", padx=4, pady=4)
+        ttk.Label(
+            sp_card,
+            text="These are at cap on at least one character — a higher Star "
+                 "Talent Book would raise them. Not a targetable checkout: nab a "
+                 "random one at the VIP Bookshelf (5 checkouts) or from Special "
+                 "Talent Book drops/quests. Shown by save slot (block isn't named).",
+            style="Muted.TLabel", wraplength=620, justify="left",
+        ).pack(anchor="w", pady=(0, 4))
+        for r in special[:TOP_N_SPECIAL]:
+            row = ttk.Frame(sp_card)
+            row.pack(fill="x")
+            ttk.Label(row, text=f"🌟 special talent · slot {r['index']}",
+                      width=28).pack(side="left")
+            ttk.Label(row, text=f"cap {r['cap']}  ·  at cap",
+                      foreground=theme.WARN, width=18).pack(side="left")
+            ttk.Label(row, text=f"on {r['character']}", width=16,
+                      style="Muted.TLabel").pack(side="left")
+
+    # Per-character breakdown below (class-library checkouts only — the star
+    # talents above are shared across every character).
     total = 0
     for name, t in talents.items():
-        recs = recommend_books(
+        recs = [r for r in recommend_books(
             t["skill_levels"], t["skill_levels_max"], TALENT_META, max_book,
-        )
+        ) if not _is_special(r)]
         card = ttk.LabelFrame(app.books_inner, text=_char_header(name, t, len(recs)),
                               padding=6)
         card.pack(fill="x", padx=4, pady=4)
@@ -161,17 +210,9 @@ def refresh(app) -> None:
             ttk.Label(row, text=f"cap {r['cap']} → up to {max_book}  (+{r['gap']})",
                       foreground=theme.INFO).pack(side="left")
 
-    # Star/special talents are intentionally absent — they're raised by
-    # Special Talent Books, not Library checkouts (wiki: Special Talents).
-    ttk.Label(
-        app.books_inner,
-        text="Star/special talents are excluded — they use Special Talent Books, "
-             "not Library checkouts.",
-        style="Muted.TLabel", wraplength=560, justify="left",
-    ).pack(anchor="w", padx=8, pady=(2, 6))
-
     app.books_status.config(
-        text=f"{total} book candidate(s) across {len(talents)} character(s)")
+        text=f"{total} book candidate(s) across {len(talents)} character(s)"
+             + (f" · {len(special)} star talent(s) to nab" if special else ""))
 
 
 def _char_header(name: str, t: dict, n_recs: int) -> str:
