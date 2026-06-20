@@ -13,7 +13,7 @@ defaulting to the current account ceiling.
 import tkinter as tk
 from tkinter import ttk
 
-from common.idleon_save import read_talents, read_book_checkouts
+from common.idleon_save import read_talents, read_book_checkouts, read_max_book_level
 from ui.launcher import scroll, theme
 from ui.launcher.book_recommender import (
     recommend_books, recommend_books_account, special_talents_account,
@@ -30,10 +30,11 @@ except Exception:  # not sourced yet / malformed — degrade to index names
     def base_genre(class_line):  # type: ignore[misc]
         return "?" if class_line is None else class_line
 
-# Max book level is wiki-confirmed (Talent Book Library): the ceiling is
-# the sum of merit/salt/achievement/atom/sailing-relic/summoning sources,
-# which currently tops out at 396. Not a single save field, so it's a
-# user-editable entry defaulting to that ceiling.
+# Max book level is a base plus a sum of unlock sources (merit/salt/
+# achievement/atom/sailing-relic/summoning), topping out at the 396 ceiling.
+# read_max_book_level() detects it from the save (#94); this 396 is only the
+# FALLBACK when the save can't be read. Either way the entry stays editable —
+# detection doesn't sum every source yet (#95), so the user can override.
 DEFAULT_MAX_BOOK_LEVEL = 396
 TOP_N_PER_CHARACTER = 8
 TOP_N_ACCOUNT = 12  # account-wide "spend the shared pool here next" list
@@ -44,8 +45,13 @@ def build(parent: ttk.Frame, app) -> None:
     controls = ttk.Frame(parent, padding=6)
     controls.pack(fill="x")
     ttk.Label(controls, text="Max book level:").pack(side="left")
-    app.max_book_var = tk.StringVar(value=str(DEFAULT_MAX_BOOK_LEVEL))
-    ttk.Entry(controls, textvariable=app.max_book_var, width=6).pack(side="left", padx=(4, 12))
+    detected = read_max_book_level()
+    app.max_book_var = tk.StringVar(
+        value=str(detected if detected is not None else DEFAULT_MAX_BOOK_LEVEL))
+    ttk.Entry(controls, textvariable=app.max_book_var, width=6).pack(side="left", padx=(4, 2))
+    ttk.Label(controls, text="(auto-detected — edit to override)" if detected is not None
+              else "(detection failed — using ceiling)",
+              style="Muted.TLabel").pack(side="left", padx=(0, 12))
     ttk.Button(controls, text="Refresh", command=lambda: refresh(app)).pack(side="left")
     # Shared checkout pool (OLA[55]) — books are spent from one account-wide
     # pool, so this is the budget the account-wide ranking spends down.

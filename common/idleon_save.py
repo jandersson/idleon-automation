@@ -199,6 +199,61 @@ def read_book_checkouts(save_dir: str = SAVE_DIR) -> int | None:
     return int(n)
 
 
+# Account max Talent Book level (#94). It isn't one save field — it's a base
+# plus a sum of unlock sources (wiki: Talent Book Library, "Maximum level can
+# be boosted by"). Base 125 = the top of the un-boosted checkout range
+# (101-125); the sources stack up to the 396 ceiling.
+#
+# VERIFIED against the local save (computes 127): base + the World 3 merit.
+#   World 3 Merit Shop #3 ("+10 Max possible Lv of Talent books") = +2 per
+#   level, max 5 levels, stored at Tasks[2][2][2] — Tasks[2] is the merit
+#   shop, [2] selects World 3, [2] the 3rd merit. Local save has 1 level
+#   (+2) → 125 + 2 = 127.
+#
+# NOT YET SUMMED — all zero on the local save, so their array indices can't
+# be verified here (see #95): Salt Lick "Spontaneity Salts" (+2/lvl, max 10),
+# the W3 "Checkout Takeout" achievement (+5), Atom Collider "Oxygen - Library
+# Booker" (+10), the Sailing "Fury Relic" artifact (+25 x6), and the Summoning
+# winner bonus (+10, up to +75). Until those are wired, detection undercounts
+# once they're unlocked — the Books tab keeps the value editable as a manual
+# override/backstop.
+_MAX_BOOK_BASE = 125
+_W3_MERIT_BOOK_PER_LEVEL = 2
+_W3_MERIT_BOOK_MAX_LEVELS = 5
+
+
+def _max_book_level_from_data(data: dict) -> int:
+    """Sum the detected max-book-level sources from a decoded save dict.
+
+    Split from `read_max_book_level` so it can be unit-tested on synthetic
+    saves. Currently: base + the World 3 book merit (the one source verified
+    against the local save). Missing/short/non-numeric fields contribute 0."""
+    total = _MAX_BOOK_BASE
+    tasks = data.get("Tasks")
+    try:
+        merit_lvl = tasks[2][2][2]
+    except (TypeError, IndexError, KeyError):
+        merit_lvl = 0
+    if isinstance(merit_lvl, (int, float)):
+        lvl = max(0, min(int(merit_lvl), _W3_MERIT_BOOK_MAX_LEVELS))
+        total += lvl * _W3_MERIT_BOOK_PER_LEVEL
+    return total
+
+
+def read_max_book_level(save_dir: str = SAVE_DIR) -> int | None:
+    """Detected account max Talent Book level (base + summed unlock sources).
+
+    None if the save can't be read. Sums the base and the World 3 book merit
+    (the only source verified against the local save → 127); other sources
+    aren't included yet (see the comment above / #95), so this can undercount
+    once they're unlocked. The Books tab pre-fills this but keeps the field
+    editable as a manual override."""
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    return _max_book_level_from_data(data)
+
+
 # Card star recommender inputs. Counts live in Cards[0] (code -> copies);
 # the account star cap is 4, +1 once Rift level >= 45 unlocks five-star
 # cards (Rift[0] is the rift level), +1 once a Spelunking lore boss
