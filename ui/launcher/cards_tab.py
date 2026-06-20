@@ -14,7 +14,7 @@ from common.idleon_save import (
     read_card_five_star_set,
     read_card_star_cap,
 )
-from ui.launcher import theme
+from ui.launcher import scroll, theme
 from ui.launcher.card_recommender import recommend_cards
 
 try:
@@ -46,6 +46,7 @@ def build(parent: ttk.Frame, app) -> None:
         "<Configure>",
         lambda _e: app.cards_canvas.configure(scrollregion=app.cards_canvas.bbox("all")),
     )
+    scroll.bind_mousewheel(app.cards_canvas)
 
     refresh(app)
 

@@ -14,7 +14,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from common.idleon_save import read_talents, read_book_checkouts
-from ui.launcher import theme
+from ui.launcher import scroll, theme
 from ui.launcher.book_recommender import (
     recommend_books, recommend_books_account, special_talents_account,
 )
@@ -72,6 +72,7 @@ def build(parent: ttk.Frame, app) -> None:
         "<Configure>",
         lambda _e: app.books_canvas.configure(scrollregion=app.books_canvas.bbox("all")),
     )
+    scroll.bind_mousewheel(app.books_canvas)
 
     refresh(app)
 

@@ -10,7 +10,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from ui.launcher import config, theme
+from ui.launcher import config, scroll, theme
 
 
 def build(parent: ttk.Frame, app) -> None:
@@ -67,10 +67,7 @@ def build(parent: ttk.Frame, app) -> None:
         "<Configure>",
         lambda _e: app.frame_canvas.configure(scrollregion=app.frame_canvas.bbox("all")),
     )
-    app.frame_canvas.bind_all(
-        "<MouseWheel>",
-        lambda e: app.frame_canvas.yview_scroll(-int(e.delta / 120), "units"),
-    )
+    scroll.bind_mousewheel(app.frame_canvas)
 
     refresh_frames_list(app)
 
