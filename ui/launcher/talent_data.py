@@ -47,6 +47,36 @@ def class_name(class_id: int | None) -> str:
     return CLASS_BY_ID.get(int(class_id), f"Class {int(class_id)}")
 
 
+# Class line -> its base class (the Talent Book Library "genre"). The Library
+# is browsed base-class (genre) -> subclass (subgenre), so a book's genre is
+# the base class its talent's class line descends from. Every class in the
+# evolution tree folds onto Beginner / Warrior / Archer / Mage; "Special"
+# (the star-talent block) is its own genre — those live in the VIP Bookshelf,
+# not a class line.
+CLASS_GENRE: dict[str, str] = {
+    "Beginner": "Beginner", "Journeyman": "Beginner", "Maestro": "Beginner",
+    "Voidwalker": "Beginner", "Infinilyte": "Beginner",
+    "Special": "Special",
+    "Warrior": "Warrior", "Barbarian": "Warrior", "Squire": "Warrior",
+    "Blood Berserker": "Warrior", "Divine Knight": "Warrior",
+    "Death Bringer": "Warrior", "Royal Guardian": "Warrior",
+    "Archer": "Archer", "Bowman": "Archer", "Hunter": "Archer",
+    "Siege Breaker": "Archer", "Beast Master": "Archer", "Wind Walker": "Archer",
+    "Mage": "Mage", "Wizard": "Mage", "Shaman": "Mage",
+    "Elemental Sorcerer": "Mage", "Spiritual Monk": "Mage",
+    "Bubonic Conjuror": "Mage", "Arcane Cultist": "Mage",
+}
+
+
+def base_genre(class_line: str | None) -> str:
+    """Library genre (base class) for a talent's class line. Unknown lines
+    fall back to themselves, so an unmapped class degrades to genre==subgenre
+    rather than vanishing."""
+    if class_line is None:
+        return "?"
+    return CLASS_GENRE.get(class_line, class_line)
+
+
 TALENT_META: dict[int, dict] = {
     0: {"name": 'Health Booster', "class": 'Beginner', "tab": 0, "importance": 4, "bookable": True},
     1: {"name": 'Mana Booster', "class": 'Beginner', "tab": 0, "importance": 4, "bookable": True},

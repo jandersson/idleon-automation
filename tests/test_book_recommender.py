@@ -93,11 +93,35 @@ def test_account_candidates_carry_class_subgenre():
     }
 
 
-def test_subgenre_label_formats_class_with_fallback():
-    from ui.launcher.books_tab import _subgenre
-    assert _subgenre({"klass": "Barbarian"}) == "📖 Barbarian"
-    assert _subgenre({"klass": None}) == "📖 ?"
-    assert _subgenre({}) == "📖 ?"
+def test_base_genre_maps_subclasses_to_base_class():
+    from ui.launcher.talent_data import base_genre
+    assert base_genre("Barbarian") == "Warrior"
+    assert base_genre("Squire") == "Warrior"
+    assert base_genre("Blood Berserker") == "Warrior"
+    assert base_genre("Bowman") == "Archer"
+    assert base_genre("Hunter") == "Archer"
+    assert base_genre("Wizard") == "Mage"
+    assert base_genre("Shaman") == "Mage"
+    assert base_genre("Elemental Sorcerer") == "Mage"
+    assert base_genre("Maestro") == "Beginner"
+    # Base classes map to themselves; unknown lines fall back to themselves.
+    assert base_genre("Warrior") == "Warrior"
+    assert base_genre("Special") == "Special"
+    assert base_genre("Whatever") == "Whatever"
+    assert base_genre(None) == "?"
+
+
+def test_book_path_shows_genre_and_subgenre():
+    from ui.launcher.books_tab import _book_path
+    # Subclass talent → "genre › subgenre" navigation path.
+    assert _book_path({"klass": "Barbarian"}) == "📖 Warrior › Barbarian"
+    assert _book_path({"klass": "Elemental Sorcerer"}) == "📖 Mage › Elemental Sorcerer"
+    # Base-class / Beginner / Special talents collapse to a single label.
+    assert _book_path({"klass": "Warrior"}) == "📖 Warrior"
+    assert _book_path({"klass": "Beginner"}) == "📖 Beginner"
+    assert _book_path({"klass": "Special"}) == "📖 Special"
+    assert _book_path({"klass": None}) == "📖 ?"
+    assert _book_path({}) == "📖 ?"
 
 
 def test_account_ranking_empty_when_nothing_at_cap():

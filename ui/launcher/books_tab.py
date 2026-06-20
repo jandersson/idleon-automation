@@ -18,12 +18,15 @@ from ui.launcher import theme
 from ui.launcher.book_recommender import recommend_books, recommend_books_account
 
 try:
-    from ui.launcher.talent_data import TALENT_META, class_name
+    from ui.launcher.talent_data import TALENT_META, class_name, base_genre
 except Exception:  # not sourced yet / malformed — degrade to index names
     TALENT_META = {}
 
     def class_name(class_id):  # type: ignore[misc]
         return "?" if class_id is None else f"Class {class_id}"
+
+    def base_genre(class_line):  # type: ignore[misc]
+        return "?" if class_line is None else class_line
 
 # Max book level is wiki-confirmed (Talent Book Library): the ceiling is
 # the sum of merit/salt/achievement/atom/sailing-relic/summoning sources,
@@ -73,14 +76,19 @@ def build(parent: ttk.Frame, app) -> None:
 _IMPORTANCE_TAG = {1: "★", 2: "▲", 3: "•", 4: "·"}
 
 
-def _subgenre(r: dict) -> str:
-    """The Library shelf a recommended book is checked out from.
+def _book_path(r: dict) -> str:
+    """The Library navigation path to a recommended book: genre › subgenre.
 
-    The in-game Talent Book Library is navigated base-class → subclass, so a
-    talent's class line (Barbarian, Wizard, Beginner, Special, …) is the
-    "subgenre" section the user browses to find that book. `recommend_books`
-    already carries it as `klass`; this just formats it for the row."""
-    return f"📖 {r.get('klass') or '?'}"
+    The in-game Talent Book Library is browsed base-class (genre) → subclass
+    (subgenre), so this is where to go to find the book. `recommend_books`
+    carries the talent's class line as `klass` (the subgenre); its base class
+    is the genre. Collapses to a single label for base-class / Beginner /
+    Special talents, where genre and subgenre coincide."""
+    subgenre = r.get("klass") or "?"
+    genre = base_genre(subgenre)
+    if genre == subgenre:
+        return f"📖 {genre}"
+    return f"📖 {genre} › {subgenre}"
 
 
 def refresh(app) -> None:
@@ -122,7 +130,7 @@ def refresh(app) -> None:
             row.pack(fill="x")
             tag = _IMPORTANCE_TAG.get(r["importance"], "•")
             ttk.Label(row, text=f"{tag} {r['name']}", width=26).pack(side="left")
-            ttk.Label(row, text=_subgenre(r), width=15,
+            ttk.Label(row, text=_book_path(r), width=27,
                       foreground=theme.ACCENT).pack(side="left")
             ttk.Label(row, text=f"{r['character']}", width=14,
                       style="Muted.TLabel").pack(side="left")
@@ -148,7 +156,7 @@ def refresh(app) -> None:
             row.pack(fill="x")
             tag = _IMPORTANCE_TAG.get(r["importance"], "•")
             ttk.Label(row, text=f"{tag} {r['name']}", width=26).pack(side="left")
-            ttk.Label(row, text=_subgenre(r), width=15,
+            ttk.Label(row, text=_book_path(r), width=27,
                       foreground=theme.ACCENT).pack(side="left")
             ttk.Label(row, text=f"cap {r['cap']} → up to {max_book}  (+{r['gap']})",
                       foreground=theme.INFO).pack(side="left")
