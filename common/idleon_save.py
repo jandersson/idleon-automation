@@ -254,6 +254,43 @@ def read_max_book_level(save_dir: str = SAVE_DIR) -> int | None:
     return _max_book_level_from_data(data)
 
 
+# Stamp levels live in `StampLevel`: a list of 3 per-tab arrays — Combat,
+# Skills, Misc (Idleon's three stamp pages). Each entry is one stamp's current
+# level; some are stored as strings (a Haxe quirk), so coerce. Stamps level up
+# by spending gold + a material with an escalating cost — there's no per-stamp
+# "cap" in the save (StampLevel == StampLevelMAX), so a recommender ranks by
+# cost/value (game-data upgrade tables), not by headroom. This accessor is the
+# save-side half of that (discovery map: Stamps).
+_STAMP_TABS = ("combat", "skills", "misc")
+
+
+def _coerce_int(x: Any) -> int:
+    """Haxe stores some numeric save fields as strings; coerce to int, 0 on
+    anything non-numeric/empty."""
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return 0
+
+
+def read_stamps(save_dir: str = SAVE_DIR) -> dict[str, list[int]] | None:
+    """Per-tab stamp levels: ``{"combat": [...], "skills": [...], "misc": [...]}``.
+
+    None if the save can't be read or ``StampLevel`` is missing/malformed.
+    A level of 0 means the stamp is unowned/un-leveled.
+    """
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    raw = data.get("StampLevel")
+    if not isinstance(raw, list) or len(raw) < len(_STAMP_TABS):
+        return None
+    return {
+        tab: [_coerce_int(x) for x in sub] if isinstance(sub, list) else []
+        for tab, sub in zip(_STAMP_TABS, raw)
+    }
+
+
 # Card star recommender inputs. Counts live in Cards[0] (code -> copies);
 # the account star cap is 4, +1 once Rift level >= 45 unlocks five-star
 # cards (Rift[0] is the rift level), +1 once a Spelunking lore boss
