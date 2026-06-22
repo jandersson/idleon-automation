@@ -291,6 +291,40 @@ def read_stamps(save_dir: str = SAVE_DIR) -> dict[str, list[int]] | None:
     }
 
 
+# Owned material quantities, summed across storage chest and inventory. Items
+# are keyed by `rawName` (e.g. "Grasslands1" = Spore Cap) in two parallel
+# arrays each: order (names) + quantity (counts). This matches the `mat_raw`
+# in stamp_data, so the stamp recommender can answer "can I afford this
+# upgrade's material cost". IdleonToolbox matches storage the same way
+# (parsers/world-1/stamps.ts: `storageRawName === requiredItem.rawName`).
+_MATERIAL_ARRAYS = (("ChestOrder", "ChestQuantity"), ("InventoryOrder", "ItemQuantity"))
+
+
+def read_materials(save_dir: str = SAVE_DIR) -> dict[str, float] | None:
+    """Owned material counts by item rawName, summed over storage + inventory.
+
+    ``{rawName: total_qty}``. None if the save can't be read. Non-string names
+    / non-numeric quantities are skipped; absent arrays contribute nothing.
+    """
+    data = load_save(save_dir)
+    if data is None:
+        return None
+    return _materials_from_data(data)
+
+
+def _materials_from_data(data: dict) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for order_key, qty_key in _MATERIAL_ARRAYS:
+        order = data.get(order_key)
+        qty = data.get(qty_key)
+        if not isinstance(order, list) or not isinstance(qty, list):
+            continue
+        for name, q in zip(order, qty):
+            if isinstance(name, str) and isinstance(q, (int, float)) and not isinstance(q, bool):
+                out[name] = out.get(name, 0) + q
+    return out
+
+
 # Card star recommender inputs. Counts live in Cards[0] (code -> copies);
 # the account star cap is 4, +1 once Rift level >= 45 unlocks five-star
 # cards (Rift[0] is the rift level), +1 once a Spelunking lore boss
