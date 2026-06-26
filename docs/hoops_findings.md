@@ -155,3 +155,51 @@ Interpretation caveats: rows before/after the fix embed systematically
 different decision→launch latencies, so velocity-coupled effects fitted
 on pre-fix data (and the predictors trained on it) will run slightly
 hot until post-fix sessions accumulate.
+
+## The back-rim notch (2026-06-26, #97)
+
+The user observed the bot clanking the *back* of the rim — the ball
+reaches just past the hoop, bounces backward and falls out of the play
+area. Diagnosis against shots.db (n=840 clean shots) reframed it:
+
+- **Not a one-sided overshoot bias.** Model-regime median bounce-aware
+  arrival residual is ~−14px (slightly *short*). A naive "aim shorter"
+  would trade back-rim clanks for 5%-make airballs (residual <−50).
+- **It's a make-rate notch.** Bounce-aware arrival residual in the
+  back-rim zone makes ~0.40 vs ~0.78 swish (residual [−50,−15]) and
+  ~0.79 far-bank (residual >120, off-backboard banks) — a notch flanked
+  by higher make-rates on *both* sides, so the fix carves it out rather
+  than shifting aim. Wilson CIs disjoint.
+- **Root cause is the backward bounce, not the landing.** Within the
+  notch, clean rim-drops (peak−landing ≤ 50) still make ~0.88; the low
+  aggregate is entirely back-rim clanks (peak−landing > 50, peak past
+  center) at ~0.24.
+- **The make_prob argmax (#38) can't be improved here.** Refitting the
+  model and scoring each shot under its own state: notch-MISS states
+  already score P(make) median **0.071** (vs 0.644 for notch-makes), so
+  a P(make) penalty changes no pick — structurally inert. Arrival-
+  prediction filters are unsound (reach-censored within 80px of the
+  hoop). The lever is the miss-recovery path, keyed on classification of
+  a *fired* shot's trajectory.
+
+Fix (make_prob argmax byte-for-byte untouched):
+1. **Asymmetric sweep gate** (`_sweep_should_advance`): advance off a
+   back-rim overshoot (residual > `BACK_RIM_LO_PX=15`) instead of the old
+   symmetric |resid|≤60 hold, which re-fired back-rim clanks as "almost
+   made" (304/604 in-band shots were back-rim clanks). Short/center side
+   keeps the generous hold.
+2. **Directional recovery nudge**, shipped as a logged 50/50 A/B
+   (`back_rim_recovery` column, arm by shot-index parity à la darts #48):
+   after a `_is_back_rim_bounceout` (backward bounce AND peak 15..110px
+   past center — direction-safe, excludes front-rim clanks needing *more*
+   reach and far-bank banks that score), force the next shot's
+   perturbation to `BACK_RIM_NUDGE_PX=−16`. Validate nudge-vs-control on
+   recovery-shot make rate / recurrence (Wilson CIs) before flipping the
+   nudge to default; the #38 model-pick make rate must not regress.
+
+Open: preventive first-shot avoidance via a candidate prefilter
+classifier (#98, the only route that can reach the deep front-side notch
+slice the nudge can't safely touch); `lives_diff` is unusable so the
+cost asymmetry of a back-rim miss can't be measured from the DB (#99) —
+the user confirmed in-game it's just one miss, so #97 optimizes
+make-rate only.

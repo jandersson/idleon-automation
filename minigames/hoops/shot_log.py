@@ -156,6 +156,13 @@ _LATE_COLUMNS = [
     ("hoop_xmin", "INTEGER"),
     ("hoop_xmax", "INTEGER"),
     ("hoop_x_at_fire", "INTEGER"),
+    # Back-rim recovery A/B arm (#97). Set only on a shot fired right after a
+    # detected back-rim bounce-out at the same hoop (ball flung backward AND
+    # peaked 15..110px past hoop center). "nudge" = the recovery shot's
+    # perturbation was forced shorter (BACK_RIM_NUDGE_PX); "control" = normal
+    # sweep perturbation. NULL on every other shot. Lets a powered
+    # nudge-vs-control comparison accumulate before the nudge becomes default.
+    ("back_rim_recovery", "TEXT"),
 ]
 
 

@@ -343,10 +343,34 @@ PERTURBATION_SEQUENCE = [
 # revisit once platform_vy data settles the velocity question.
 PERTURBATION_MAX = 32
 
-# A miss whose ball still arrived within this many px of hoop_x was a
-# launch/rim outcome, not an aim error — shots arriving in this band make
-# at 64%, so the sweep must NOT step away from a target that produced one.
+# A miss whose ball still arrived SHORT of hoop_x by no more than this was a
+# launch/rim outcome, not an aim error — shots arriving short in this band
+# make at ~64% (front-rim luck), so the sweep must NOT step away from a
+# target that produced one. The hold is SHORT-side only (#97): a miss that
+# arrived PAST hoop_x by more than BACK_RIM_LO_PX clanked the back rim and
+# bounced out — re-firing the same launch just grinds the back rim, so those
+# advance the sweep instead (see _sweep_should_advance).
 IN_BAND_RESIDUAL_PX = 60
+
+# Back-rim notch geometry (#97), all in px of bounce-aware arrival residual
+# (arrival_x - hoop_x; arrival_x per _shot_arrival_x). Calibrated from
+# shots.db (n=840 clean shots): make-rate falls off the swish plateau
+# (residual [-50,-15] make 0.78) once the ball arrives past center —
+# residual [15,110] makes only ~0.40-0.53, a notch flanked by swish below
+# and far-bank backboard banks (residual >120, make ~0.79) above.
+# - BACK_RIM_LO_PX: positive-side onset; past this the sweep advances and the
+#   recovery nudge may fire.
+# - BACK_RIM_HI_PX: upper edge; above it is far-bank (productive banks) which
+#   must NOT be nudged shorter.
+BACK_RIM_LO_PX = 15
+BACK_RIM_HI_PX = 110
+
+# Directional shorter-step applied to the recovery shot's perturbation after a
+# detected back-rim bounce-out, on the "nudge" A/B arm (#97). Negative lowers
+# target_y → the bot waits for a lower platform crossing → flatter/shorter arc
+# → arrival walks from the back-rim notch toward the swish band. Within
+# PERTURBATION_MAX=32. Geometry-calibrated, not fitted — the A/B's tunable knob.
+BACK_RIM_NUDGE_PX = -16
 
 
 def _perturbation_for(miss_count: int, sigma: float | None = None) -> int:
@@ -406,6 +430,43 @@ def _shot_arrival_x(
     return ball_x_at_rim
 
 
+def _is_back_rim_bounceout(
+    peak_x: int | None,
+    landing_x: int | None,
+    hoop_x: int | None,
+) -> bool:
+    """True when a miss clanked the BACK rim and bounced out: the ball was
+    flung backward (peak_x - landing_x > MAX_BACK_DRIFT_PX) AND its rightmost
+    reach landed BACK_RIM_LO_PX..BACK_RIM_HI_PX past hoop center (#97).
+
+    Direction-safe by construction. It excludes:
+    - backward bounces that peaked SHORT of center (peak_x - hoop_x < LO):
+      those hit the FRONT rim and need MORE reach — nudging them shorter would
+      push toward the airball zone;
+    - far-bank shots reaching past HI (peak_x - hoop_x > 110): productive
+      backboard banks that score and must not be steered shorter;
+    - clean rim-drops with no backward bounce (peak ≈ landing).
+
+    This is the trigger for the recovery shorter-nudge — only launch states
+    that overshot into the back rim get steered shorter.
+    """
+    if peak_x is None or landing_x is None or hoop_x is None:
+        return False
+    if (peak_x - landing_x) <= MAX_BACK_DRIFT_PX:
+        return False
+    return BACK_RIM_LO_PX <= (peak_x - hoop_x) <= BACK_RIM_HI_PX
+
+
+def _apply_back_rim_nudge(perturbation: int, arm: str | None) -> int:
+    """Recovery-shot perturbation override (#97). On the 'nudge' A/B arm,
+    force the perturbation to BACK_RIM_NUDGE_PX (a directional shorter step)
+    regardless of the sweep value; on 'control' or None, leave it unchanged.
+    Pure so the one-sided, bounded override is unit-testable in isolation."""
+    if arm == "nudge":
+        return BACK_RIM_NUDGE_PX
+    return perturbation
+
+
 # An in-band miss is worth re-firing (rim luck converts at ~64%), but only
 # a couple of times: at clank-prone hoops the flat-arc arrival reads
 # "in-band" every single shot and never drops — session 2026-06-09 21:23
@@ -418,17 +479,27 @@ MAX_CONSECUTIVE_HOLDS = 2
 
 def _sweep_should_advance(arrival_x: int | None, hoop_x: int | None) -> bool:
     """After a miss, decide whether the perturbation sweep steps to the
-    next entry. False when the ball arrived within IN_BAND_RESIDUAL_PX of
-    hoop_x: the aim was right and the miss was rim luck, so the next shot
-    re-fires the same target. `arrival_x` should come from
-    _shot_arrival_x so structure clanks aren't misread as short misses.
-    No trajectory data → advance (can't tell a mislaunch from a
-    near-miss, and standing still forever on an unmeasured target risks
-    a stuck loop).
+    next entry. The hold band is ASYMMETRIC (#97):
+
+    - Arrived SHORT of hoop_x by <= IN_BAND_RESIDUAL_PX (residual in
+      [-60, 0]): HOLD — re-fire the same target. Short/center in-band
+      misses are front-rim luck that converts on a re-fire.
+    - Arrived just PAST hoop_x but within the notch onset (residual in
+      (0, BACK_RIM_LO_PX]): HOLD — still essentially on-center.
+    - Arrived PAST hoop_x by > BACK_RIM_LO_PX (back-rim zone): ADVANCE —
+      the ball clanked the back rim and bounced out; re-firing the same
+      launch just grinds the back rim instead of stepping toward the make.
+    - Arrived SHORT by > IN_BAND_RESIDUAL_PX (big short miss): ADVANCE.
+
+    `arrival_x` should come from _shot_arrival_x so structure clanks aren't
+    misread as short misses. No trajectory data → advance (can't tell a
+    mislaunch from a near-miss, and standing still forever on an unmeasured
+    target risks a stuck loop).
     """
     if arrival_x is None or hoop_x is None:
         return True
-    return abs(arrival_x - hoop_x) > IN_BAND_RESIDUAL_PX
+    resid = arrival_x - hoop_x
+    return resid > BACK_RIM_LO_PX or resid < -IN_BAND_RESIDUAL_PX
 
 
 # Score>=10 hoop drift (measured 2026-06-10 from flight frames: the hoop
@@ -957,12 +1028,17 @@ class _HoopTracking:
     misses: int = 0   # sweep position (advances on way-off misses)
     holds: int = 0    # consecutive in-band re-fires since the sweep moved
     shots: int = 0    # total fired at this hoop (gates free-shot exploration)
+    # A/B arm armed for the NEXT shot at this hoop after a detected back-rim
+    # bounce-out (#97): "nudge" | "control" | None. Reset on make / new hoop
+    # so a stale arm never leaks across hoops.
+    pending_nudge_arm: str | None = None
 
     def reset_for_new_hoop(self, key: tuple[int, int] | None) -> None:
         self.key = key
         self.misses = 0
         self.holds = 0
         self.shots = 0
+        self.pending_nudge_arm = None
 
 
 @dataclass
@@ -972,9 +1048,13 @@ class _Target:
     offset: int
     perturbation: int
     predicted_offset: int
-    target_source: str   # "predictor" | "sweep" | "explore"
+    target_source: str   # "predictor" | "sweep" | "explore" | "model"
     required_dir: str
     predictor_fit: bool  # whether a fitted predictor (vs cold start) aimed this
+    # Back-rim recovery A/B arm (#97): "nudge" | "control" | None. Non-None
+    # only on a shot fired right after a detected back-rim bounce-out at this
+    # hoop. Logged to shots.back_rim_recovery for the nudge-vs-control gate.
+    back_rim_recovery: str | None = None
 
 
 def _maybe_retro_make(
@@ -1031,6 +1111,15 @@ def _select_target(
     predicted_offset_value = _predicted_offset(hoop_y, hoop_x, predictor)
     predictor_sigma = _predicted_std(hoop_y, hoop_x, predictor)
     perturbation = _perturbation_for(tracking.misses, predictor_sigma)
+    # Back-rim recovery (#97): on the "nudge" A/B arm, force a directional
+    # shorter step after the prior shot back-rimmed at this hoop. The arm was
+    # set in the miss branch (_record_shot_outcome); it flows through both the
+    # predictor offset (below) and the model offset, since both add
+    # `perturbation`. The make_prob argmax itself is NOT touched — only the
+    # offset added around the chosen state shifts. Cleared in the explore
+    # branch so free pre-game shots are never nudged or tagged.
+    back_rim_arm = tracking.pending_nudge_arm
+    perturbation = _apply_back_rim_nudge(perturbation, back_rim_arm)
     offset = base_offset + perturbation
     target_y = hoop_y + offset
     target_source = "sweep" if perturbation else "predictor"
@@ -1074,6 +1163,7 @@ def _select_target(
             offset = target_y - hoop_y
             perturbation = offset - predicted_offset_value
             target_source = "explore"
+            back_rim_arm = None  # free shots are never nudged or A/B-tagged
             model_tag = ""  # exploration overrides the model's pick
     # Cap target_y inside the platform's observed bob range with a small
     # margin so the platform passes through (rather than only kissing at
@@ -1103,7 +1193,8 @@ def _select_target(
     override_tag = f" [override: predicted={predicted_offset_value}]" if base_offset != predicted_offset_value else ""
     sigma_tag = f" (σ={predictor_sigma:.1f})" if predictor_sigma is not None else ""
     dir_tag = f", dir={required_dir}" if required_dir != REQUIRED_DIRECTION else ""
-    print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{model_tag}{dir_tag}, target launch y={target_y}")
+    back_rim_tag = f" [back-rim recovery: {back_rim_arm}]" if back_rim_arm else ""
+    print(f"Hoop rim at ({hoop_x},{hoop_y}) (conf={hoop_conf:.2f}){sigma_tag}, offset={offset}{tag}{override_tag}{cap_tag}{model_tag}{dir_tag}{back_rim_tag}, target launch y={target_y}")
     return _Target(
         target_y=target_y,
         offset=offset,
@@ -1112,6 +1203,7 @@ def _select_target(
         target_source=target_source,
         required_dir=required_dir,
         predictor_fit=predictor is not None,
+        back_rim_recovery=back_rim_arm,
     )
 
 
@@ -1331,6 +1423,7 @@ def _record_shot_outcome(
         hoop_x_at_fire=hoop_x_at_fire_value,
         prompt_up=int(bool(shot.prompt_visible_before)),
         target_source=shot.target.target_source,
+        back_rim_recovery=shot.target.back_rim_recovery,
     )
     # Update perturbation tracking. Made → reset (next hoop will be in a
     # new position anyway). Miss → advance the sweep, unless the ball
@@ -1339,10 +1432,10 @@ def _record_shot_outcome(
     if made:
         tracking.reset_for_new_hoop(None)
     else:
+        peak = trajectory["ball_peak_x"]
+        landing = trajectory["ball_landing_x"]
         arrival_x = _shot_arrival_x(
-            trajectory["ball_x_at_rim_height"],
-            trajectory["ball_peak_x"],
-            trajectory["ball_landing_x"],
+            trajectory["ball_x_at_rim_height"], peak, landing,
         )
         advance, tracking.holds = _sweep_step(arrival_x, shot.hoop_x, tracking.holds)
         if advance:
@@ -1351,11 +1444,23 @@ def _record_shot_outcome(
             resid = arrival_x - shot.hoop_x
             bounce_tag = (
                 " [bounce-aware: peak_x]"
-                if arrival_x == trajectory["ball_peak_x"]
-                and arrival_x != trajectory["ball_x_at_rim_height"]
+                if arrival_x == peak and arrival_x != trajectory["ball_x_at_rim_height"]
                 else ""
             )
             print(f"  [perturb] miss but ball arrived {resid:+d}px from hoop_x{bounce_tag} — re-firing same target (hold {tracking.holds}/{MAX_CONSECUTIVE_HOLDS})")
+        # Arm the NEXT shot's back-rim recovery A/B (#97). When this miss
+        # clanked the BACK rim and bounced out, the next shot at this hoop
+        # alternates a directional shorter nudge ("nudge") vs normal sweep
+        # ("control") by shot-index parity (~50/50, mirrors darts #48) so a
+        # powered nudge-vs-control comparison accumulates before the nudge
+        # becomes the default. Any non-bounce-out miss clears a stale arm.
+        if _is_back_rim_bounceout(peak, landing, shot.hoop_x):
+            arm = "nudge" if shot.shot_idx % 2 == 0 else "control"
+            tracking.pending_nudge_arm = arm
+            print(f"  [back-rim] bounce-out (peak_x={peak}, hoop_x={shot.hoop_x}, "
+                  f"drift={peak - landing}px) — next shot armed '{arm}'")
+        else:
+            tracking.pending_nudge_arm = None
     # Print the lives tick if it happened (signal for bot watching).
     if lives_diff_value is not None and lives_diff_value > 3:
         print(f"  [lives] counter ticked down (diff={lives_diff_value:.1f})")

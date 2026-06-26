@@ -101,14 +101,65 @@ def test_sweep_advances_on_way_off_miss():
     assert _sweep_should_advance(900, 700)   # 200px long
 
 
-def test_sweep_holds_on_in_band_miss():
-    # Ball arrived within IN_BAND_RESIDUAL_PX of the hoop — aim was right,
-    # the miss was rim luck. Re-fire the same target.
-    from minigames.hoops.main import _sweep_should_advance, IN_BAND_RESIDUAL_PX
-    assert not _sweep_should_advance(700, 700)
-    assert not _sweep_should_advance(700 - IN_BAND_RESIDUAL_PX, 700)
-    assert not _sweep_should_advance(700 + IN_BAND_RESIDUAL_PX, 700)
-    assert _sweep_should_advance(700 + IN_BAND_RESIDUAL_PX + 1, 700)
+def test_sweep_holds_on_short_or_center_in_band_miss():
+    # Asymmetric hold band (#97): a miss that arrived SHORT of the hoop (or
+    # only just past center) was front-rim luck — re-fire the same target.
+    # Only the SHORT side keeps the generous IN_BAND_RESIDUAL_PX tolerance.
+    from minigames.hoops.main import (
+        _sweep_should_advance, IN_BAND_RESIDUAL_PX, BACK_RIM_LO_PX,
+    )
+    assert not _sweep_should_advance(700, 700)                        # dead center
+    assert not _sweep_should_advance(700 - IN_BAND_RESIDUAL_PX, 700)  # 60px short, in-band
+    assert not _sweep_should_advance(700 + BACK_RIM_LO_PX, 700)       # +15, notch onset, hold
+    assert _sweep_should_advance(700 - IN_BAND_RESIDUAL_PX - 1, 700)  # 61px short → advance
+
+
+def test_sweep_advances_on_back_rim_overshoot():
+    # The back-rim fix (#97): a miss arriving PAST the hoop by more than the
+    # notch onset clanked the back rim and bounced out — stepping the sweep
+    # away beats re-firing the same back-rim-prone launch. The +60 case used
+    # to HOLD under the old symmetric |resid|<=60 gate; now it advances.
+    from minigames.hoops.main import _sweep_should_advance, BACK_RIM_LO_PX
+    assert _sweep_should_advance(700 + BACK_RIM_LO_PX + 1, 700)  # +16 past center
+    assert _sweep_should_advance(700 + 30, 700)                 # mid back-rim zone
+    assert _sweep_should_advance(700 + 60, 700)                 # old hold zone, now advances
+
+
+def test_is_back_rim_bounceout_direction_safe():
+    # Only a backward bounce that peaked PAST center within the notch counts
+    # (#97) — the direction-safe trigger for the recovery shorter-nudge.
+    from minigames.hoops.main import (
+        _is_back_rim_bounceout, BACK_RIM_LO_PX, BACK_RIM_HI_PX, MAX_BACK_DRIFT_PX,
+    )
+    hoop = 700
+    # backward bounce, peaked past center inside the notch → back-rim clank
+    assert _is_back_rim_bounceout(hoop + 50, hoop - 200, hoop)
+    assert _is_back_rim_bounceout(hoop + BACK_RIM_LO_PX, hoop - 100, hoop)  # LO edge
+    assert _is_back_rim_bounceout(hoop + BACK_RIM_HI_PX, hoop - 100, hoop)  # HI edge
+    # peaked SHORT of center (front rim) — needs MORE reach, must NOT nudge shorter
+    assert not _is_back_rim_bounceout(hoop - 10, hoop - 200, hoop)
+    # far-bank: peaked past HI, productive backboard bank — leave alone
+    assert not _is_back_rim_bounceout(hoop + BACK_RIM_HI_PX + 1, hoop - 100, hoop)
+    # no backward bounce (peak ≈ landing) — clean rim-drop, not a clank
+    assert not _is_back_rim_bounceout(hoop + 50, hoop + 50 - MAX_BACK_DRIFT_PX, hoop)
+    # None inputs are safe
+    assert not _is_back_rim_bounceout(None, hoop, hoop)
+    assert not _is_back_rim_bounceout(hoop + 50, None, hoop)
+    assert not _is_back_rim_bounceout(hoop + 50, hoop - 200, None)
+
+
+def test_apply_back_rim_nudge_one_sided_and_bounded():
+    # The recovery override is one-sided (only the 'nudge' arm) and bounded
+    # within the existing perturbation cap (#97).
+    from minigames.hoops.main import (
+        _apply_back_rim_nudge, BACK_RIM_NUDGE_PX, PERTURBATION_MAX,
+    )
+    assert _apply_back_rim_nudge(0, "nudge") == BACK_RIM_NUDGE_PX
+    assert _apply_back_rim_nudge(32, "nudge") == BACK_RIM_NUDGE_PX   # overrides sweep value
+    assert _apply_back_rim_nudge(-32, "nudge") == BACK_RIM_NUDGE_PX
+    assert _apply_back_rim_nudge(8, "control") == 8                  # control untouched
+    assert _apply_back_rim_nudge(8, None) == 8                       # un-armed untouched
+    assert abs(BACK_RIM_NUDGE_PX) <= PERTURBATION_MAX
 
 
 def test_sweep_advances_without_trajectory_data():
