@@ -105,6 +105,11 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # the +1 green / +2 gold assumption. NULL when the score region
     # isn't picked or OCR failed.
     ("pts_after_ocr", "INTEGER"),
+    # Time spent in a cross-pass gold wait (gold_wait.py, 2026-07-06)
+    # before this fire. zone='gold' with a value = successful upgrade;
+    # zone='green' with a value = the wait hit its deadline and the
+    # bot took the green anyway. NULL = no wait preceded this fire.
+    ("gold_wait_ms", "INTEGER"),
 ]
 
 
@@ -116,6 +121,10 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # Leaf velocity px/s, same estimate the time-to-red gate uses
     # (2026-06-11 — the polls table predates this one, so the ALTER is real).
     ("leaf_vx_px_s", "REAL"),
+    # Why a would-fire poll deliberately held fire: 'gold_wait' (cross-
+    # pass wait, gold_wait.py) or 'gold_ride' (same-sweep upgrade).
+    # NULL on ordinary polls — most rows aren't at a fire decision.
+    ("hold_reason", "TEXT"),
 ]
 
 
@@ -137,13 +146,15 @@ def log_poll(
     fired: int,
     zone_layout: str | None = None,
     leaf_vx_px_s: float | None = None,
+    hold_reason: str | None = None,
 ) -> None:
     """Append one row to the polls table. No per-row commit — caller
     commits periodically (e.g. once per fire) to bound write overhead."""
     conn.execute(
         "INSERT INTO polls (session_started, t_ms, pointer_x, zone, "
-        "nearest_red_distance, bar_pixel_count, fired, zone_layout, leaf_vx_px_s) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "nearest_red_distance, bar_pixel_count, fired, zone_layout, "
+        "leaf_vx_px_s, hold_reason) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_started, int(t_ms),
             int(pointer_x) if pointer_x is not None else None,
@@ -152,6 +163,7 @@ def log_poll(
             int(bar_pixel_count), int(fired),
             zone_layout,
             float(leaf_vx_px_s) if leaf_vx_px_s is not None else None,
+            hold_reason,
         ),
     )
 

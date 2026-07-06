@@ -16,6 +16,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered, set_pts
+from minigames.chopping.gold_wait import update_gold_wait
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
@@ -118,6 +119,19 @@ STARVE_EXIT_S = 60.0
 # slowest observed speed (~257 px/s over 222px) is ~860ms, so this
 # rarely binds mid-round.
 GOLD_RIDE_MAX_MS = 1000
+
+# Cross-pass gold wait (issue #46 thread 3, 2026-07-06): when a safe
+# GREEN fire comes up but gold sits elsewhere on the bar (behind the
+# leaf / past a red — the same-sweep ride declined it), hold fire and
+# let the leaf come around to the gold on a later pass. Chops ramp the
+# speed and waiting is free, so a round's score is bounded by chops,
+# not time — upgrading a +1 green chop to a +2 gold chop is a pure +1
+# point for a few seconds of wall clock. In the 2026-06-11 data 20 of
+# 48 registered green chops fired with gold on the bar (~9 points left
+# on the table in the best session alone). Decision logic + the
+# starve-exit guard-rail reasoning live in gold_wait.py; set False to
+# disable the experiment.
+GOLD_WAIT_ENABLED = True
 
 # If the same pointer x is reported in the same zone this many clicks in a row,
 # assume the minigame is over (a stationary post-game UI element looks like a
@@ -241,6 +255,10 @@ def _run_inner():
     hold_pts_read = False  # PTS OCR done for the current hold?
     last_pts: int | None = None  # latest OCR'd on-screen PTS value
     riding_gold = False  # print-once flag for the gold-upgrade hold
+    # Cross-pass gold wait (gold_wait.py): when the current wait began,
+    # None = no wait active. Reset after every click.
+    gold_wait_since: float | None = None
+    waiting_gold = False  # print-once flag for the cross-pass wait
     # Bounce-vs-chop experiment state: fire pause deadline + the V_max
     # snapshot taken at pause start (also serves as the resume flag).
     experiment_pause_until = 0.0
@@ -490,11 +508,39 @@ def _run_inner():
                         log_poll(conn, session_started,
                                  int((now - session_start_t) * 1000),
                                  pointer_x, zone, red_dist, bar_px, 0,
-                                 zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                                 zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                                 hold_reason="gold_ride")
                         last_poll_log = now
                     time.sleep(POLL_INTERVAL)
                     continue
             riding_gold = False
+
+            # Cross-pass gold wait (see GOLD_WAIT_ENABLED / gold_wait.py):
+            # the ride above declined — no gold reachable THIS sweep —
+            # but gold elsewhere on the bar is worth a later pass. Only
+            # green fires are held; a leaf over gold always fires.
+            if zone == "green" and GOLD_WAIT_ENABLED:
+                since_last_fire = (
+                    now - fire_hold_click_t if chop_idx > 0
+                    else now - session_start_t
+                )
+                hold, gold_wait_since = update_gold_wait(
+                    gold_wait_since, now, "o" in layout, since_last_fire)
+                if hold:
+                    if not waiting_gold:
+                        waiting_gold = True
+                        print("  [aim] gold on the bar but not this sweep "
+                              "— holding green fires for a gold pass")
+                    if now - last_poll_log >= POLL_LOG_INTERVAL:
+                        log_poll(conn, session_started,
+                                 int((now - session_start_t) * 1000),
+                                 pointer_x, zone, red_dist, bar_px, 0,
+                                 zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                                 hold_reason="gold_wait")
+                        last_poll_log = now
+                    time.sleep(POLL_INTERVAL)
+                    continue
+            waiting_gold = False
             if last_click == (pointer_x, zone):
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:
@@ -515,10 +561,19 @@ def _run_inner():
             click(win_left + button_cx, win_top + button_cy)
             click_time = time.time()
             last_click = (pointer_x, zone)
+            gold_wait_ms = (
+                int((click_time - gold_wait_since) * 1000)
+                if gold_wait_since is not None else None
+            )
+            gold_wait_since = None
             vx_tag = f", vx={leaf_vx:+.0f} px/s, red ahead {red_ahead}px ~{time_to_red_ms}ms" \
                 if time_to_red_ms is not None else \
                 (f", vx={leaf_vx:+.0f} px/s, no red ahead" if leaf_vx is not None else "")
-            print(f"Pointer at x={pointer_x} in {zone} (red_d={red_dist}{vx_tag}) — chop #{chop_idx + 1}")
+            wait_tag = ""
+            if gold_wait_ms is not None:
+                wait_tag = (f" after {gold_wait_ms}ms gold wait"
+                            + (" (deadline — took green)" if zone == "green" else ""))
+            print(f"Pointer at x={pointer_x} in {zone} (red_d={red_dist}{vx_tag}) — chop #{chop_idx + 1}{wait_tag}")
 
             if pending is not None:
                 prev_row_id, prev_click_time, _ = pending
@@ -546,6 +601,7 @@ def _run_inner():
                 leaf_vx_px_s=leaf_vx,
                 red_ahead_px=red_ahead,
                 time_to_red_ms=time_to_red_ms,
+                gold_wait_ms=gold_wait_ms,
                 code_commit=code_commit,
                 source="bot",
             )

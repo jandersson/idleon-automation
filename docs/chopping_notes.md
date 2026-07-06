@@ -116,7 +116,17 @@ confidence noted since none of this is from the game's code.
    bounce, capped at GOLD_RIDE_MAX_MS); a leaf already over gold
    fires as before. Cross-pass gold waiting was deliberately NOT
    built — its value depends on the unresolved speed-attribution
-   question below.
+   question below. UPDATE 2026-07-06: speed attribution settled
+   per-chop, so cross-pass waiting is now IMPLEMENTED
+   (`gold_wait.py`): with chops (not time) bounding the score, a
+   green→gold upgrade is a pure +1 point, and the 2026-06-11 data
+   showed 20/48 registered green chops fired with gold sitting
+   elsewhere on the bar (gold is on the bar in ~95% of long-session
+   polls, the leaf over it only ~10-15%). Guard rails: a wait only
+   starts within START_LATEST_S=10s of the last fire and ends at
+   MAX_WAIT_S=12s (deadline takes the green), so it can't trip the
+   60s starve exit. Instrumented via `chops.gold_wait_ms` and
+   `polls.hold_reason` ('gold_wait'/'gold_ride').
 3. **Never click red** — the bot's one death condition. The
    directional time-to-red gate (MIN_TIME_TO_RED_MS) is the
    load-bearing control; late-round it will (correctly) starve fires
