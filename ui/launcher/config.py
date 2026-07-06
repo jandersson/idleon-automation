@@ -19,8 +19,25 @@ MINIGAMES = [
             ("Pick bar", "chopping-pick-bar-region"),
             ("Pick leaf", "chopping-pick-leaf-region"),
             ("Pick button", "chopping-pick-button-region"),
+            ("Pick score", "chopping-pick-score-region"),
             ("Pick game over", "chopping-pick-game-over"),
             ("Calibrate", "chopping-calibrate"),
+        ],
+        "bot_options": [
+            {
+                # Writes the (leaf+bar) composite the detector saw to
+                # assets/captures/botrun_<stamp>/ (gitignored) — ~2 Hz
+                # heartbeat + one frame per chop. Sets
+                # CHOPPING_SAVE_FRAMES, which main.py reads (the GUI
+                # can't pass --save-frames). Default on: attempts are
+                # scarce (shared 5/day pool), the crops are tiny, and
+                # the 2026-07-06 chop-9 stall had to be diagnosed
+                # blind because nothing visual persisted.
+                "label": "Save frames",
+                "env": "CHOPPING_SAVE_FRAMES",
+                "values": ["on", "off"],
+                "default": "on",
+            },
         ],
     },
     {

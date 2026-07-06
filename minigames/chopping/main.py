@@ -1,14 +1,18 @@
+import argparse
+import os
 import time
 import sys
 from datetime import datetime
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
+from common.monitor import save_frame
 from common.regions import get_region
 from common.score_ocr import read_score
 from common.session_log import session_log
@@ -202,6 +206,19 @@ MIN_VX_FOR_FIRE = 30.0
 # robust per-sweep peak-speed estimate for the eased time-to-red model.
 SPEED_WINDOW_S = 3.0
 
+# Frame persistence (--save-frames / CHOPPING_SAVE_FRAMES): the bot
+# grabs the bar + leaf strip every poll for detection but normally
+# persists nothing visual — the polls table's zone_layout RLE is a
+# lossy stand-in, and the 2026-07-06 chop-9 stall had to be diagnosed
+# by inference instead of by looking at the bar. When enabled, the
+# (leaf strip + bar) composite the detector saw is written to
+# assets/captures/botrun_<stamp>/ (gitignored) at this heartbeat
+# cadence, plus one frame per chop (tagged chopNNN). Writes happen at
+# the TOP of the FOLLOWING iteration so no imwrite ever sits between a
+# sampled frame and its click (fire-first rule). ~2 Hz over a 2-min
+# round is ~250 small PNGs — trivial disk.
+SNAP_EVERY_S = 0.5
+
 # Per-poll DB write rate cap. 0 = log every loop iteration (~40-80Hz).
 # Raised from 10Hz to full rate 2026-06-11: attributing the speed ramp
 # (per-chop? per-bounce? eased motion?) needs leaf positions at loop
@@ -211,11 +228,42 @@ SPEED_WINDOW_S = 3.0
 POLL_LOG_INTERVAL = 0.0
 
 
+def _write_snap(
+    frames_dir: Path,
+    bar_frame: np.ndarray,
+    leaf_frame: np.ndarray | None,
+    tag: str,
+) -> None:
+    """Persist the (leaf strip + bar) composite the detector saw.
+
+    Called at the TOP of the loop iteration AFTER the frame was used,
+    so the imwrite never adds sample→click latency (fire-first rule)."""
+    if leaf_frame is not None and leaf_frame.shape[1] == bar_frame.shape[1]:
+        frame = np.vstack([leaf_frame, bar_frame])
+    else:
+        frame = bar_frame
+    save_frame(frames_dir / f"{tag}.png", frame)
+
+
 def run():
+    parser = argparse.ArgumentParser(description="Chopping minigame bot")
+    parser.add_argument(
+        "--save-frames", action="store_true",
+        help="Also write the (leaf+bar) composite the detector saw to "
+             "assets/captures/botrun_<stamp>/ (gitignored) — ~2 Hz "
+             "heartbeat plus one frame per chop, for offline diagnosis. "
+             "The launcher's 'Save frames' toggle sets "
+             "CHOPPING_SAVE_FRAMES instead.",
+    )
+    # parse_known_args so an import-and-call under pytest (or the GUI's
+    # bare invocation) never trips over foreign argv.
+    args, _ = parser.parse_known_args()
+    save_frames = args.save_frames or os.environ.get(
+        "CHOPPING_SAVE_FRAMES", "").strip().lower() in ("1", "on", "true", "yes")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         try:
-            _run_inner()
+            _run_inner(save_frames=save_frames)
         finally:
             # The DB is tracked so other machines get session data via
             # `git pull`. Rollback-journal mode keeps the on-disk file
@@ -228,8 +276,14 @@ def run():
             )
 
 
-def _run_inner():
+def _run_inner(save_frames: bool = False):
     print(f"Chopping bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
+    frames_dir = None
+    if save_frames:
+        frames_dir = (_HERE / "assets" / "captures"
+                      / f"botrun_{datetime.now():%Y%m%d_%H%M%S}")
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving frames to {frames_dir} (--save-frames)")
     time.sleep(2)
 
     conn = open_db(CHOPPING_DB)
@@ -279,9 +333,18 @@ def _run_inner():
     experiment_v_before: float | None = None
     # (wall_time, leaf_x, |vx|) over the recent window — feeds infer_vmax.
     speed_track: list[tuple[float, int, float]] = []
+    # Deferred frame save (--save-frames): (bar, leaf, tag) from the
+    # PREVIOUS iteration, written below at the top of this one — after
+    # the frame's fire decision is long done, so zero sample→click
+    # latency. Refs only; holding them is free.
+    pending_snap: tuple[np.ndarray, np.ndarray | None, str] | None = None
+    last_snap_t = 0.0
 
     while True:
         check_failsafe()
+        if pending_snap is not None:
+            _write_snap(frames_dir, *pending_snap)
+            pending_snap = None
         try:
             win_left, win_top, win_w, win_h = get_bounds(WINDOW_TITLE)
         except WindowNotFoundError as e:
@@ -317,6 +380,16 @@ def _run_inner():
 
         # Round-end check via bar disappearance — replaces game_over template.
         now = time.time()
+
+        # Heartbeat frame save (see SNAP_EVERY_S): queue this frame for
+        # the write at the next iteration's top. The click path below
+        # re-tags it chopNNN so fired frames are always kept.
+        if frames_dir is not None and now - last_snap_t >= SNAP_EVERY_S:
+            pending_snap = (
+                bar_frame, leaf_frame,
+                f"t{int((now - session_start_t) * 1000):07d}",
+            )
+            last_snap_t = now
 
         # Flush pending poll rows every couple of seconds. log_poll
         # doesn't commit per row and chop inserts are the only other
@@ -654,6 +727,13 @@ def _run_inner():
             # Random delay goes AFTER the click (no fire-time latency).
             # No blind cooldown sleep: arm the fire hold instead, so the
             # loop keeps sampling while the chop registers.
+            if frames_dir is not None:
+                # Fired frames always persist (written next iteration).
+                pending_snap = (
+                    bar_frame, leaf_frame,
+                    f"chop{chop_idx:03d}_t{int((click_time - session_start_t) * 1000):07d}",
+                )
+                last_snap_t = click_time
             fire_hold_layout = layout
             fire_hold_click_t = click_time
             fire_hold_rerolled = False

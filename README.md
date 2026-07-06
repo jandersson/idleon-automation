@@ -143,10 +143,11 @@ Click "Chop" when the sliding leaf is over the green (1pt) or gold (2pt) zone. T
 uv run chopping-pick-leaf-region   # the leaf's track above the bar
 uv run chopping-pick-bar-region    # the colored zone strip
 uv run chopping-pick-button-region # the "Chop" button
+uv run chopping-pick-score-region  # the live "N PTS" counter (OCR ground truth)
 uv run chopping-calibrate          # dumps masks/overlays to assets/calibration/
 ```
 
-**Then run:** `uv run chopping`
+**Then run:** `uv run chopping` (add `--save-frames` to persist the (leaf+bar) composite the detector saw — ~2 Hz heartbeat + one frame per chop — to `assets/captures/botrun_<stamp>/` for offline diagnosis; the launcher's "Save frames" toggle does the same)
 
 Tune `LEAF_HSV` / `GREEN_HSV` / `GOLD_HSV` / `RED_HSV_LOW` / `RED_HSV_HIGH` in `minigames/chopping/detector.py` if calibration shows a mask catching the wrong things.
 
