@@ -38,6 +38,18 @@ MINIGAMES = [
                 "values": ["on", "off"],
                 "default": "on",
             },
+            {
+                # Aiming mode (2026-07-06 refactor): 'plan' schedules
+                # clicks for the time-domain center of an upcoming
+                # zone crossing (fires through the ~600 px/s speed
+                # saturation where the reactive gate starves); 'gate'
+                # is the legacy in-zone time-to-red gate, kept as the
+                # validated fallback. Sets CHOPPING_AIM.
+                "label": "Aim",
+                "env": "CHOPPING_AIM",
+                "values": ["plan", "gate"],
+                "default": "plan",
+            },
         ],
     },
     {

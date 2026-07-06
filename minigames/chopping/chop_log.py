@@ -110,6 +110,18 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # zone='green' with a value = the wait hit its deadline and the
     # bot took the green anyway. NULL = no wait preceded this fire.
     ("gold_wait_ms", "INTEGER"),
+    # Planned-shot aiming (planner.py, 2026-07-06): which fire path
+    # produced this chop ('plan' or 'gate'), the predicted leaf x at
+    # impact, the planned time-margin to the nearest red boundary, and
+    # the decision->impact horizon. For 'plan' rows zone is the
+    # TARGETED zone (impact scheduled at its time-domain center);
+    # pointer_x remains the leaf position at the commit decision.
+    # Cross-checking zone against the pts_read step (+1/+2) measures
+    # the whole pipeline's aim accuracy.
+    ("aim_mode", "TEXT"),
+    ("target_x", "INTEGER"),
+    ("plan_margin_ms", "INTEGER"),
+    ("plan_impact_in_ms", "INTEGER"),
 ]
 
 

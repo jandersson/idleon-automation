@@ -151,19 +151,20 @@ def infer_vmax(
     return ests[min(len(ests) - 1, int(len(ests) * percentile))]
 
 
-def eased_time_to_red_ms(
-    x: int, direction: float, red_ahead: int, v_max: float, bar_w: int
-) -> int | None:
-    """Time (ms) for the leaf to cover red_ahead px in `direction`,
-    under the eased sweep model — position-aware, unlike
+def eased_time_to_x_s(
+    x: float, direction: float, distance: float, v_max: float, bar_w: int
+) -> float | None:
+    """Seconds for the leaf to cover `distance` px in `direction`, under
+    the eased sweep model — position-aware, unlike
     distance/instantaneous-speed: a leaf in the slow edge region takes
-    longer to reach a far red than the linear estimate says (it has to
-    accelerate first), and a mid-bar leaf reaches nearby red sooner
-    (it's already near peak speed). x(θ) = (W/2)(1−cosθ) gives
+    longer to reach a far point than the linear estimate says (it has
+    to accelerate first), and a mid-bar leaf reaches nearby points
+    sooner (it's already near peak speed). x(θ) = (W/2)(1−cosθ) gives
     θ(p) = arccos(1 − 2p/W) and time = Δθ / ω with ω = 2·V_max/W.
 
     Mirrors x for leftward motion so the math is direction-free.
-    Returns None when v_max/bar_w are unusable.
+    Returns None when v_max/bar_w are unusable. Distances beyond the
+    bar end clamp to the turnaround (the sweep's quarter period).
     """
     if v_max <= 0 or bar_w <= 0:
         return None
@@ -172,9 +173,18 @@ def eased_time_to_red_ms(
         return math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * p / bar_w)))
 
     xn = float(x) if direction > 0 else float(bar_w - x)
-    target = min(float(bar_w), xn + red_ahead)
+    target = min(float(bar_w), xn + distance)
     omega = 2.0 * v_max / bar_w
-    return int(max(0.0, theta(target) - theta(xn)) / omega * 1000)
+    return max(0.0, theta(target) - theta(xn)) / omega
+
+
+def eased_time_to_red_ms(
+    x: int, direction: float, red_ahead: int, v_max: float, bar_w: int
+) -> int | None:
+    """Time (ms) to the nearest red in `direction` — the fire gate's
+    original entry point; thin wrapper over eased_time_to_x_s."""
+    t = eased_time_to_x_s(x, direction, red_ahead, v_max, bar_w)
+    return None if t is None else int(t * 1000)
 
 
 def gold_window_ms(bar_frame: np.ndarray, v_max: float) -> int | None:

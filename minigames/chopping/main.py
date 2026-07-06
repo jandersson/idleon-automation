@@ -21,6 +21,7 @@ from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.chopping.chop_log import open_db, log_chop, log_poll, set_outcome, set_registered, set_pts
 from minigames.chopping.gold_wait import update_gold_chase
+from minigames.chopping.planner import parse_layout, plan_shot
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
@@ -44,6 +45,42 @@ WINDOW_TITLE = "Legends Of Idleon"
 # window resizes. Pick via chopping-pick-bar-region / chopping-pick-button-region.
 
 POLL_INTERVAL = 0.01
+
+# ---- Aiming mode (2026-07-06 refactor) ----------------------------------
+# "plan"  — planned shots (minigames/chopping/planner.py): pick the
+#           time-domain center of an upcoming zone crossing, schedule
+#           the click for impact minus CLICK_LATENCY_S, re-plan every
+#           poll, spin-wait to the exact moment, then fire. Fires from
+#           ANY leaf position and works deep into the ~600-650 px/s
+#           saturation where the reactive gate starves (a 74px green
+#           crosses in ~116ms there — no moment ever has 120ms of
+#           runway left). Center impacts also absorb the #110
+#           hit-point offset and the ±3px click jitter.
+# "gate"  — the legacy reactive time-to-red gate (fire only when the
+#           leaf is already in-zone with MIN_TIME_TO_RED_MS of runway).
+#           Kept as the validated fallback; the launcher's Aim toggle
+#           sets CHOPPING_AIM.
+AIM_MODE = os.environ.get("CHOPPING_AIM", "plan").strip().lower() or "plan"
+
+# Decision->impact click latency the scheduler compensates for.
+# pyautogui click (move+down+up) measured at 20-60ms on darts; the
+# fishing hold-release chain implied ~76ms. Start at 40ms; the logged
+# plan fields (target_x + the pts_read step outcomes) calibrate it —
+# a systematic early/late bias in +1-vs-+2 outcomes vs target depth
+# reads directly as a latency correction.
+CLICK_LATENCY_S = 0.040
+
+# Timing-error budget for planned impacts. RSS of: velocity-estimate
+# error over the ~120ms commit horizon (~10ms), position sample age
+# (~10ms), click-latency variance (~10ms), sub-ms spin-wait release.
+PLAN_SIGMA_MS = 16.0
+# Impacts must be this many sigmas from every red boundary (deaths are
+# the only real cost — 3 sigma ~= 48ms ~= 31px at saturation speed).
+PLAN_RED_SIGMAS = 3.0
+# Commit to a shot (stop re-planning, spin-wait, fire) when the
+# scheduled click is at most this far away. One loop iteration is
+# ~15-25ms, so the final plan uses a sample at most ~one frame old.
+PLAN_COMMIT_S = 0.08
 
 # Post-chop fire hold. A successful chop re-rolls the zone layout
 # within 86-201ms (observed, 00:46 session) — that re-roll is the
@@ -661,32 +698,175 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
         while speed_track and now - speed_track[0][0] > SPEED_WINDOW_S:
             speed_track.pop(0)
 
-        if pointer_x is not None and zone in ("green", "gold"):
-            # Post-chop re-arm: layout re-rolled (chop registered) AND
-            # the game's own chop-registration interval has passed —
-            # clicks earlier than that are silently ignored in-game
-            # (and an ignored click is pure downside: no point, still
-            # evaluated against red). Fallback deadline covers a 0px
-            # re-roll. The loop keeps sampling at full rate throughout.
-            if fire_hold_layout is not None:
-                interchop_ok = now - fire_hold_click_t >= MIN_INTERCHOP_S
-                fallback = now - fire_hold_click_t >= COOLDOWN_AFTER_CLICK
-                if (fire_hold_rerolled and interchop_ok) or fallback:
-                    if fallback and not fire_hold_rerolled and pending is not None:
-                        # No ack ever arrived — the game ignored the click.
-                        set_registered(conn, pending[0], 0)
-                    fire_hold_layout = None
-                else:
+        # Post-chop re-arm (top level — both aim modes): layout
+        # re-rolled (chop registered) AND the game's own
+        # chop-registration interval has passed — clicks earlier than
+        # that are silently ignored in-game (and an ignored click is
+        # pure downside: no point, still evaluated against red).
+        # Fallback deadline covers a 0px re-roll.
+        if fire_hold_layout is not None:
+            interchop_ok = now - fire_hold_click_t >= MIN_INTERCHOP_S
+            fallback = now - fire_hold_click_t >= COOLDOWN_AFTER_CLICK
+            if (fire_hold_rerolled and interchop_ok) or fallback:
+                if fallback and not fire_hold_rerolled and pending is not None:
+                    # No ack ever arrived — the game ignored the click.
+                    set_registered(conn, pending[0], 0)
+                fire_hold_layout = None
+
+        # ---- Planned-shot aiming (AIM_MODE == "plan") ----
+        # Re-plan every poll from the freshest sample; commit (spin-wait
+        # to the scheduled instant, then fire) only when the click is
+        # within PLAN_COMMIT_S. Absolute-time scheduling makes the click
+        # immune to loop jitter — the spin-wait absorbs it.
+        if (AIM_MODE == "plan" and pointer_x is not None
+                and fire_hold_layout is None
+                and now >= experiment_pause_until
+                and leaf_vx is not None and abs(leaf_vx) >= MIN_VX_FOR_FIRE):
+            v_max_p = infer_vmax(
+                [(x, v) for _, x, v in speed_track], bar_frame.shape[1])
+            plan = None
+            if v_max_p is not None:
+                plan = plan_shot(
+                    parse_layout(layout), float(pointer_x),
+                    1.0 if leaf_vx > 0 else -1.0,
+                    max(v_max_p, abs(leaf_vx)), bar_frame.shape[1],
+                    earliest_impact_s=CLICK_LATENCY_S,
+                    sigma_ms=PLAN_SIGMA_MS, red_sigmas=PLAN_RED_SIGMAS,
+                )
+            if plan is not None:
+                since_last_fire = (
+                    now - fire_hold_click_t if chop_idx > 0
+                    else now - session_start_t
+                )
+                # Cross-pass gold chase: a green plan while viable gold
+                # sits elsewhere on the bar defers exactly as before
+                # (the planner already prefers gold when it's feasible
+                # THIS sweep, so reaching here with a green plan means
+                # gold is behind/red-flanked/absent).
+                hold_for_gold = False
+                if (plan.zone_kind == "g" and GOLD_WAIT_ENABLED
+                        and not gold_gave_up and "o" in layout):
+                    viable = _gold_chase_viable(bar_frame, speed_track, leaf_vx)
+                    if not viable and not gold_unviable_printed:
+                        gold_unviable_printed = True
+                        print("  [aim] gold present but red-flanked — "
+                              "best window can't clear the gate; not chasing")
+                    hold_for_gold, gold_chase_since, gold_gave_up = update_gold_chase(
+                        gold_chase_since, now, viable, since_last_fire,
+                        same_sweep=False)
+                    if gold_gave_up and gold_chase_since is not None:
+                        print(f"  [aim] gold unfireable at this speed (chased "
+                              f"{now - gold_chase_since:.1f}s) — taking greens "
+                              f"until the next re-roll")
+                if hold_for_gold:
+                    if not waiting_gold:
+                        waiting_gold = True
+                        print("  [aim] gold on the bar but not plannable this "
+                              "sweep — holding green fires for a gold pass")
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
                         log_poll(conn, session_started,
                                  int((now - session_start_t) * 1000),
                                  pointer_x, zone, red_dist, bar_px, 0,
                                  zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                                 hold_reason="gold_wait",
                                  pts_read=pts_sample)
                         last_poll_log = now
                     time.sleep(POLL_INTERVAL)
                     continue
+                waiting_gold = False
 
+                fire_at = now + plan.impact_in_s - CLICK_LATENCY_S
+                if fire_at - time.time() <= PLAN_COMMIT_S:
+                    # Commit: hybrid sleep/spin to the scheduled instant
+                    # (Windows time.sleep granularity is ~15ms — the
+                    # final few ms busy-wait for sub-ms release).
+                    while True:
+                        rem = fire_at - time.time()
+                        if rem <= 0:
+                            break
+                        if rem > 0.004:
+                            time.sleep(0.002)
+                    button_cx = button_region["left"] + button_region["width"] // 2
+                    button_cy = button_region["top"] + button_region["height"] // 2
+                    click(win_left + button_cx, win_top + button_cy)
+                    click_time = time.time()
+                    zone_label = "gold" if plan.zone_kind == "o" else "green"
+                    last_click = (pointer_x, zone_label)
+                    gold_wait_ms = (
+                        int((click_time - gold_chase_since) * 1000)
+                        if gold_chase_since is not None else None
+                    )
+                    gold_chase_since = None
+                    gold_gave_up = False
+                    gold_unviable_printed = False
+                    wait_tag = ""
+                    if gold_wait_ms is not None:
+                        wait_tag = (f" after {gold_wait_ms}ms gold wait"
+                                    + (" (deadline — took green)"
+                                       if zone_label == "green" else ""))
+                    print(f"Planned {zone_label} impact at x={plan.target_x:.0f} "
+                          f"(from x={pointer_x}, vx={leaf_vx:+.0f} px/s, "
+                          f"margin {plan.margin_ms:.0f}ms, "
+                          f"horizon {plan.impact_in_s * 1000:.0f}ms) "
+                          f"— chop #{chop_idx + 1}{wait_tag}")
+                    if pending is not None:
+                        prev_row_id, prev_click_time, _ = pending
+                        set_outcome(conn, prev_row_id, "survived",
+                                    int((click_time - prev_click_time) * 1000))
+                    chop_idx += 1
+                    stats["clicks"] = chop_idx
+                    chops_since_pts += 1
+                    row_id = log_chop(
+                        conn,
+                        session_started=session_started,
+                        chop_idx=chop_idx,
+                        clicked_at=datetime.now().isoformat(timespec="milliseconds"),
+                        pointer_x=pointer_x,
+                        zone=zone_label,
+                        nearest_red_distance=red_dist,
+                        red_safety_margin=RED_SAFETY_MARGIN_PX,
+                        bar_left=bar_region["left"],
+                        bar_top=bar_region["top"],
+                        bar_width=bar_region["width"],
+                        bar_height=bar_region["height"],
+                        button_click_x=button_cx,
+                        button_click_y=button_cy,
+                        window_w=win_w,
+                        window_h=win_h,
+                        leaf_vx_px_s=leaf_vx,
+                        gold_wait_ms=gold_wait_ms,
+                        aim_mode="plan",
+                        target_x=int(plan.target_x),
+                        plan_margin_ms=int(min(plan.margin_ms, 10**6)),
+                        plan_impact_in_ms=int(plan.impact_in_s * 1000),
+                        code_commit=code_commit,
+                        source="bot",
+                    )
+                    log_poll(conn, session_started,
+                             int((click_time - session_start_t) * 1000),
+                             pointer_x, zone, red_dist, bar_px, 1,
+                             zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                             pts_read=pts_sample)
+                    last_poll_log = click_time
+                    pending = (row_id, click_time, zone_label)
+                    if frames_dir is not None:
+                        pending_snap = (
+                            bar_frame, leaf_frame,
+                            f"chop{chop_idx:03d}_t{int((click_time - session_start_t) * 1000):07d}",
+                        )
+                        last_snap_t = click_time
+                    fire_hold_layout = layout
+                    fire_hold_click_t = click_time
+                    fire_hold_rerolled = False
+                    hold_pts_read = False
+                    random_delay(20, 60)
+                    time.sleep(POLL_INTERVAL)
+                    continue
+                # Plan not yet in the commit window: keep polling — the
+                # plan refreshes from a fresher sample next iteration.
+
+        if AIM_MODE == "gate" and pointer_x is not None \
+                and zone in ("green", "gold") and fire_hold_layout is None:
             # Bounce-vs-chop experiment: deliberate fire pause (see
             # BOUNCE_EXPERIMENT_EVERY_N). Polls keep recording at full
             # rate throughout — that's the experiment.
@@ -904,6 +1084,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 red_ahead_px=red_ahead,
                 time_to_red_ms=time_to_red_ms,
                 gold_wait_ms=gold_wait_ms,
+                aim_mode="gate",
                 code_commit=code_commit,
                 source="bot",
             )

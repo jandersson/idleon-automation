@@ -153,6 +153,19 @@ confidence noted since none of this is from the game's code.
    load-bearing control; late-round it will (correctly) starve fires
    as speed rises, at which point the attempt has reached its
    natural ceiling.
+   UPDATE 2026-07-06: the gate's starve IS the score ceiling — at the
+   ~600-650 px/s saturation a 74px green crosses in ~116ms, so no
+   moment ever satisfies a 120ms-runway gate (runs 2-5 all ended
+   there, 18-24 chops). Replaced as default by **planned shots**
+   (`planner.py`): pick the time-domain center of an upcoming zone
+   crossing, schedule the click for impact minus CLICK_LATENCY_S
+   (40ms), re-plan every poll, spin-wait to the instant, fire.
+   Impacts must clear 3σ (σ=16ms) from every red boundary and 1σ
+   inside their own zone. Replay over run 5's polls: feasible plans
+   on 37% of the starve-tail polls where the gate found nothing
+   (median margin 62ms). Also fires from any leaf position and lands
+   mid-zone (absorbs the #110 hit-point offset). The gate survives as
+   CHOPPING_AIM=gate.
 4. Edge bounces can't be prevented (leaf motion is autonomous), so
    "avoid the sides" translates for a bot into: score as much as
    possible per unit time early, and bank yellow slowdowns.
