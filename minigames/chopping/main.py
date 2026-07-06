@@ -14,7 +14,7 @@ from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.monitor import save_frame
 from common.regions import get_region
-from common.score_ocr import read_leading_int
+from common.score_template_ocr import make_score_reader
 from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
@@ -67,24 +67,37 @@ COOLDOWN_AFTER_CLICK = 0.70
 REROLL_ACK_MAX_S = 0.40
 
 # Read the on-screen "N PTS" counter this long after each chop's click
-# — inside the fire hold (which lasts >= MIN_INTERCHOP_S), so the
-# ~100ms OCR costs no throughput, and late enough for the counter's
-# increment animation to settle.
+# — inside the fire hold (which lasts >= MIN_INTERCHOP_S), so the read
+# costs no throughput, and late enough for the counter's increment
+# animation to settle.
 PTS_READ_AFTER_S = 0.35
+
+# PTS counter OCR is template-based (common.score_template_ocr), NOT
+# tesseract — the pixel font reads digits as letters ('13 PTS' came
+# back 'NS PTE'; 2026-07-06 21:30 run). Templates live in
+# assets/digit_templates/<digit>.png, bootstrapped from --save-frames
+# score crops with model-known values; missing digits read None until
+# captured (the suffix-count rule makes that safe — see
+# make_score_reader). The counter is white-fill glyphs on the sky
+# background, hence the high binarize threshold.
+SCORE_TEMPLATES_DIR = _HERE / "assets" / "digit_templates"
+SCORE_BINARIZE_THRESHOLD = 200
+_score_reader = make_score_reader(
+    SCORE_TEMPLATES_DIR, suffix_components=(2, 3),
+    threshold=SCORE_BINARIZE_THRESHOLD,
+)
 
 
 def _read_pts(
     win_left: int, win_top: int, win_w: int, win_h: int,
     frames_dir: Path | None = None, t_ms: int | None = None,
 ) -> int | None:
-    """OCR the live PTS counter (region "score" in regions.json, picked
-    via chopping-pick-score-region). None when unpicked or unreadable.
-
-    The counter renders as "N PTS", so this uses read_leading_int —
-    the digits-only read_score whitelisted the PTS glyphs onto digits
-    ("16 PTS" -> 1675; 21:17 run). With --save-frames the crop is also
-    saved as score_t<t>_r<result>.png so misreads are diagnosable
-    offline (mining's digit_capture pattern).
+    """Read the live PTS counter (region "score" in regions.json, picked
+    via chopping-pick-score-region) via digit-template matching. None
+    when unpicked, or when any digit lacks a template yet (see
+    SCORE_TEMPLATES_DIR). With --save-frames the crop is saved as
+    score_t<t>_r<result>.png — the bootstrap source for missing digits
+    (mining's digit_capture pattern).
     """
     region = get_region(_HERE, "score", win_w, win_h)
     if region is None:
@@ -93,8 +106,7 @@ def _read_pts(
         win_left + region["left"], win_top + region["top"],
         region["width"], region["height"],
     )
-    gray = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR), cv2.COLOR_BGR2GRAY)
-    pts = read_leading_int(gray)
+    pts = _score_reader(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR))
     if frames_dir is not None:
         save_frame(frames_dir / f"score_t{t_ms or 0:07d}_r{pts}.png", frame)
     return pts
@@ -384,6 +396,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
     waiting_gold = False  # print-once flag for the cross-pass wait
     gold_unviable_printed = False  # print-once for a red-flanked gold
     last_starve_print = 0.0  # drought heartbeat cadence
+    chops_since_pts = 0  # fires since the last accepted PTS read
     # Bounce-vs-chop experiment state: fire pause deadline + the V_max
     # snapshot taken at pause start (also serves as the resume flag).
     experiment_pause_until = 0.0
@@ -544,6 +557,40 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
             conn.close()
             return
 
+        # PTS ground truth: one read per fire hold, PTS_READ_AFTER_S
+        # post-click — late enough for the counter's increment to
+        # settle, and always still inside the hold (which lasts at
+        # least MIN_INTERCHOP_S > PTS_READ_AFTER_S), so it can never
+        # add fire latency. Top-level on purpose: it used to sit inside
+        # the leaf-over-green/gold branch, which only read when the
+        # leaf HAPPENED to be over a zone at the right moment — 8 reads
+        # out of 20 chops in the 21:30 run.
+        if (chop_idx > 0 and not hold_pts_read
+                and now - fire_hold_click_t >= PTS_READ_AFTER_S):
+            hold_pts_read = True
+            pts = _read_pts(win_left, win_top, win_w, win_h,
+                            frames_dir=frames_dir,
+                            t_ms=int((now - session_start_t) * 1000))
+            # Plausibility gate: within a round the counter never
+            # decreases and rises at most +2 per chop. Rejects the
+            # glyph-merge failure ('20 PTS' with 0+P merged reads as
+            # a bare 2 — observed 21:30 run) that survives the
+            # suffix-count rule; the crop file keeps the evidence.
+            plausible = pts is not None and (
+                last_pts is None
+                or (pts >= last_pts
+                    and pts - last_pts <= 2 * chops_since_pts + 2)
+            )
+            if plausible:
+                last_pts = pts
+                stats["pts"] = pts
+                chops_since_pts = 0
+                if pending is not None:
+                    set_pts(conn, pending[0], pts)
+            elif pts is not None:
+                print(f"  [pts] implausible read {pts} "
+                      f"(last {last_pts}, {chops_since_pts} chops since) — ignored")
+
         # Drought heartbeat: a starving round is silent for up to 60s
         # before the exit banks — which reads as a hang (the 21:01 run
         # was failsafed 6s before its starve exit would have banked).
@@ -588,19 +635,6 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                         set_registered(conn, pending[0], 0)
                     fire_hold_layout = None
                 else:
-                    # PTS ground truth: one OCR per hold, after the
-                    # counter's increment settles. Sits inside the
-                    # mandatory inter-chop wait — zero throughput cost.
-                    if not hold_pts_read and now - fire_hold_click_t >= PTS_READ_AFTER_S:
-                        hold_pts_read = True
-                        pts = _read_pts(win_left, win_top, win_w, win_h,
-                                        frames_dir=frames_dir,
-                                        t_ms=int((now - session_start_t) * 1000))
-                        if pts is not None:
-                            last_pts = pts
-                            stats["pts"] = pts
-                            if pending is not None:
-                                set_pts(conn, pending[0], pts)
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
                         log_poll(conn, session_started,
                                  int((now - session_start_t) * 1000),
@@ -801,6 +835,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
 
             chop_idx += 1
             stats["clicks"] = chop_idx
+            chops_since_pts += 1
             row_id = log_chop(
                 conn,
                 session_started=session_started,

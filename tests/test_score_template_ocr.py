@@ -203,3 +203,71 @@ def test_unknown_digit_in_score_returns_none():
                     crop2[4 + py, 4 + px] = (249, 249, 249)
         crop2[6:11, 20:25] = (249, 249, 249)  # 5px tall vs 9px digit
         assert reader(crop2) == 6
+
+
+# --- suffix-tolerant reader (chopping's "N PTS" counter) ---
+
+_G1 = np.array([[0,255,0],[255,255,0],[0,255,0],[0,255,255]], dtype=np.uint8)
+_G2 = np.array([[255,255,255],[0,0,255],[255,255,0],[255,255,255]], dtype=np.uint8)
+_LP = np.array([[255,0,255],[255,0,255],[255,255,255],[255,0,255]], dtype=np.uint8)
+_LT = np.array([[255,255,255],[0,255,0],[0,255,0],[0,255,0]], dtype=np.uint8)
+_LS = np.array([[0,255,255],[255,0,0],[0,255,0],[255,255,0]], dtype=np.uint8)
+_UNK = np.array([[255,0,0],[255,255,0],[255,0,255],[255,255,255]], dtype=np.uint8)
+
+
+def _compose_crop(glyphs, bg=128):
+    """Place 4x3 glyphs on a light background, 2px apart, mimicking the
+    chopping counter (white fill on sky, binarize threshold 200)."""
+    crop = np.full((6, 2 + len(glyphs) * 5), bg, dtype=np.uint8)
+    for i, g in enumerate(glyphs):
+        x = 1 + i * 5
+        region = crop[1:5, x:x + 3]
+        region[g > 0] = 255
+    return crop
+
+
+def _suffix_reader(tmp_path):
+    from common.score_template_ocr import save_template
+    save_template(tmp_path, 1, _G1)
+    save_template(tmp_path, 2, _G2)
+    return make_score_reader(tmp_path, suffix_components=(2, 3), threshold=200)
+
+
+def test_suffix_reader_reads_digits_before_suffix(tmp_path):
+    reader = _suffix_reader(tmp_path)
+    crop = _compose_crop([_G2, _G1, _LP, _LT, _LS])  # "21 PTS"
+    assert reader(crop) == 21
+
+
+def test_suffix_reader_accepts_clipped_suffix(tmp_path):
+    # Wider scores push the suffix's last letter out of the crop: "21 PT".
+    reader = _suffix_reader(tmp_path)
+    assert reader(_compose_crop([_G2, _G1, _LP, _LT])) == 21
+
+
+def test_suffix_reader_rejects_missing_digit_template(tmp_path):
+    # "16 PTS" with no '6' template: unmatched tail is 4 components
+    # (6,P,T,S) — must read None, NOT truncate to 1.
+    reader = _suffix_reader(tmp_path)
+    assert reader(_compose_crop([_G1, _UNK, _LP, _LT, _LS])) is None
+
+
+def test_suffix_reader_rejects_digit_after_suffix(tmp_path):
+    # A matched digit after the suffix began is ambiguous.
+    reader = _suffix_reader(tmp_path)
+    assert reader(_compose_crop([_G1, _LP, _LT, _G2])) is None
+
+
+def test_suffix_reader_requires_a_suffix(tmp_path):
+    # Bare digits with no unmatched tail: not the expected shape.
+    reader = _suffix_reader(tmp_path)
+    assert reader(_compose_crop([_G2, _G1])) is None
+
+
+def test_digits_only_reader_rejects_any_unmatched(tmp_path):
+    from common.score_template_ocr import save_template
+    save_template(tmp_path, 1, _G1)
+    save_template(tmp_path, 2, _G2)
+    reader = make_score_reader(tmp_path, threshold=200)
+    assert reader(_compose_crop([_G2, _G1])) == 21
+    assert reader(_compose_crop([_G2, _G1, _LP])) is None

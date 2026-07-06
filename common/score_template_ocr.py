@@ -38,23 +38,30 @@ MIN_COMPONENT_WIDTH = 2
 MIN_COMPONENT_HEIGHT = 4
 
 
-def binarize(crop: np.ndarray) -> np.ndarray:
-    """Threshold the score crop to a binary (0/255) digit mask."""
+def binarize(crop: np.ndarray, threshold: int = BINARIZE_THRESHOLD) -> np.ndarray:
+    """Threshold the score crop to a binary (0/255) digit mask.
+
+    The default suits dark-background readouts (hoops/darts/mining).
+    Light backgrounds need a higher cut: chopping's "N PTS" counter is
+    white-fill glyphs (255) with a black outline on a gray-blue sky
+    (~128-161), so threshold 200 isolates the fill (2026-07-06)."""
     if crop.ndim == 3:
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     else:
         gray = crop
-    _, binary = cv2.threshold(gray, BINARIZE_THRESHOLD, 255, cv2.THRESH_BINARY)
+    _, binary = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
     return binary
 
 
-def extract_digit_components(crop: np.ndarray) -> list[tuple[np.ndarray, tuple[int, int, int, int]]]:
+def extract_digit_components(
+    crop: np.ndarray, threshold: int = BINARIZE_THRESHOLD,
+) -> list[tuple[np.ndarray, tuple[int, int, int, int]]]:
     """Threshold and extract one binary patch per detected digit.
 
     Returns a list of (binary_patch, (x, y, w, h)) tuples sorted
     left-to-right by x. Empty list when nothing readable is detected.
     """
-    binary = binarize(crop)
+    binary = binarize(crop, threshold)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
     components: list[tuple[np.ndarray, tuple[int, int, int, int]]] = []
     # Label 0 is the background — skip.
@@ -146,28 +153,47 @@ def save_template(template_dir: Path, digit: int, patch: np.ndarray) -> Path:
     return path
 
 
-def make_score_reader(template_dir: Path) -> Callable[[np.ndarray | None], int | None]:
+def make_score_reader(
+    template_dir: Path,
+    suffix_components: tuple[int, int] | None = None,
+    threshold: int = BINARIZE_THRESHOLD,
+) -> Callable[[np.ndarray | None], int | None]:
     """Build a `read_score(crop) -> int | None` bound to the given
-    template library. Templates load once at make-time, not per call."""
+    template library. Templates load once at make-time, not per call.
+
+    suffix_components=(lo, hi) handles readouts with a fixed text suffix
+    (chopping's "21 PTS"): leading components that match digit templates
+    are the number; everything after the first unmatched component must
+    ALSO be unmatched, and the unmatched tail's length must fall in
+    [lo, hi] — the letter count of the suffix (a range because the last
+    letter can clip out of the crop at wider scores). This is what makes
+    a missing digit template safe: "16 PTS" with no '6' template leaves
+    an unmatched tail of 4 (6,P,T,S), outside (2,3), and reads None
+    instead of silently truncating to 1.
+    """
     templates = load_templates(template_dir)
 
     def read_score(crop: np.ndarray | None) -> int | None:
         if crop is None:
             return None
-        components = extract_digit_components(crop)
+        components = extract_digit_components(crop, threshold)
         if not components:
             return None
-        digit_chars: list[str] = []
-        for patch, _box in components:
-            d = match_digit(patch, templates)
-            if d is None:
+        matches = [match_digit(patch, templates) for patch, _box in components]
+        # Split at the first unmatched component.
+        k = next((i for i, d in enumerate(matches) if d is None), len(matches))
+        digits, tail = matches[:k], matches[k:]
+        if not digits:
+            return None
+        if suffix_components is None:
+            if tail:
                 return None
-            digit_chars.append(str(d))
-        if not digit_chars:
-            return None
-        try:
-            return int("".join(digit_chars))
-        except ValueError:
-            return None
+        else:
+            lo, hi = suffix_components
+            if not (lo <= len(tail) <= hi):
+                return None
+            if any(d is not None for d in tail):
+                return None  # digit after the suffix began — ambiguous
+        return int("".join(str(d) for d in digits))
 
     return read_score
