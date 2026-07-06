@@ -537,6 +537,37 @@ captures is the same brown pile; platinum/starfire may not even match the
 current brown HSV signature, i.e. would be INVISIBLE and crash the cart,
 not just under-prioritised), and digits 5-9 for the PTS reader (#6).
 
+### Runs 16-17 (2026-07-06 live) — FIRST BOT POINT; then a death that found an estimator bias
+
+Two live auto runs on the Run-15 build, both attempts productive:
+
+- **Run 16 (14:32): the bot's first scored point.** jump(pit, d=31, v≈92) →
+  jump(ore, d=79) → slam(ore, d=11) — all survived, PTS 0→1, the slam
+  retune validated (n=1) and the rebound rose to ~92px exactly as measured
+  offline. It died later on a pit the scan lost right before arrival
+  (width read collapsed 50→6 while plank_y flapped 184→192) — issue #103.
+- **Run 17 (14:40, --save-frames): died at pit 1, and the frames convict
+  the ScrollVelocity estimator.** True scroll ≈80 px/s (wall-clock
+  anchors); the estimator reported 105.7, which scaled the pit window to
+  [27,40] and fired at d=39. The scene froze with the pit at [427,483] and
+  the cart at ~[449,485]: the far edge had passed the cart's RIGHT edge by
+  2px but its center was 16px inside — landed at the far lip, the exact
+  bound-(2) death. **Root cause: per-frame-pair velocity samples with a
+  SCROLL_V_MIN floor.** Obstacle x is integer-quantized (~3px/frame), so
+  pairs legitimately read 0px; the floor dropped only those (as "frozen
+  scene") and kept the 6-7px pairs — a ~+30% systematic bias. Fixed by
+  measuring velocity over an 8-frame (x, t) window (endpoint slope,
+  ~0.3s), where zeros average in; the plausibility band applies to the
+  window value only. Replay-validated on both captures: death run f32 reads
+  82.3 (win [21,31] — d=39 correctly does NOT fire), scoring run tracks
+  81 → 114 across the ramp with no overshoot.
+- **Collision-model datum (the Run-11 open question):** the far edge
+  passing cart_right is NOT sufficient — the reference is at/near the cart
+  body, so bound (2) effectively needs ~half-cart extra margin. Don't
+  re-derive the window top from physics constants; the empirical bins are
+  the arbiter (D=29/31 survive at v≈80-92, D=39 dies at v≈80; A measured
+  ~0.96s this run vs 0.88 earlier).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

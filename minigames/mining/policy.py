@@ -148,56 +148,84 @@ def is_cart_airborne(cart_y: Optional[int], grounded_baseline_y: Optional[int],
 SCROLL_V_REF_PIT = 79.0
 SCROLL_V_REF_ORE = 88.0
 
-# Plausibility band for a single-frame velocity sample. Below 20 px/s the
-# scene is frozen (death screen, plank mis-lock) or the sample straddles an
-# obstacle-identity switch; above 250 px/s it's a detection jump, not scroll.
+# Plausibility band for a WINDOWED velocity estimate. Below 20 px/s the
+# scene is frozen (death screen); above 250 px/s it's a detection jump, not
+# scroll. Applied to the multi-frame window value only — NEVER to a single
+# frame pair: obstacle x moves ~3px/frame with integer quantization, so
+# individual pairs legitimately read 0 px, and rejecting those while keeping
+# the fast pairs biased the estimate ~+30% high (the 2026-07-06 14:40 death:
+# estimator said 105.7 px/s where wall-clock ground truth was ~80, inflating
+# the pit window to [27,40] and firing at 39 — the cart landed 16px inside
+# the far lip).
 SCROLL_V_MIN, SCROLL_V_MAX = 20.0, 250.0
-SCROLL_MAX_DT_S = 0.2       # samples farther apart than this don't pair
-SCROLL_PLANK_JITTER_PX = 3  # plank_y moved more than this => mis-lock, reject
+SCROLL_MAX_DT_S = 0.2       # frames farther apart than this break the chain
+SCROLL_PLANK_JITTER_PX = 3  # plank_y moved more than this => mis-lock, break
+SCROLL_WINDOW_FRAMES = 8    # (x, t) window the velocity is measured over
+SCROLL_MIN_SPAN_S = 0.12    # window must span this long before it counts
 
 
 class ScrollVelocity:
     """Live scroll-speed estimate (px/s) from the nearest-obstacle x track.
 
-    Feed every frame's `find_next_terrain` result; consecutive frames whose
-    nearest obstacle is the SAME feature (same kind, leftward x delta inside
-    the plausibility band, stable plank lock) contribute (x0-x1)/dt samples
-    to an EMA. Identity switches (a pit scrolls past, the next obstacle pops
-    in at a larger x), frozen death screens, and plank mis-locks are all
-    rejected by the gates, so no explicit obstacle tracker is needed.
+    Feed every frame's `find_next_terrain` result. Frames whose nearest
+    obstacle is the SAME feature (same kind, non-rightward x step of
+    plausible size, stable plank lock, small dt) extend a chain of (x, t)
+    samples; velocity is the endpoint slope over the last
+    SCROLL_WINDOW_FRAMES of the chain (~0.3s), EMA-smoothed. Measuring over
+    the window instead of per frame pair lets the integer-quantized 0px
+    steps average against the 6-7px ones — filtering per pair against a
+    minimum speed silently drops only the slow samples and biases the
+    estimate high (see the SCROLL_V_MIN comment). Identity switches (a pit
+    scrolls past, the next obstacle pops in at a larger x), death-screen
+    freezes, and plank mis-locks all break the chain or fail the windowed
+    plausibility band, so no explicit obstacle tracker is needed.
 
-    velocity() returns None until `warmup` samples have been accepted —
-    callers fall back to the static (v_ref-tuned) windows until then.
+    velocity() returns None until `warmup` window values have been
+    accepted — callers fall back to the static (v_ref-tuned) windows.
     """
 
     def __init__(self, warmup: int = 8, alpha: float = 0.25):
         self._warmup = warmup
         self._alpha = alpha
-        self._prev: Optional[tuple] = None  # (x, kind, plank_y, t)
+        self._chain: deque[tuple] = deque(maxlen=SCROLL_WINDOW_FRAMES)  # (x, t)
+        self._kind: Optional[str] = None
+        self._plank: Optional[int] = None
         self._v: Optional[float] = None
         self._n = 0
 
     def update(self, terrain: Optional[dict], plank_y: Optional[int],
                now: float) -> None:
-        prev = self._prev
-        cur = None
-        if terrain is not None and terrain.get("x") is not None:
-            cur = (terrain["x"], terrain.get("kind"), plank_y, now)
-        self._prev = cur  # a no-terrain frame breaks the pairing chain
-        if prev is None or cur is None:
+        if terrain is None or terrain.get("x") is None:
+            self._chain.clear()  # a no-terrain frame breaks the chain
+            self._kind = None
+            self._plank = None
             return
-        x0, k0, p0, t0 = prev
-        x1, k1, p1, t1 = cur
-        dt = t1 - t0
-        if not (0.0 < dt <= SCROLL_MAX_DT_S):
+        x, kind = terrain["x"], terrain.get("kind")
+        prev_plank = self._plank
+        self._plank = plank_y
+        if self._chain:
+            x_prev, t_prev = self._chain[-1]
+            dt = now - t_prev
+            dx = x - x_prev
+            plank_moved = (prev_plank is None or plank_y is None or
+                           abs(plank_y - prev_plank) > SCROLL_PLANK_JITTER_PX)
+            if (kind != self._kind or plank_moved
+                    or not (0.0 < dt <= SCROLL_MAX_DT_S)
+                    or dx > 0                      # rightward: new obstacle
+                    or dx < -(SCROLL_V_MAX * dt + 2)):  # too far: not scroll
+                self._chain.clear()
+        self._kind = kind
+        self._chain.append((x, now))
+        if len(self._chain) < 3:
             return
-        if k1 != k0:
+        x0, t0 = self._chain[0]
+        x1, t1 = self._chain[-1]
+        span = t1 - t0
+        if span < SCROLL_MIN_SPAN_S:
             return
-        if p0 is None or p1 is None or abs(p1 - p0) > SCROLL_PLANK_JITTER_PX:
-            return
-        v = (x0 - x1) / dt  # leftward scroll => positive px/s
+        v = (x0 - x1) / span  # leftward scroll => positive px/s
         if not (SCROLL_V_MIN <= v <= SCROLL_V_MAX):
-            return
+            return  # frozen scene (all-zero window) or detection garbage
         self._v = v if self._v is None else (
             (1 - self._alpha) * self._v + self._alpha * v)
         self._n += 1

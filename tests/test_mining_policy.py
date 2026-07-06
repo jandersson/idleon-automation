@@ -240,14 +240,42 @@ def test_scroll_velocity_rejects_identity_switches_and_mislocks():
     scene (death screen), and a plank mis-lock frame must all contribute
     nothing."""
     sv = ScrollVelocity(warmup=1)
-    _feed(sv, [400, 396], kind="pit")
+    _feed(sv, PIT_TRACK_EARLY[:8], kind="pit")
     v0 = sv.velocity()
     assert v0 is not None
     sv.update({"kind": "ore", "x": 500, "distance_px": 0}, 190, 100.0)
     sv.update({"kind": "ore", "x": 620, "distance_px": 0}, 190, 100.04)  # rightward
-    sv.update({"kind": "ore", "x": 620, "distance_px": 0}, 190, 100.08)  # frozen
-    sv.update({"kind": "ore", "x": 616, "distance_px": 0}, 149, 100.12)  # plank jumped
+    # A frozen scene: the chain builds but the windowed velocity is 0,
+    # below the plausibility floor.
+    for j in range(10):
+        sv.update({"kind": "ore", "x": 620, "distance_px": 0}, 190, 100.08 + j / FPS)
+    sv.update({"kind": "ore", "x": 616, "distance_px": 0}, 149, 101.0)  # plank jumped
     assert sv.velocity() == v0   # none of those moved the estimate
+
+
+# Nearest-pit x per frame from botrun_20260706_144046 (the 14:40 death run),
+# frames 2-32 (grounded approach up to the fire). Wall-clock ground truth for
+# this stretch is ~80 px/s (telemetry: 39px over 0.485s pre-fire; traj: 16px
+# over 0.20s post-fire). The track has four 0px frame steps (integer
+# quantization at ~3px/frame) mixed with 6-7px ones.
+PIT_TRACK_DEATH_RUN = [618, 615, 612, 610, 607, 603, 603, 602, 596, 594,
+                       588, 586, 586, 580, 578, 572, 571, 568, 564, 563,
+                       556, 555, 555, 548, 547, 540, 538, 538, 532, 530, 524]
+
+
+def test_scroll_velocity_not_biased_high_by_quantization_zeros():
+    """Regression for the 2026-07-06 14:40 death: filtering per frame PAIR
+    against SCROLL_V_MIN drops the quantization-zero steps but keeps the
+    fast ones, biasing the estimate ~+30% (105.7 reported vs ~80 true) —
+    which widened the pit window to [27,40], fired the jump at dist 39, and
+    landed the cart 16px inside the pit's far lip. The windowed estimator
+    must stay near the true speed on the same track."""
+    sv = ScrollVelocity()
+    _feed(sv, PIT_TRACK_DEATH_RUN)
+    v = sv.velocity()
+    assert v is not None
+    assert v <= 90          # the biased estimator read ~100+ here
+    assert 65 <= v          # sanity: it's still measuring real scroll
 
 
 def test_scale_window_static_until_warmed_then_scales():
