@@ -498,3 +498,40 @@ def test_pit_fire_ceiling_gap_aware_clear_target():
     assert pit_fire_ceiling(90.0, 50, gap_to_next=39) == base + 2
     # Very tight gap: target floors at 4 (still clears this pit's far edge).
     assert pit_fire_ceiling(90.0, 50, gap_to_next=20) == base + 8
+
+
+def test_ore_fire_pick_steers_the_rebound_landing_off_a_pit():
+    """#107: at v=100 (chain shift = D + 18 + 110) a downstream pit at
+    d=190/w=50 has its center-kill zone at D in [80,130] — window entry
+    (96) predicts a center-in-pit landing, while small D values land short
+    of it. The pick must move the fire away from the dead zone."""
+    from minigames.mining.policy import ore_fire_pick, _landing_margin
+    pit = {"kind": "pit", "distance_px": 190, "width": 50}
+    # window entry would die: margin at D=96 is negative
+    assert _landing_margin(pit, 96 + 18 + 110, ore_floor=25) < 0
+    pick = ore_fire_pick(100.0, [pit], 55, 96, ore_floor=25)
+    assert pick is not None
+    assert _landing_margin(pit, pick + 18 + 110, ore_floor=25) > 0
+    assert pick <= 66   # lands short of the pit with the safe margin in hand
+
+
+def test_ore_fire_pick_keeps_fallback_lead_from_a_downstream_ore():
+    """Run 28's death shape: an ore reaching the bumper at the rebound
+    touchdown. The pick must leave at least the fallback-jump lead."""
+    from minigames.mining.policy import ore_fire_pick, _landing_margin
+    ore = {"kind": "ore", "distance_px": 240, "width": 20}
+    assert _landing_margin(ore, 96 + 18 + 110, ore_floor=25) < 0  # entry: e=16 < floor
+    pick = ore_fire_pick(100.0, [ore], 55, 96, ore_floor=25)
+    assert _landing_margin(ore, pick + 18 + 110, ore_floor=25) >= 0
+    assert pick <= 87
+
+
+def test_ore_fire_pick_defaults_when_blind_or_clear():
+    from minigames.mining.policy import ore_fire_pick
+    assert ore_fire_pick(None, [{"kind": "pit", "distance_px": 190, "width": 50}],
+                         55, 96, 25) is None
+    assert ore_fire_pick(100.0, [], 55, 96, 25) is None
+    # Everything clear at every D -> ties resolve to the LARGEST distance
+    # (the window-entry default behaviour, preserved).
+    far = {"kind": "pit", "distance_px": 400, "width": 50}
+    assert ore_fire_pick(100.0, [far], 55, 96, 25) == 96

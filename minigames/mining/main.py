@@ -58,7 +58,7 @@ from minigames.mining.digit_capture import DigitCapturer
 from minigames.mining.policy import (
     GroundedBaseline, PlankLock, ScrollVelocity, should_jump, should_slam,
     should_steer_slam, is_cart_airborne, scale_window, scale_slam_dist,
-    pit_fire_ceiling,
+    pit_fire_ceiling, ore_fire_pick,
     SCROLL_V_REF_PIT, SCROLL_V_REF_ORE, STEER_SLAM_MIN, STEER_SLAM_MAX,
 )
 
@@ -412,6 +412,14 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         scroll_v = scroll.velocity()
         trig_min, trig_max = scale_window(
             JUMP_TRIGGER_MIN, JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_PIT)
+        ore_trig_min, ore_trig_max = scale_window(
+            ORE_JUMP_TRIGGER_MIN, ORE_JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_ORE)
+        slam_max_dist = scale_slam_dist(
+            ORE_SLAM_MAX_DIST, scroll_v, SCROLL_V_REF_ORE)
+        steer_min, steer_max = scale_window(
+            STEER_SLAM_MIN, STEER_SLAM_MAX, scroll_v, SCROLL_V_REF_PIT)
+        ore_fb_min, _ = scale_window(
+            ORE_FALLBACK_MIN, ORE_FALLBACK_MIN, scroll_v, SCROLL_V_REF_PIT)
         # Landing-targeted ceiling for pits (#105): with live v and the
         # pit's measured width, aim the landing center ~CLEAR_TARGET past
         # the far edge instead of firing at the proportional window edge.
@@ -427,14 +435,17 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                                        gap_to_next=gap_to_next)
             if ceiling is not None:
                 trig_max = ceiling
-        ore_trig_min, ore_trig_max = scale_window(
-            ORE_JUMP_TRIGGER_MIN, ORE_JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_ORE)
-        slam_max_dist = scale_slam_dist(
-            ORE_SLAM_MAX_DIST, scroll_v, SCROLL_V_REF_ORE)
-        steer_min, steer_max = scale_window(
-            STEER_SLAM_MIN, STEER_SLAM_MAX, scroll_v, SCROLL_V_REF_PIT)
-        ore_fb_min, _ = scale_window(
-            ORE_FALLBACK_MIN, ORE_FALLBACK_MIN, scroll_v, SCROLL_V_REF_PIT)
+        # Ore-jump fire placement (#107): choose WHERE in the ore window to
+        # fire so the slam-rebound's predicted touchdown clears the
+        # downstream obstacles (runs 27/28 died on rebound landings pinned
+        # onto sub-floor obstacles). Coarse (T_REB +-0.2s) — a repellent
+        # from predicted dead zones, replacing the arbitrary window-entry
+        # fire. No downstream / unwarmed v keeps the default.
+        elif terrain is not None and terrain.get("kind") == "ore":
+            pick = ore_fire_pick(scroll_v, terrain_ahead[1:4],
+                                 ore_trig_min, ore_trig_max, ore_fb_min)
+            if pick is not None:
+                ore_trig_max = pick
 
         # --- FIRE FIRST: decide + click immediately after detection, before
         # any bookkeeping (state publish, settle, score read, digit capture,

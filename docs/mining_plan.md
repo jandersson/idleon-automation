@@ -856,6 +856,33 @@ choose WHERE in the ~34px ore window to fire the ore jump so the
 predicted rebound landing clears obstacles (#107; needs the two-arc
 travel constant measured from the 12 captured scoring slams).
 
+### #107 first delivery (2026-07-06) — ore-jump fire placement
+
+The chain model: SHIFT(click→rebound touchdown) = D_fire + 18 (pure
+distance, click→slam contact) + v·T_REB (rebound leg). **Calibration is
+coarse:** landmark measurement fails (everything visible at click
+scrolls out before touchdown; occluded arc frames defeat cumulative
+scroll counting), and log back-calculation pins T_REB only to
+**0.9-1.3s** → ~±15px landing-prediction error against a ~±17px lever.
+Shipped accordingly as a REPELLENT, not a targeting laser:
+`policy.ore_fire_pick` scans the ore window from entry downward, keeps
+the FIRST fire distance whose predicted worst-obstacle margin clears
+ORE_PICK_SAFE_MARGIN_PX (15 — the error bar), and falls back to argmax
+margin when nothing is safe. Window-entry behaviour is preserved
+whenever it is safe; None (unwarmed v / nothing downstream) keeps the
+default entirely. Consumes the full lookahead list (run 28's fatal ore
+was the THIRD obstacle — next2 alone wouldn't have seen it).
+
+Postdiction on the motivating deaths: run 28's pick would have fired at
+the window bottom, landing with the fatal ore at ~20px instead of 0 —
+marginal, but converts certain death into a fallback-jump race. Run
+27's fatal rebound came from a JUMP-ARC CONVERSION slam (a pit-jump
+chain — this lever doesn't apply); extending the same landing
+prediction to the conversion-slam decision is the natural follow-up,
+noted in #107. Refining T_REB needs runtime touchdown instrumentation
+(the [traj] lines carry it; a settle-time landing log column would make
+it queryable).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

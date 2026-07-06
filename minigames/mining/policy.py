@@ -333,6 +333,80 @@ def pit_fire_ceiling(v: Optional[float], width: Optional[int],
     return int(round(min(max(d, lo), hi)))
 
 
+# --- Ore-jump fire placement (#107) ---
+#
+# A scoring slam's rebound touchdown is FIXED the moment the slam
+# connects, and runs 27/28 both died on rebound landings pinned onto
+# sub-floor obstacles where every mid-air window was empty. The only
+# lever is one decision earlier: WHERE in the ~34px ore window the ore
+# jump fires. The chain's world travel decomposes as
+#   SHIFT = D_fire + half_cart  (click -> slam contact; pure distance)
+#         + v * ORE_CHAIN_T_REB_S  (contact -> rebound touchdown)
+# so a downstream obstacle seen at d at fire time sits at d - SHIFT
+# (cart_right-relative) when the rebound lands, and D_fire moves that 1:1.
+#
+# CALIBRATION IS COARSE: T_REB back-calculated from the logged chains
+# spans 0.9-1.3s (landmarks scroll out of view before touchdown, and
+# occluded arc frames defeat cumulative frame measurement), so the
+# landing prediction carries ~+-15px of error against a ~+-17px lever.
+# This is a repellent, not a targeting laser — window-entry firing is an
+# ARBITRARY point, so steering away from predicted dead zones still wins
+# in expectation, but margins below the error bar are noise. Refine
+# T_REB from runtime touchdown logging before trusting fine margins.
+ORE_CHAIN_T_REB_S = 1.1
+
+
+def _landing_margin(o: dict, shift: float, ore_floor: float) -> float:
+    """Signed safety margin (px) of one downstream obstacle at the
+    predicted rebound touchdown. Positive = clear; negative = the landing
+    is inside the obstacle's kill zone (center-in-pit, or ore within
+    front-contact range and not yet fully passed)."""
+    e = o["distance_px"] - shift          # near edge, cart_right-based
+    w = o.get("width") or 20
+    if o.get("kind") == "pit":
+        if e > -CART_HALF_WIDTH_PX:
+            return e + CART_HALF_WIDTH_PX          # center not yet reached
+        if e + w < -CART_HALF_WIDTH_PX:
+            return -CART_HALF_WIDTH_PX - (e + w)   # center already past
+        return -min(-CART_HALF_WIDTH_PX - e, e + w + CART_HALF_WIDTH_PX) - 1
+    # ore: safe with fallback-jump lead in hand, or fully behind the body
+    if e >= ore_floor:
+        return e - ore_floor
+    if e + w <= -2 * CART_HALF_WIDTH_PX:
+        return -2 * CART_HALF_WIDTH_PX - (e + w)
+    return -min(ore_floor - e, e + w + 2 * CART_HALF_WIDTH_PX) - 1
+
+
+# A predicted landing margin at or above this is treated as safe — it
+# clears the ~+-15px T_REB error bar. The pick keeps the LARGEST fire
+# distance whose margin reaches it (i.e. the window-entry default
+# whenever the default is safe) and only optimizes when nothing does.
+ORE_PICK_SAFE_MARGIN_PX = 15
+
+
+def ore_fire_pick(v: Optional[float], downstream: list,
+                  lo: int, hi: int, ore_floor: float) -> Optional[int]:
+    """Choose the ore-jump fire distance in [lo, hi] so the slam-rebound's
+    predicted touchdown clears the downstream obstacles (everything beyond
+    the target ore). Scans from the window entry down: the FIRST distance
+    whose worst-obstacle margin reaches ORE_PICK_SAFE_MARGIN_PX wins, so
+    the default (fire at entry) is kept whenever it is safe; if no
+    distance is safe, the argmax-margin one is returned (least-bad). None
+    when v is unwarmed or nothing is downstream — callers keep the
+    window-entry default."""
+    if v is None or not downstream:
+        return None
+    best_d = best_m = None
+    for d_fire in range(hi, lo - 1, -2):
+        shift = d_fire + CART_HALF_WIDTH_PX + v * ORE_CHAIN_T_REB_S
+        m = min(_landing_margin(o, shift, ore_floor) for o in downstream)
+        if m >= ORE_PICK_SAFE_MARGIN_PX:
+            return d_fire
+        if best_m is None or m > best_m:
+            best_d, best_m = d_fire, m
+    return best_d
+
+
 def scale_window(lo: int, hi: int, v: Optional[float],
                  v_ref: float) -> Tuple[int, int]:
     """Scale a [lo, hi] trigger-distance window tuned at v_ref to the live
