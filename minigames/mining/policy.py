@@ -283,6 +283,44 @@ class ScrollVelocity:
         return self._v if self._n >= self._warmup else None
 
 
+# --- Landing-targeted pit fire ceiling (#105) ---
+#
+# Pit collision is CENTER-based (settled 2026-07-06; see mining_plan.md
+# "Collision model"), and the click->touchdown time is ~constant:
+# T ≈ 1.16-1.23s across every exactly-measurable arc (freeze-exact death
+# clearances + wall-clock [traj] velocities; runs 17/22). So the landing
+# CENTER's clearance past a jumped pit's far edge is predictable at fire
+# time:  clear = v*T - dist - HALF_CART - W.
+# Firing when dist first drops under the affine ceiling
+#   D* = v*T - HALF_CART - W - CLEAR_TARGET
+# puts the landing ~CLEAR_TARGET px past the far edge — instead of
+# wherever the proportional window edge lands it (run 22's jump #4 fired
+# at the v-scaled top and landed at clear = -1: dead by one pixel). The
+# model postdicts all measured clearances within ~±5px, so CLEAR_TARGET
+# = 12 keeps both sides safe: alive-margin 12±5 > 0, and the next
+# gauntlet pit is still rescue-jumpable (gap 39 - clear 12 = 27 ≥ the
+# ~20px center-based launch need).
+ARC_T_TOTAL_S = 1.2          # click -> touchdown, speed-invariant
+LAND_CLEAR_TARGET_PX = 12    # aim the landing center this far past the far edge
+CART_HALF_WIDTH_PX = 18
+# Sanity clamp on the affine ceiling: below 20 the ceiling is meaningless
+# (fire ASAP); above 55 a v-estimate spike is inflating it (never observed
+# legitimately — at v=110, W=50 the ceiling is 52).
+PIT_CEILING_CLAMP = (20, 55)
+
+
+def pit_fire_ceiling(v: Optional[float], width: Optional[int]) -> Optional[int]:
+    """The landing-targeted fire ceiling D* for a pit of the given width at
+    live speed v — replaces the proportional window top for pits. None when
+    v (estimator warming up) or width is unavailable; callers fall back to
+    the v-scaled top."""
+    if v is None or width is None:
+        return None
+    d = v * ARC_T_TOTAL_S - CART_HALF_WIDTH_PX - width - LAND_CLEAR_TARGET_PX
+    lo, hi = PIT_CEILING_CLAMP
+    return int(round(min(max(d, lo), hi)))
+
+
 def scale_window(lo: int, hi: int, v: Optional[float],
                  v_ref: float) -> Tuple[int, int]:
     """Scale a [lo, hi] trigger-distance window tuned at v_ref to the live

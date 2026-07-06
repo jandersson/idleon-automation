@@ -58,6 +58,7 @@ from minigames.mining.digit_capture import DigitCapturer
 from minigames.mining.policy import (
     GroundedBaseline, PlankLock, ScrollVelocity, should_jump, should_slam,
     should_steer_slam, is_cart_airborne, scale_window, scale_slam_dist,
+    pit_fire_ceiling,
     SCROLL_V_REF_PIT, SCROLL_V_REF_ORE, STEER_SLAM_MIN, STEER_SLAM_MAX,
 )
 
@@ -408,6 +409,14 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         scroll_v = scroll.velocity()
         trig_min, trig_max = scale_window(
             JUMP_TRIGGER_MIN, JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_PIT)
+        # Landing-targeted ceiling for pits (#105): with live v and the
+        # pit's measured width, aim the landing center ~CLEAR_TARGET past
+        # the far edge instead of firing at the proportional window edge.
+        # Falls back to the scaled top while the estimator warms up.
+        if terrain is not None and terrain.get("kind") == "pit":
+            ceiling = pit_fire_ceiling(scroll_v, terrain.get("width"))
+            if ceiling is not None:
+                trig_max = ceiling
         ore_trig_min, ore_trig_max = scale_window(
             ORE_JUMP_TRIGGER_MIN, ORE_JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_ORE)
         slam_max_dist = scale_slam_dist(

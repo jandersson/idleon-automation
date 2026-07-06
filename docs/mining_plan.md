@@ -719,13 +719,27 @@ Filed with the numbers as #105; that's the next session's design problem.
 - **Ore stays edge-based:** the run-18 death was ore contacting the
   grounded cart's FRONT, so ore jumps keep the delta*v floor
   (`ORE_FALLBACK_MIN`, clamped in should_jump's ore fallback).
-- **Open (the remaining #105 work):** the arc constant S = v·(delta+A)
-  back-calculated from two landings disagrees ~15% (jump-1 vs jump-4 of
-  run 22) — likely v-estimate attribution error. Pin it with a per-jump
-  landing regression over the logged arcs (every jump has [traj] heights,
-  v, W, and the landing offset is recoverable from frames), then aim the
-  fire distance so the landing center hits gap middles, and add
-  two-obstacle lookahead so gauntlets are visible at fire time.
+- **Arc constant PINNED (same session):** the apparent ~15% disagreement
+  was v-attribution error plus detection-lag inflation on survival
+  landings (the world keeps scrolling between touchdown and the first
+  grounded detection; death freezes don't). Re-measured with wall-clock
+  [traj] velocities and freeze-exact clearances: **click→touchdown
+  T ≈ 1.16-1.23s, speed-invariant**, and the clearance model
+  `clear = v·T − dist − 18 − W` postdicts every exact landing within
+  ~±5px — including run 22 jump #4's one-pixel death (fired at the
+  v-scaled top after a ~5% v overread; model says clear 3±5).
+- **Landing-targeted fire ceiling shipped (`policy.pit_fire_ceiling`):**
+  pits now fire at `D* = v·1.2 − 18 − W − 12` (clamped [20,55]; falls
+  back to the scaled top while the estimator warms). This aims the
+  landing center ~12px past the far edge — alive-side margin 12±5, next
+  gauntlet pit still rescue-jumpable (39−12 = 27 ≥ ~20 center-based
+  launch need). Together with the rescue floor this is the gauntlet
+  survival loop: targeted jump → land ~12 into the gap → rescue jump at
+  ~15-27 → repeat.
+- **Still open in #105:** two-obstacle lookahead (choose clear_target per
+  gap when the next pit is visible at fire time), and live validation of
+  the ceiling + rescue chain — T's calibration rests on n=3 exact
+  landings, all from today's window/room.
 
 ### Next session
 

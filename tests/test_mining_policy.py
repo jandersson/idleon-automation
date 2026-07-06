@@ -395,6 +395,23 @@ def test_scroll_velocity_not_biased_high_by_quantization_zeros():
     assert 65 <= v          # sanity: it's still measuring real scroll
 
 
+def test_pit_fire_ceiling_targets_the_landing_center():
+    """#105: the affine ceiling D* = v*T - half_cart - W - clear_target aims
+    the landing center ~12px past the pit's far edge. Counterfactual for
+    run 22's jump #4 (fired at 37 on the proportional top, landed at
+    clear=-1, died): at v=90/W=50 the ceiling is 28 — dist 37 waits, the
+    fire at <=28 lands at predicted clear 12."""
+    from minigames.mining.policy import pit_fire_ceiling
+    assert pit_fire_ceiling(90.0, 50) == 28
+    # Estimator warming up / width unknown -> None (caller falls back).
+    assert pit_fire_ceiling(None, 50) is None
+    assert pit_fire_ceiling(90.0, None) is None
+    # Sanity clamps: a v spike can't inflate the ceiling past 55; slow/wide
+    # combinations never drop below 20 (fire-ASAP floor).
+    assert pit_fire_ceiling(140.0, 50) == 55
+    assert pit_fire_ceiling(60.0, 52) == 20
+
+
 def test_scale_window_static_until_warmed_then_scales():
     assert scale_window(20, 30, None, SCROLL_V_REF_PIT) == (20, 30)
     lo, hi = scale_window(20, 30, 117.0, SCROLL_V_REF_PIT)
