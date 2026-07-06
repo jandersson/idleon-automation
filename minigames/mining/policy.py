@@ -124,6 +124,55 @@ def is_cart_airborne(cart_y: Optional[int], grounded_baseline_y: Optional[int],
     return cart_y < grounded_baseline_y - eps
 
 
+class PlankLock:
+    """Per-run lock on the plank-top row (#103).
+
+    The plank overlay's y is FIXED for a run, but two adjacent strong tan
+    rows (~185/190 in the 2026-07-06 captures) let the per-frame argmax
+    flap between them — and at the false row the pit scan reads 50px pits
+    as 7px fragments with wrong edges, which broke a jump (14:32 death),
+    fed the steering slam a bogus target, and would corrupt the
+    landing-solidity gate. Same pattern as the cart-x column prior: observe
+    until stable, lock, re-detect under the lock constraint, release only
+    on a sustained miss run (overlay gone = run over).
+
+    update() is fed each frame's detected plank_y plus whether the grounded
+    baseline is warmed — the cold-start frames before the cart is known
+    read a stable FALSE band (y~296 on botrun_20260706_144046 f1-18), so
+    stability alone must not lock.
+    """
+
+    def __init__(self, stable_n: int = 8, tol_px: int = 2,
+                 max_misses: int = 20):
+        self._recent: deque[int] = deque(maxlen=stable_n)
+        self._tol = tol_px
+        self._max_misses = max_misses
+        self._lock: Optional[int] = None
+        self._misses = 0
+
+    @property
+    def locked_y(self) -> Optional[int]:
+        return self._lock
+
+    def update(self, plank_y: Optional[int], baseline_ready: bool) -> None:
+        if self._lock is None:
+            if plank_y is None or not baseline_ready:
+                self._recent.clear()
+                return
+            self._recent.append(int(plank_y))
+            if (len(self._recent) == self._recent.maxlen and
+                    max(self._recent) - min(self._recent) <= self._tol):
+                self._lock = sorted(self._recent)[len(self._recent) // 2]
+        elif plank_y is None:
+            self._misses += 1
+            if self._misses > self._max_misses:
+                self._lock = None
+                self._misses = 0
+                self._recent.clear()
+        else:
+            self._misses = 0
+
+
 # --- Scroll-velocity estimation + speed-adaptive trigger scaling (#53) ---
 #
 # The track's scroll speed RAMPS within a run: replaying the scoring run
@@ -334,11 +383,23 @@ def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
                       grounded_baseline_y: Optional[int],
                       slam_cooldown_s: float,
                       steer_min: int, steer_max: int,
+                      landing_solid: Optional[bool],
                       airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
     """The steering slam (#104) — cut an arc short over bare plank so an
     incoming pit is met grounded, with jump lead in hand. Returns True iff
     the cart is AIRBORNE, the nearest obstacle is a PIT inside the steer
-    band, and the per-arc slam cooldown has expired.
+    band, the ground DIRECTLY BELOW the cart is solid plank, and the
+    per-arc slam cooldown has expired.
+
+    landing_solid is the under-cart check (detector.plank_dark_fraction
+    over the cart's x-span): the ahead-only terrain scan cannot see a pit
+    already beneath the airborne cart, and slamming onto one is the exact
+    death this predicate exists to prevent — run 21
+    (botrun_20260706_152412) steer-slammed into the first pit of a
+    three-pit gauntlet that the ahead-scan reported as a pit 70px out.
+    Anything but an affirmative True (None = row unlocked / band unusable)
+    rides the arc instead: the natural landing is never worse than a slam
+    onto the same spot sooner.
 
     Distinct from should_slam (the scoring slam): that one requires ORE
     under the cart and must never fire over a pit; this one requires the
@@ -349,6 +410,8 @@ def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
     if cart is None or terrain is None:
         return False
     if terrain.get("kind") != "pit":
+        return False
+    if landing_solid is not True:
         return False
     if not is_cart_airborne(cart[1], grounded_baseline_y, airborne_eps):
         return False

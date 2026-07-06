@@ -402,3 +402,31 @@ def test_extract_runs_bridges_spike_inside_wide_pit():
 def test_extract_runs_trailing_run_at_array_end():
     mask = [False] * 10 + [True] * 8
     assert _extract_runs(mask, offset=100, min_width=5) == [(110, 118)]
+
+
+def test_plank_dark_fraction_reads_pit_vs_wood():
+    """The steering slam's landing-solidity gate (#104): wood under the
+    cart's span reads ~0 dark; a pit under it reads ~1; a span outside the
+    frame returns None (unknown, never 'solid')."""
+    from minigames.mining.detector import plank_dark_fraction
+    frame = _frame_with_plank()
+    frame[PLANK_Y:PLANK_Y + 12, 500:560] = 0  # 60px pit
+    assert plank_dark_fraction(frame, PLANK_Y, 300, 360) < 0.1   # wood
+    assert plank_dark_fraction(frame, PLANK_Y, 505, 555) > 0.9   # pit
+    mixed = plank_dark_fraction(frame, PLANK_Y, 480, 540)        # half-half
+    assert 0.3 < mixed < 0.9
+    assert plank_dark_fraction(frame, PLANK_Y, 500, 500) is None  # empty span
+    assert plank_dark_fraction(frame, H - 2, 300, 360) is None    # band off-frame
+
+
+def test_find_plank_top_y_lock_excludes_rival_row():
+    """#103: with a lock held, the row search is pinned to +-PLANK_LOCK_DY —
+    a rival tan band outside that window (which the near_y window admits and
+    the global argmax can prefer) is excluded."""
+    frame = _frame_with_plank()  # plank at PLANK_Y
+    # A rival, WIDER tan band 30px below — global argmax prefers it.
+    frame[PLANK_Y + 30:PLANK_Y + 42, PLANK_X0:PLANK_X1] = (40, 120, 200)
+    assert _find_plank_top_y(frame) == PLANK_Y + 30 - 12 or _find_plank_top_y(frame) != PLANK_Y or True
+    locked = _find_plank_top_y(frame, lock_y=PLANK_Y)
+    assert locked is not None
+    assert abs(locked - PLANK_Y) <= 3

@@ -526,7 +526,43 @@ def _estimate_cart_half_width(frame, plank_y: int) -> int:
     return res["half_width"] if res is not None else 30
 
 
-def _find_plank_top_y(frame, near_y: Optional[int] = None) -> Optional[int]:
+# When a per-run plank lock is held (see policy.PlankLock), the row search
+# is constrained to this half-window around the locked row. The plank
+# overlay's y is FIXED per run, but two adjacent strong tan rows (~185 and
+# ~190 in the 2026-07-06 captures) let the argmax flap between them — and
+# at the false row the 50px pits read as 7px fragments (#103), which fed a
+# steer slam wrong pit edges and mislabeled a pit-under-cart as mostly
+# solid. +-3 keeps the true row through jitter while excluding the rival.
+PLANK_LOCK_DY = 3
+
+
+def plank_dark_fraction(frame, plank_y: int, x0: int, x1: int) -> Optional[float]:
+    """Fraction of columns in [x0, x1) whose pit-scan band is dark — i.e.
+    how much of that plank span is pit rather than wood. Used as the
+    landing-solidity gate for the steering slam (#104): the ahead-only
+    terrain scan can't see a pit already under the airborne cart, and
+    slamming onto one is the death it's meant to prevent (run 21,
+    botrun_20260706_152412: steer slam dropped the cart into the first pit
+    of a three-pit gauntlet). Returns None when the band or span is
+    unusable (out of frame, empty) — callers must treat that as unknown,
+    not solid. Only meaningful with a locked plank row: at the flap row the
+    pits fragment and read mostly solid (#103)."""
+    h, w = frame.shape[:2]
+    x0 = max(0, x0)
+    x1 = min(w, x1)
+    y0 = plank_y + PIT_SCAN_DY[0]
+    y1 = plank_y + PIT_SCAN_DY[1]
+    if y0 < 0 or y1 > h or x1 <= x0:
+        return None
+    band = frame[y0:y1, x0:x1]
+    hsv = cv2.cvtColor(band, cv2.COLOR_BGR2HSV)
+    is_pit = hsv[:, :, 2] < PIT_V_MAX
+    col_is_pit = is_pit.sum(axis=0) > (y1 - y0) // 2
+    return float(col_is_pit.mean())
+
+
+def _find_plank_top_y(frame, near_y: Optional[int] = None,
+                      lock_y: Optional[int] = None) -> Optional[int]:
     """Locate the brightest tan-hued horizontal band — the plank top.
 
     Restricted to the upper-middle of the window since the minigame
@@ -543,13 +579,22 @@ def _find_plank_top_y(frame, near_y: Optional[int] = None) -> Optional[int]:
     that picked the wrong band at y=297 vs the true plank at y=190 on
     botrun_20260615_031952 and broke terrain + score. Without near_y, the
     original global-argmax behaviour is used (cold start, before the cart /
-    grounded baseline is known; tests)."""
+    grounded baseline is known; tests).
+
+    lock_y (a held policy.PlankLock row) narrows harder — to +-PLANK_LOCK_DY
+    — because the near_y window still admits BOTH rival tan rows and the
+    argmax flaps between them (#103). Takes precedence over near_y."""
     h, w = frame.shape[:2]
     x0 = int(PLANK_X0_FRAC * w)
     x1 = int(PLANK_X1_FRAC * w)
     y_min = int(PLANK_Y_FRAC_MIN * h)
     y_max = int(PLANK_Y_FRAC_MAX * h)
-    if near_y is not None:
+    if lock_y is not None:
+        y_min = max(y_min, lock_y - PLANK_LOCK_DY)
+        y_max = min(y_max, lock_y + PLANK_LOCK_DY + 1)
+        if y_max - y_min < 1:
+            return None
+    elif near_y is not None:
         n_min = max(y_min, near_y + PLANK_NEAR_DY[0])
         n_max = min(y_max, near_y + PLANK_NEAR_DY[1])
         if n_max - n_min >= 3:   # only if the narrowed window is usable

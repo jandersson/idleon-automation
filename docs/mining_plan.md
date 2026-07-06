@@ -652,6 +652,39 @@ death into a tight-but-legal steer → land → jump sequence. Outcome-label
 nuance: row 64 ("survived", d=35) is correct — its own pit was cleared;
 the death belongs to the unactionable landing that followed.
 
+### Run 21 (2026-07-06 15:24 live, --save-frames) — first live steer slam FIRED WRONG; plank lock + landing gate shipped
+
+Sixth run of the day (PTS 1; jump/jump/slam chain fine, slam 5-for-5).
+The first live steer slam fired — **and caused the death.** The frames
+show a **three-pit gauntlet** (50px pits, 39px plank gaps): the ahead-only
+scan reported a pit fragment 70px out, but the gauntlet's FIRST pit was
+already directly under the airborne cart — invisible to a nearest-AHEAD
+scan — and the slam dropped the cart straight into it (f86: cart
+[449,485] inside pit [436,488]). Riding would have landed on the next
+39px plank gap. Two fixes, both replay-validated on today's captures:
+
+- **Per-run plank-row lock (`policy.PlankLock`, the #103 fix).** Two
+  rival tan rows (185/190) flap the per-frame argmax; at the false row
+  50px pits read as 7px fragments with wrong edges — which fed the steer
+  its bogus 70px target and broke the 14:32 jump. Locks after 8 stable
+  baseline-anchored frames (cold-start false bands can't lock — no
+  baseline); `_find_plank_top_y(lock_y=...)` then pins the search to
+  ±PLANK_LOCK_DY; releases after a 20-miss run (overlay gone). Replays:
+  lock acquired ~f15, zero flap frames end-to-end, pit widths hold ~50
+  through airborne stretches — the fatal fragment reading never happens.
+- **Landing-solidity gate for the steer slam
+  (`detector.plank_dark_fraction` over the cart's footprint).** The steer
+  now requires an affirmative "wood below" (None/unknown rides): on BOTH
+  the run-19 and run-21 descents the ground under the cart was already
+  pit and the gate reads False — both would-be-fatal steers suppressed.
+  The steer is now safe-or-silent; its positive case (wood below, pit
+  ahead in band) hasn't occurred live yet.
+
+Run 19's death class (rebound descending onto a pit already beneath it)
+is thus NOT steerable mid-descent — the remaining lever is scoring-slam
+timing (fire the ore slam earlier/later to move the rebound's landing
+point), which stays deferred in #104.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

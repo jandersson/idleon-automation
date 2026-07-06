@@ -110,7 +110,8 @@ def test_steer_slam_fires_airborne_on_incoming_pit_in_band():
     first seen at 63px; the steer band must catch it."""
     base = dict(cart=(150, 120), now=10.0, last_slam_time=0.0,
                 grounded_baseline_y=193, slam_cooldown_s=0.5,
-                steer_min=49, steer_max=91)  # [40,75] scaled to v~96
+                steer_min=49, steer_max=91,  # [40,75] scaled to v~96
+                landing_solid=True)
     pit_at_63 = {"kind": "pit", "x": 300, "distance_px": 63}
     assert should_steer_slam(**base, terrain=pit_at_63) is True
     # Run 20's two-pit trap: second pit first sighted at 54 during the jump
@@ -127,6 +128,59 @@ def test_steer_slam_fires_airborne_on_incoming_pit_in_band():
     # Per-arc slam cooldown still applies.
     assert should_steer_slam(**{**base, "now": 10.0, "last_slam_time": 9.8},
                              terrain=pit_at_63) is False
+
+
+def test_steer_slam_requires_solid_ground_below():
+    """Regression for run 21 (botrun_20260706_152412): the ahead-only scan
+    reported a pit 70px out, but the first pit of a three-pit gauntlet was
+    already UNDER the airborne cart — the steer slam dropped straight into
+    it. Anything but an affirmative landing_solid=True must ride the arc
+    (None = plank row unlocked / band unusable — unknown is not solid)."""
+    base = dict(cart=(150, 120), now=10.0, last_slam_time=0.0,
+                grounded_baseline_y=193, slam_cooldown_s=0.5,
+                steer_min=49, steer_max=91)
+    pit = {"kind": "pit", "x": 300, "distance_px": 63}
+    assert should_steer_slam(**base, terrain=pit, landing_solid=True) is True
+    assert should_steer_slam(**base, terrain=pit, landing_solid=False) is False
+    assert should_steer_slam(**base, terrain=pit, landing_solid=None) is False
+
+
+def test_plank_lock_locks_on_stable_anchored_rows_and_holds():
+    """#103: locks after 8 stable baseline-anchored frames, ignores the
+    rival-row flap afterwards (the caller re-detects under the lock
+    constraint), refuses to lock on cold-start rows (no baseline), and
+    releases after a sustained miss run (overlay gone)."""
+    from minigames.mining.policy import PlankLock
+    lock = PlankLock(stable_n=8, tol_px=2, max_misses=20)
+    # Cold start: stable FALSE band but baseline not warmed -> no lock
+    # (botrun_20260706_144046 f1-18 read a stable y~296 before the cart).
+    for _ in range(10):
+        lock.update(296, baseline_ready=False)
+    assert lock.locked_y is None
+    # Real plank, baseline warmed: 8 stable frames -> locked.
+    for y in (185, 185, 184, 185, 185, 186, 185, 185):
+        lock.update(y, baseline_ready=True)
+    assert lock.locked_y == 185
+    # Misses below the threshold don't release; a hit resets the count.
+    for _ in range(15):
+        lock.update(None, baseline_ready=True)
+    assert lock.locked_y == 185
+    lock.update(185, baseline_ready=True)
+    for _ in range(15):
+        lock.update(None, baseline_ready=True)
+    assert lock.locked_y == 185
+    # A sustained miss run (overlay gone) releases the lock.
+    for _ in range(10):
+        lock.update(None, baseline_ready=True)
+    assert lock.locked_y is None
+
+
+def test_plank_lock_needs_stability_not_just_count():
+    from minigames.mining.policy import PlankLock
+    lock = PlankLock(stable_n=8, tol_px=2)
+    for y in (185, 190, 185, 192, 185, 190, 185, 190):  # the #103 flap
+        lock.update(y, baseline_ready=True)
+    assert lock.locked_y is None  # flapping rows must not lock
 
 
 def test_no_fire_during_cooldown():

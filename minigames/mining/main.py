@@ -50,13 +50,13 @@ from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import (
     find_cart_detailed, find_next_terrain, find_play_button,
-    read_score_from_crop, score_crop, CART_MAX_X_JUMP_PX,
-    _find_plank_top_y, _find_plank_x_range,
+    read_score_from_crop, score_crop, plank_dark_fraction,
+    CART_MAX_X_JUMP_PX, _find_plank_top_y, _find_plank_x_range,
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
 from minigames.mining.policy import (
-    GroundedBaseline, ScrollVelocity, should_jump, should_slam,
+    GroundedBaseline, PlankLock, ScrollVelocity, should_jump, should_slam,
     should_steer_slam, is_cart_airborne, scale_window, scale_slam_dist,
     SCROLL_V_REF_PIT, SCROLL_V_REF_ORE, STEER_SLAM_MIN, STEER_SLAM_MAX,
 )
@@ -284,6 +284,11 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     # click is a SLAM, which drives the cart down into an approaching pit
     # (the spaced-obstacle death). See minigames/mining/policy.py.
     grounded = GroundedBaseline()
+    # Per-run plank-row lock (#103): the plank's y is fixed per run, but two
+    # rival tan rows flap the per-frame argmax and fragment the pit scan at
+    # the false row. Locks after 8 stable baseline-anchored frames; the
+    # locked row constrains _find_plank_top_y to +-PLANK_LOCK_DY.
+    plank_lock = PlankLock()
     # Live scroll-speed estimate (px/s). The trigger constants above are
     # distances tuned at a reference speed, but the track ACCELERATES within
     # a run (~82 -> ~117 px/s over the scoring run) — the windows are scaled
@@ -343,7 +348,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # real plank in the global window (it picked y=297 over the true 190
         # on botrun_20260615_031952, breaking terrain + score). None until the
         # baseline warms up, falling back to the global brightest-band scan.
-        plank_y = _find_plank_top_y(frame, near_y=grounded.baseline())
+        plank_y = _find_plank_top_y(frame, near_y=grounded.baseline(),
+                                    lock_y=plank_lock.locked_y)
         cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track,
                                       max_x_jump=CART_MAX_X_JUMP_PX)
         # Anchor the column-search prior at the cart's fixed x: keep the last
@@ -372,6 +378,21 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # the fire decision so it reflects this frame).
         grounded.update(cart[1] if cart is not None else None)
         grounded_baseline_y = grounded.baseline()
+        plank_lock.update(plank_y, grounded_baseline_y is not None)
+        # Landing-solidity check for the steering slam: is the plank
+        # directly under the cart's footprint wood, not pit? Only
+        # trustworthy under a plank lock — the flap row fragments pits and
+        # reads them mostly solid (#103) — so it stays None (=> no steer)
+        # until the lock is held. Tiny numpy op on a ~6x40 crop; pre-click
+        # per the fire-first rule since the decision consumes it.
+        landing_solid = None
+        if (plank_lock.locked_y is not None and plank_y is not None
+                and cart_det is not None):
+            hw = cart_det["half_width"]
+            frac = plank_dark_fraction(frame, plank_y,
+                                       cart[0] - hw, cart[0] + hw)
+            if frac is not None:
+                landing_solid = frac < 0.3
         # Live scroll speed -> scale the trigger windows for this frame.
         # Pure arithmetic (no IO), so it doesn't violate fire-first; it has
         # to precede the decision because the decision consumes the windows.
@@ -429,7 +450,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                     last_slam_time=last_slam_time,
                     grounded_baseline_y=grounded_baseline_y,
                     slam_cooldown_s=SLAM_COOLDOWN_S,
-                    steer_min=steer_min, steer_max=steer_max):
+                    steer_min=steer_min, steer_max=steer_max,
+                    landing_solid=landing_solid):
                 # Steering slam (#104): a pit is incoming while airborne and
                 # the natural landing would meet it — slam onto bare plank
                 # (safe, user-verified) to land short and re-arm the grounded
