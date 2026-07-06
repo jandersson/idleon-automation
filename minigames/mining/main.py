@@ -96,6 +96,13 @@ POLL_INTERVAL = 0.005
 # earlier worsens bound (2). [20,30] fires at ~30, inside the point-model
 # feasible band [18, 88-W].
 #
+# MIN lowered 20 -> 18 (2026-07-06, run 20): 18 IS the bound-(1) physics
+# floor (delta*v at v_ref) — the old 2px of margin only mattered in
+# landed-short rescue scenarios (post-steer-slam touchdowns land with the
+# pit at ~20-25 scaled), where it denied the rescue jump outright. The
+# normal approach fires at the window TOP, so the bottom gates nothing
+# else.
+#
 # CAVEAT — this is an EXPERIMENT, not a settled fix. Feasibility depends on
 # the (still unmeasured) gap width W and the collision model. Center/point
 # model with W~=52: a single jump clears at this timing. Full-footprint
@@ -106,7 +113,7 @@ POLL_INTERVAL = 0.005
 # confirms the point model; one that still dies — now landing at the far
 # lip, not mid-gap — confirms footprint + W~=52. Measure the true W on that
 # run (the [traj] log lines below print the live arc).
-JUMP_TRIGGER_MIN = 20
+JUMP_TRIGGER_MIN = 18
 JUMP_TRIGGER_MAX = 30
 
 # After a jump click, ignore further triggers for this long so we don't

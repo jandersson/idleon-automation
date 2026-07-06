@@ -317,7 +317,16 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
 # into a pit that approached 63->15 during the arc; touchdown at the lip
 # left no legal move (launch needs ~19px lead at v~96). A steer slam at
 # first sight (63px) lands with the pit at ~25 — inside the jump window.
-STEER_SLAM_MIN = 50
+#
+# MIN lowered 50 -> 40 after run 20 (botrun_20260706_151934): in a two-pit
+# spacing trap the second pit's FIRST sighting was 54px (scaled band bottom
+# was 63 — no fire) and the natural landing died at 10px. The 0.4s descent
+# cost that justified 50 was measured from rebound apex (~90px); from
+# jump-arc descent heights (~70px) the slam costs only ~25-30px of
+# approach, so a steer at ~50 lands at ~20-25 — tight but jumpable
+# (JUMP_TRIGGER_MIN sits at the physics floor). Below ~40 both slam and
+# ride land in the pit; keep not firing there.
+STEER_SLAM_MIN = 40
 STEER_SLAM_MAX = 75
 
 

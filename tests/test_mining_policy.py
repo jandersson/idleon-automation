@@ -110,9 +110,12 @@ def test_steer_slam_fires_airborne_on_incoming_pit_in_band():
     first seen at 63px; the steer band must catch it."""
     base = dict(cart=(150, 120), now=10.0, last_slam_time=0.0,
                 grounded_baseline_y=193, slam_cooldown_s=0.5,
-                steer_min=61, steer_max=91)  # [50,75] scaled to v~96
+                steer_min=49, steer_max=91)  # [40,75] scaled to v~96
     pit_at_63 = {"kind": "pit", "x": 300, "distance_px": 63}
     assert should_steer_slam(**base, terrain=pit_at_63) is True
+    # Run 20's two-pit trap: second pit first sighted at 54 during the jump
+    # arc — inside the lowered band (the old [50,75] bottom missed it).
+    assert should_steer_slam(**base, terrain={"kind": "pit", "x": 300, "distance_px": 54}) is True
     # Grounded -> never (this is an airborne-only rescue).
     assert should_steer_slam(**{**base, "cart": (150, 193)}, terrain=pit_at_63) is False
     # Below the band the slam would land at/inside the pit — don't fire.

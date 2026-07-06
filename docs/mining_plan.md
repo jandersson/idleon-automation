@@ -625,6 +625,33 @@ for the single frame its settle landed on, while it was alive mid-rebound
 now keeps an absent-cart entry pending until the absence outlasts
 CART_GONE_CONFIRM_S (0.6s); row 59 repaired to 'survived' in the DB.
 
+### Run 20 (2026-07-06 15:19 live, --save-frames) — cleanest run yet; steer band bottom lowered
+
+Fifth run of the day, PTS 1: jump(pit, 31) → jump(ore, 75) → slam(ore, 12,
+scored) → jump(pit, 35, cleared a second pit mid-arc) — 4/4 survived
+actions, slam 4-for-4, zero false steer fires despite #103 fragment
+garbage during the rebound (readings at 10 and 145 both fell outside the
+band, as designed).
+
+The run still ended in a **two-pit spacing trap**: jump #4's arc landed
+with the NEXT pit at ~10px (frozen death scene: grounded height 5, pit
+static at 10). The steering slam almost had it — the second pit's first
+sighting was 54px mid-descent, just under the scaled band bottom (63).
+Two constants retuned from this trace:
+
+- `STEER_SLAM_MIN` 50 → 40: the 0.4s descent cost behind 50 was measured
+  from rebound apex (~90px); from jump-arc heights (~70px) a slam costs
+  only ~25-30px of approach, so steering at ~50 lands jumpable.
+- `JUMP_TRIGGER_MIN` 20 → 18: 18 IS the bound-(1) physics floor; the
+  extra 2px only ever gated landed-short rescue jumps (post-steer
+  touchdowns land with the pit at ~20-25 scaled), where it denied the
+  rescue outright.
+
+Both are marginal-rescue tuning — they convert this trap from certain
+death into a tight-but-legal steer → land → jump sequence. Outcome-label
+nuance: row 64 ("survived", d=35) is correct — its own pit was cleared;
+the death belongs to the unactionable landing that followed.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
