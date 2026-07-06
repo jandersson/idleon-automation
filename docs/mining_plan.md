@@ -834,6 +834,28 @@ run-end despawn), zero mid-run losses — the fallback never contributed
 a legitimate detection. Miss frames now cost ~22ms; the loop should
 hold ~25fps through arcs.
 
+### Runs 27-28 (2026-07-06 16:34 live) — #106 verified; residual death class isolated (#107)
+
+**The #106 fix is visible in both logs:** [traj] ticks a steady 0.04s
+through entire arcs (25fps where run 26 had 0.25s holes), the cart stays
+tracked mid-arc (heights 127-133 where it used to read None at 4fps),
+and sightings arrive a full band earlier. Run 27 also shows the first
+gap-aware ceiling fire (JUMP #4 at d=50, v=106) and the first jump-arc
+slam conversion under the altitude gate (SLAM #5 at height ~47, scored —
+PTS 2). Run 28: PTS 1.
+
+**Both deaths are the same residual class, now isolated as #107:** a
+rebound landing pinned onto a sub-floor obstacle where the mid-air steer
+window was empty — run 27 landed center-in-pit (pit below the band all
+arc, ground below unsolid = that same pit); run 28 had an in-band ore
+mid-rebound but the jumped pit was still under the footprint (solidity
+gate correctly suppressed) and by footprint-clear the ore was below the
+band. Every mechanism behaved correctly; the landing was fixed the
+moment the scoring slam connected. The lever is one decision earlier —
+choose WHERE in the ~34px ore window to fire the ore jump so the
+predicted rebound landing clears obstacles (#107; needs the two-arc
+travel constant measured from the 12 captured scoring slams).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
