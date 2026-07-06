@@ -1,63 +1,75 @@
-"""Cross-pass gold wait — the pure fire/hold decision (issue #46, thread 3).
+"""Gold chase — the pure hold/fire decision for gold-seeking (issue #46).
 
-The same-sweep gold upgrade (main.py, GOLD_RIDE_MAX_MS) only defers a
-green fire when gold lies AHEAD of the leaf before any red. But gold sits
-somewhere on the bar for ~95% of long-session polls while only ~42% of
-registered green chops had it reachable — the rest is behind the leaf or
-past a red, i.e. reachable only on a LATER pass. Since chops ramp the
-speed and waiting is free (docs/chopping_notes.md), the round's score is
-bounded by chops, not time: converting a green (+1) chop into a gold (+2)
-chop is a pure +1 point for a few seconds of wall clock.
+Two mechanisms defer a safe GREEN fire toward a +2 gold chop:
 
-This module holds the wait state machine so it stays unit-testable
-without pyautogui / screen capture. The main loop consults it ONLY at a
-would-fire moment (leaf over green, time-to-red gate passed, same-sweep
-ride declined) — between those moments the wait state just persists.
+- the same-sweep RIDE (main.py GOLD_RIDE_MAX_MS): gold ahead of the leaf
+  before any red — ride to it this sweep;
+- the cross-pass WAIT (2026-07-06): gold elsewhere on the bar — hold
+  green fires and let a later pass reach it. Chops ramp the speed and
+  waiting is free (docs/chopping_notes.md), so a round's score is
+  bounded by chops, not time: green (+1) → gold (+2) is a pure +1 point
+  for a few seconds of wall clock. In the 2026-06-11 data gold sat on
+  the bar in ~95% of long-session polls while 20/48 registered green
+  chops fired with it unreachable same-sweep.
 
-Guard rails (why the wait can't cause a starve exit): a wait only STARTS
-when the last fire was recent (START_LATEST_S — early/mid round, where
-safe windows come every ~1-3s) and always ENDS at MAX_WAIT_S, so the
-worst case adds START_LATEST_S + MAX_WAIT_S ≈ 22s since the last click —
-well inside STARVE_EXIT_S=60. Layout re-rolls only happen on chops, so
-gold can't genuinely vanish mid-wait; the layout_has_gold abort exists
-for detection flicker.
+Both share ONE chase clock, and that's the load-bearing lesson from the
+first live run (2026-07-06 18:32, stalled at chop 9): the zone layout
+only re-rolls on a registered chop, so between chops the gold's
+position — and whether it's red-flanked past the time-to-red gate — is
+FIXED. That session's post-chop-9 layout had gold ~29ms from red;
+every safe green pass had the gold "ahead within GOLD_RIDE_MAX_MS", the
+deadline-less ride held fire on all of them, and the bot deferred
+greens for ~20s until the user failsafed. A gold that hasn't offered a
+safe window after several sweeps never will at this speed: give up and
+take greens until the next re-roll makes a fresh layout.
+
+Guard rails vs the starve exit: a chase only STARTS cross-pass when the
+last fire was recent (START_LATEST_S; rides may start any time — their
+nominal cost is sub-second) and every chase ENDS at MAX_CHASE_S, so the
+worst case adds START_LATEST_S + MAX_CHASE_S ≈ 16s since the last
+click — well inside STARVE_EXIT_S=60.
 """
 
-# Cap on one cross-pass wait. A full sweep under the eased model takes
-# pi*W/(2*V_max) ~= 1.3-1.6s at observed speeds, so 12s is ~8 sweeps /
-# several passes over any gold zone — if none of them offered a safe
-# gold window, the gold is red-flanked at this speed; take greens.
-MAX_WAIT_S = 12.0
+# Give-up deadline for one gold chase (ride + wait combined). A full
+# bar sweep under the eased model takes pi*W/(2*V_max) ~= 0.9-1.6s at
+# observed speeds, so 6s is ~4 sweeps — several passes over any gold
+# zone. If none offered a safe gold window, the gold is red-flanked at
+# this speed and the layout won't change until the next chop.
+MAX_CHASE_S = 6.0
 
-# Don't start a wait when the last fire is older than this: late-round,
-# safe windows are 26-45s apart and skipping one gambles the whole chop.
+# Don't start a cross-pass wait when the last fire is older than this:
+# late-round, safe windows are 26-45s apart and skipping one gambles
+# the whole chop.
 START_LATEST_S = 10.0
 
 
-def update_gold_wait(
-    wait_since: float | None,
+def update_gold_chase(
+    chase_since: float | None,
     now: float,
     layout_has_gold: bool,
     since_last_fire_s: float,
+    same_sweep: bool,
     start_latest_s: float = START_LATEST_S,
-    max_wait_s: float = MAX_WAIT_S,
-) -> tuple[bool, float | None]:
-    """Decide whether a safe GREEN fire should be held to wait for gold.
+    max_chase_s: float = MAX_CHASE_S,
+) -> tuple[bool, float | None, bool]:
+    """Decide whether a safe GREEN fire should be held to chase gold.
 
-    Called only at a would-fire moment. Returns (hold, wait_since):
-    hold=True means skip this fire and keep polling; wait_since is the
-    updated wait-start timestamp (None = no wait active). The caller
-    resets its wait state to None after any actual click.
+    Called only at a would-fire moment (time-to-red gate already
+    passed), by the ride path (same_sweep=True, gold ahead this sweep)
+    or the wait path (same_sweep=False, gold elsewhere on the bar).
 
-    A deadline expiry returns (False, wait_since) — the caller fires the
-    green and can log now - wait_since as the wait it paid for nothing.
+    Returns (hold, chase_since, gave_up): hold=True means skip this
+    fire and keep polling. gave_up=True means the chase hit its
+    deadline — the caller stops chasing THIS layout's gold entirely
+    (both paths) until the next re-roll, and fires the green now.
+    The caller resets its chase state after any actual click.
     """
     if not layout_has_gold:
-        return False, None
-    if wait_since is None:
-        if since_last_fire_s > start_latest_s:
-            return False, None
-        return True, now
-    if now - wait_since >= max_wait_s:
-        return False, wait_since
-    return True, wait_since
+        return False, None, False
+    if chase_since is None:
+        if not same_sweep and since_last_fire_s > start_latest_s:
+            return False, None, False
+        return True, now, False
+    if now - chase_since >= max_chase_s:
+        return False, chase_since, True
+    return True, chase_since, False

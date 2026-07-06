@@ -122,11 +122,19 @@ confidence noted since none of this is from the game's code.
    green→gold upgrade is a pure +1 point, and the 2026-06-11 data
    showed 20/48 registered green chops fired with gold sitting
    elsewhere on the bar (gold is on the bar in ~95% of long-session
-   polls, the leaf over it only ~10-15%). Guard rails: a wait only
-   starts within START_LATEST_S=10s of the last fire and ends at
-   MAX_WAIT_S=12s (deadline takes the green), so it can't trip the
-   60s starve exit. Instrumented via `chops.gold_wait_ms` and
-   `polls.hold_reason` ('gold_wait'/'gold_ride').
+   polls, the leaf over it only ~10-15%). LESSON from the first live
+   run (18:32 session, stalled at chop 9): the layout only re-rolls
+   on a chop, so a red-flanked gold (that run: ~29ms from red, gate
+   needs 120) stays unfireable until the next chop — and the
+   same-sweep ride, which had NO deadline, held every safe green for
+   ~20s until the failsafe. Fix: ride + wait share one chase clock
+   (`update_gold_chase`); at MAX_CHASE_S=6s (~4 sweeps) the bot gives
+   up on that layout's gold and takes greens until the next re-roll.
+   Cross-pass waits also only START within START_LATEST_S=10s of the
+   last fire, so the chase can't trip the 60s starve exit.
+   Instrumented via `chops.gold_wait_ms` (chase duration preceding a
+   fire; zone says whether it paid off) and `polls.hold_reason`
+   ('gold_wait'/'gold_ride').
 3. **Never click red** — the bot's one death condition. The
    directional time-to-red gate (MIN_TIME_TO_RED_MS) is the
    load-bearing control; late-round it will (correctly) starve fires
