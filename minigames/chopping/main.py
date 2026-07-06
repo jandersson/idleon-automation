@@ -64,19 +64,23 @@ AIM_MODE = os.environ.get("CHOPPING_AIM", "plan").strip().lower() or "plan"
 
 # Decision->impact click latency the scheduler compensates for.
 # pyautogui click (move+down+up) measured at 20-60ms on darts; the
-# fishing hold-release chain implied ~76ms. Start at 40ms; the logged
-# plan fields (target_x + the pts_read step outcomes) calibrate it —
-# a systematic early/late bias in +1-vs-+2 outcomes vs target depth
-# reads directly as a latency correction.
-CLICK_LATENCY_S = 0.040
+# fishing hold-release chain implied ~76ms. Seeded at 40ms; raised to
+# 55ms after the first planner run (23:44, 2026-07-06): 17/17 impacts
+# landed in-zone (every gold paid +2 per the pts trail) but the one
+# death, chop 18, had the session's thinnest margin (51ms) into a
+# turnaround red sliver — consistent with true latency ~70-90ms
+# eating a 51ms margin while 55-163ms margins absorbed it.
+CLICK_LATENCY_S = 0.055
 
 # Timing-error budget for planned impacts. RSS of: velocity-estimate
 # error over the ~120ms commit horizon (~10ms), position sample age
 # (~10ms), click-latency variance (~10ms), sub-ms spin-wait release.
 PLAN_SIGMA_MS = 16.0
 # Impacts must be this many sigmas from every red boundary (deaths are
-# the only real cost — 3 sigma ~= 48ms ~= 31px at saturation speed).
-PLAN_RED_SIGMAS = 3.0
+# the only real cost). 3 -> 4 sigma (64ms) after the chop-18 death:
+# its 51ms-margin plan would have been rejected and the wide green
+# taken instead. Costs some late-round gold plans; misses beat deaths.
+PLAN_RED_SIGMAS = 4.0
 # Commit to a shot (stop re-planning, spin-wait, fire) when the
 # scheduled click is at most this far away. One loop iteration is
 # ~15-25ms, so the final plan uses a sample at most ~one frame old.
