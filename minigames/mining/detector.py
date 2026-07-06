@@ -136,11 +136,16 @@ _cart_templates: Optional[list[Tuple[str, np.ndarray, np.ndarray]]] = None
 # slightly-off cart_right on those two edge frames doesn't reach a decision.
 CART_TRACK_X_MARGIN = 50       # px half-width of the prior-anchored column
 
-# Max plausible frame-to-frame change in the cart's x. It's fixed per run
-# (issue #1), so a full-frame fallback match farther than this from the prior
-# is a false positive (an off-plank cave/chain sprite at the match threshold)
-# and is rejected — see find_cart_detailed's max_x_jump.
-CART_MAX_X_JUMP_PX = 120
+# (CART_MAX_X_JUMP_PX and the per-miss full-frame fallback were removed
+# 2026-07-06, #106: the cart's x is fixed per run, so the tracking column
+# always contains the true cart — the fallback could only ever re-find
+# what the column search just missed (a transient pose failure that
+# self-heals in-column next frame) or a false match (the 2026-06-15
+# cave/chain lock the max_x_jump guard existed to reject). Meanwhile it
+# cost ~210ms per miss frame vs ~22ms in-column, blinding the bot ~27px
+# per miss at v~109 exactly at arc transitions — run 26's fatal late ore
+# sighting. Genuinely-stale priors re-acquire via the caller clearing the
+# prior after CART_REACQUIRE_MISSES, which is the only full-search path.)
 
 # Play Game button matching. The button has a per-attempt counter ("5",
 # "4", ...) rendered on a wheel icon at the right edge, so the template
@@ -338,8 +343,7 @@ def find_cart(frame) -> Optional[Tuple[int, int]]:
     return res["center"] if res is not None else None
 
 
-def find_cart_detailed(frame, plank_y=None, prior=None,
-                       max_x_jump=None) -> Optional[dict]:
+def find_cart_detailed(frame, plank_y=None, prior=None) -> Optional[dict]:
     """Locate the cart and return {center, half_width, scale, template,
     score}, or None if no template scored above CART_MATCH_THRESHOLD.
 
@@ -347,19 +351,15 @@ def find_cart_detailed(frame, plank_y=None, prior=None,
     without the separate 24-match search _estimate_cart_half_width did.
 
     prior: a previous find_cart_detailed result. The cart's x is fixed for
-    a run (issue #1), so given a prior we first search a narrow column
-    around its x (fast). On a miss we fall back to a full-frame search.
-
-    max_x_jump: when set with a prior, reject a full-frame fallback match
-    whose x is more than this far from the prior's x (return None instead).
-    The cart's x is fixed per run, so a far match is a false positive — an
-    off-plank cave/chain sprite can score right at threshold (0.85 at x=631
-    on botrun_20260615_030254). Without this guard, the column-tracker adopts
-    that false x as the prior and STICKS to it for the rest of the run,
-    losing the real cart. Returning None keeps the prior at the true x so the
-    next frame re-finds the real cart in-column. Omit (None) for a plain
-    self-healing full search (the original behaviour, used by find_cart and
-    tests).
+    a run (issue #1), so given a prior ONLY a narrow column around its x is
+    searched (~22ms); a miss returns None — a transient pose failure
+    self-heals in-column next frame, and there is nowhere else the cart
+    can legitimately be. There is deliberately NO per-miss full-frame
+    fallback (#106): it cost ~210ms of blindness per miss frame and could
+    only ever adopt a false off-column match (the 2026-06-15 cave/chain
+    false-lock, cfbfa69). A genuinely stale prior (bad initial lock, run
+    over) re-acquires when the CALLER clears the prior after a sustained
+    miss run (CART_REACQUIRE_MISSES) — prior=None is the full-search path.
 
     Search is restricted to a band from the frame top down to the plank
     (the cart rises into it on a jump and sits on it otherwise)."""
@@ -370,14 +370,7 @@ def find_cart_detailed(frame, plank_y=None, prior=None,
     if plank_y is None:
         return None
     if prior is not None and prior.get("center") is not None:
-        res = _match_cart(frame, plank_y, x_center=prior["center"][0])
-        if res is not None:
-            return res
-        full = _match_cart(frame, plank_y)
-        if (full is not None and max_x_jump is not None and
-                abs(full["center"][0] - prior["center"][0]) > max_x_jump):
-            return None
-        return full
+        return _match_cart(frame, plank_y, x_center=prior["center"][0])
     return _match_cart(frame, plank_y)
 
 

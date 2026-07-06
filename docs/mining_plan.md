@@ -815,6 +815,25 @@ gap to the next obstacle — tight gaps shrink the landing clear-target
 (enter at the near edge, floor 4px) so the next obstacle stays out of
 the forced-rescue zone; wide/unknown gaps keep the 12px default.
 
+### #106 fixed (2026-07-06) — per-miss full-frame cart search removed
+
+Benchmarked: the in-column search costs ~22ms, the full-frame fallback
+~210ms, `--save-frames` imwrite ~5ms (not a factor). Every cart-miss
+frame paid 22+210ms — the ~4fps stretches that delayed obstacle
+sightings at arc transitions and caused run 26's photo-finish ore death.
+
+The fallback is removed outright: the cart's x is fixed per run, so the
+±50px column always contains the true cart — a miss is a transient pose
+failure that self-heals in-column next frame, and the only thing a full
+search could ADD is a false off-column match (the 2026-06-15 cave/chain
+lock, now impossible by construction; CART_MAX_X_JUMP_PX deleted with
+it). Genuinely-stale priors re-acquire via the existing
+CART_REACQUIRE_MISSES path (prior=None → full search). Replay-validated
+on three captures: miss streaks are single frames mid-run (6-10 only at
+run-end despawn), zero mid-run losses — the fallback never contributed
+a legitimate detection. Miss frames now cost ~22ms; the loop should
+hold ~25fps through arcs.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

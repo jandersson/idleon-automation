@@ -51,7 +51,7 @@ from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import (
     find_cart_detailed, find_terrain_ahead, find_play_button,
     read_score_from_crop, score_crop, plank_dark_fraction,
-    CART_MAX_X_JUMP_PX, _find_plank_top_y, _find_plank_x_range,
+    _find_plank_top_y, _find_plank_x_range,
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
@@ -360,8 +360,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # baseline warms up, falling back to the global brightest-band scan.
         plank_y = _find_plank_top_y(frame, near_y=grounded.baseline(),
                                     lock_y=plank_lock.locked_y)
-        cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track,
-                                      max_x_jump=CART_MAX_X_JUMP_PX)
+        cart_det = find_cart_detailed(frame, plank_y=plank_y, prior=cart_track)
         # Anchor the column-search prior at the cart's fixed x: keep the last
         # good detection as the prior on a transient miss instead of resetting
         # to None (which would full-frame search and risk adopting an
