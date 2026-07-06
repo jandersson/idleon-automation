@@ -779,6 +779,23 @@ scoring approaches into flyovers. No rebound scoring is sacrificed — an
 ore that could still chain-score (slam range at height ≥40) is beyond
 the steer band at steer time.
 
+### Run 25 (2026-07-06 16:14 live) — PTS 2: double-slam chain + steer + rescue all fire and survive
+
+First multi-point run, and every #104/#105 mechanism validated live in
+one attempt: SLAM #3 (h71) scored → rebound to 88 → **SLAM #4 scored
+mid-rebound** (the human-style chain, first time by the bot; scoring
+slams now 8/9 lifetime — the one failure being run 23's too-quick slam,
+since altitude-gated) → second rebound → **SLAM #5 = the first live
+STEER slam** (pit at 92, in-band, solid below) → landed → JUMP #6 took
+the steered pit → **JUMP #7 = the first successful rescue jump**
+(fired at dist 10, rode over its pit). 8 actions, 6 survived.
+
+The death: JUMP #7's forced rescue landed ~106px on, in the NEXT pit of
+a dense field (below the steer band all arc — no branch can exist for
+it; a rescue from 10 has no landing choice). Row 92 is a corpse click.
+The remaining lever for dense fields is #105's two-obstacle lookahead:
+choose landings while there is still a choice. #104 closed on this run.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
