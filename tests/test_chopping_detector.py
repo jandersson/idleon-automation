@@ -236,3 +236,47 @@ def test_bar_pixel_count_near_zero_when_bar_blank():
     blank = np.zeros((20, 100, 4), dtype=np.uint8)
     blank[..., 3] = 255
     assert bar_pixel_count(blank) < 30
+
+
+def test_gold_window_ms_none_without_gold():
+    from minigames.chopping.detector import gold_window_ms
+    bar = _bar_with_zones(gold=(60, 60))  # zero-width gold — none on the bar
+    assert gold_window_ms(bar, v_max=500.0) is None
+
+
+def test_gold_window_ms_prices_red_sandwich_low():
+    from minigames.chopping.detector import gold_window_ms
+    # The 21:01 run's doomed shape, scaled to the 100px test bar:
+    # green | red | gold | red — both gold entries have red hard ahead.
+    bar = _bar_with_zones(green=(10, 55), red_low=(55, 62),
+                          gold=(62, 78), red_high=(78, 90))
+    tight = gold_window_ms(bar, v_max=600.0)
+    # 16px of gold at 600 px/s mid-bar can't come close to the 120ms gate.
+    assert tight is not None and tight < 80
+
+
+def test_gold_window_ms_prices_open_runway_high():
+    from minigames.chopping.detector import gold_window_ms
+    # Gold with a long green runway before the far red: entering from
+    # the left, red is ~55px past the gold entry.
+    bar = _bar_with_zones(green=(20, 60), gold=(60, 75),
+                          red_low=(0, 10), red_high=(90, 100))
+    open_w = gold_window_ms(bar, v_max=400.0)
+    assert open_w is not None and open_w > 100
+
+
+def test_gold_window_ms_unbounded_without_red_past_gold():
+    from minigames.chopping.detector import gold_window_ms
+    # No red at all in one travel direction past the gold.
+    bar = _bar_with_zones(green=(20, 60), gold=(60, 80),
+                          red_low=(0, 10), red_high=(95, 95))
+    assert gold_window_ms(bar, v_max=800.0) == 10**6
+
+
+def test_gold_window_ms_slower_leaf_prices_higher():
+    from minigames.chopping.detector import gold_window_ms
+    bar = _bar_with_zones(green=(10, 55), red_low=(55, 62),
+                          gold=(62, 78), red_high=(78, 90))
+    slow = gold_window_ms(bar, v_max=250.0)
+    fast = gold_window_ms(bar, v_max=700.0)
+    assert slow > fast

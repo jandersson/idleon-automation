@@ -26,6 +26,7 @@ from minigames.chopping.detector import (
     bar_pixel_count,
     eased_time_to_red_ms,
     gold_distance_ahead,
+    gold_window_ms,
     infer_vmax,
     leaf_vx_px_s,
     nearest_red_distance,
@@ -146,6 +147,32 @@ GOLD_WAIT_ENABLED = True
 # from red, the deadline-less ride held every safe green for ~20s
 # until the failsafe). On give-up the bot takes greens until the next
 # re-roll.
+
+# Chase viability (2026-07-06, after the 21:01 run): before chasing at
+# all, price the gold with the SAME eased model the fire gate uses —
+# detector.gold_window_ms gives the best time-to-red the gate could
+# ever be offered entering this layout's gold. If even that can't
+# clear the gate (plus margin), the chase is doomed from the start:
+# that run spent four 6s deadline waits (~28s) on an 'r11 o33 r19'
+# sandwich that priced ~60ms at the session's ~600 px/s. The margin
+# covers V_max drift between pricing and arrival.
+GOLD_VIABLE_MARGIN_MS = 10
+
+
+def _gold_chase_viable(bar_frame, speed_track, leaf_vx) -> bool:
+    """Can this layout's gold ever offer the fire gate a safe window at
+    the current speed? True when V_max isn't estimable yet — don't
+    block a chase on missing data, the chase deadline still bounds it."""
+    v_max = infer_vmax(
+        [(x, v) for _, x, v in speed_track], bar_frame.shape[1])
+    if v_max is None:
+        return True
+    if leaf_vx is not None:
+        v_max = max(v_max, abs(leaf_vx))
+    window = gold_window_ms(bar_frame, v_max)
+    if window is None:
+        return False  # no gold on the bar at all
+    return window >= MIN_TIME_TO_RED_MS + GOLD_VIABLE_MARGIN_MS
 
 # If the same pointer x is reported in the same zone this many clicks in a row,
 # assume the minigame is over (a stationary post-game UI element looks like a
@@ -327,6 +354,8 @@ def _run_inner(save_frames: bool = False):
     gold_chase_since: float | None = None
     gold_gave_up = False
     waiting_gold = False  # print-once flag for the cross-pass wait
+    gold_unviable_printed = False  # print-once for a red-flanked gold
+    last_starve_print = 0.0  # drought heartbeat cadence
     # Bounce-vs-chop experiment state: fire pause deadline + the V_max
     # snapshot taken at pause start (also serves as the resume flag).
     experiment_pause_until = 0.0
@@ -471,6 +500,20 @@ def _run_inner(save_frames: bool = False):
             conn.close()
             return
 
+        # Drought heartbeat: a starving round is silent for up to 60s
+        # before the exit banks — which reads as a hang (the 21:01 run
+        # was failsafed 6s before its starve exit would have banked).
+        # Say what's happening while it happens.
+        if chop_idx > 0 and now - fire_hold_click_t >= 15.0 \
+                and now - last_starve_print >= 15.0:
+            v_hb = infer_vmax(
+                [(x, v) for _, x, v in speed_track], bar_frame.shape[1])
+            v_desc = f"{v_hb:.0f}" if v_hb is not None else "?"
+            print(f"  [starve] {now - fire_hold_click_t:.0f}s without a safe "
+                  f"window (V_max ~{v_desc} px/s) — will bank at "
+                  f"{STARVE_EXIT_S:.0f}s")
+            last_starve_print = now
+
         red_dist = None
         if pointer_x is None:
             leaf_track.clear()
@@ -586,6 +629,7 @@ def _run_inner(save_frames: bool = False):
                 now - fire_hold_click_t if chop_idx > 0
                 else now - session_start_t
             )
+            gold_viable: bool | None = None  # lazy per-poll cache
 
             # Same-sweep gold upgrade: when gold lies ahead of the leaf
             # BEFORE any red, ride to it instead of taking the green —
@@ -603,8 +647,15 @@ def _run_inner(save_frames: bool = False):
                     and gold_ride_ms <= GOLD_RIDE_MAX_MS
                     and (red_ahead is None or gold_ahead < red_ahead)
                 ):
+                    if gold_viable is None:
+                        gold_viable = _gold_chase_viable(
+                            bar_frame, speed_track, leaf_vx)
+                        if not gold_viable and not gold_unviable_printed:
+                            gold_unviable_printed = True
+                            print("  [aim] gold present but red-flanked — "
+                                  "best window can't clear the gate; not chasing")
                     hold, gold_chase_since, gold_gave_up = update_gold_chase(
-                        gold_chase_since, now, True, since_last_fire,
+                        gold_chase_since, now, gold_viable, since_last_fire,
                         same_sweep=True)
                     if hold:
                         if not riding_gold:
@@ -626,9 +677,17 @@ def _run_inner(save_frames: bool = False):
             # the ride above declined — no gold reachable THIS sweep —
             # but gold elsewhere on the bar is worth a later pass. Only
             # green fires are held; a leaf over gold always fires.
-            if zone == "green" and GOLD_WAIT_ENABLED and not gold_gave_up:
+            if zone == "green" and GOLD_WAIT_ENABLED and not gold_gave_up \
+                    and "o" in layout:
+                if gold_viable is None:
+                    gold_viable = _gold_chase_viable(
+                        bar_frame, speed_track, leaf_vx)
+                    if not gold_viable and not gold_unviable_printed:
+                        gold_unviable_printed = True
+                        print("  [aim] gold present but red-flanked — "
+                              "best window can't clear the gate; not chasing")
                 hold, gold_chase_since, gold_gave_up = update_gold_chase(
-                    gold_chase_since, now, "o" in layout, since_last_fire,
+                    gold_chase_since, now, gold_viable, since_last_fire,
                     same_sweep=False)
                 if hold:
                     if not waiting_gold:
@@ -677,6 +736,7 @@ def _run_inner(save_frames: bool = False):
             )
             gold_chase_since = None
             gold_gave_up = False
+            gold_unviable_printed = False
             vx_tag = f", vx={leaf_vx:+.0f} px/s, red ahead {red_ahead}px ~{time_to_red_ms}ms" \
                 if time_to_red_ms is not None else \
                 (f", vx={leaf_vx:+.0f} px/s, no red ahead" if leaf_vx is not None else "")

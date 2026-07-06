@@ -177,6 +177,41 @@ def eased_time_to_red_ms(
     return int(max(0.0, theta(target) - theta(xn)) / omega * 1000)
 
 
+def gold_window_ms(bar_frame: np.ndarray, v_max: float) -> int | None:
+    """Best achievable time-to-red (ms) when ENTERING the gold zone, over
+    both travel directions, under the eased model at v_max — i.e. the
+    most the fire gate could ever be offered on this layout's gold.
+
+    Prices a gold chase before it starts: the layout only re-rolls on a
+    chop, so a red-flanked gold that can't reach MIN_TIME_TO_RED_MS now
+    never will (speed only rises) — chasing it just burns the chase
+    deadline every re-arm (2026-07-06 21:01 run: four 6s+ waits, zero
+    conversions, ~28s, on an 'r11 o33 r19' sandwich at ~600 px/s).
+
+    Returns None when the bar has no gold. A direction with no red
+    ahead of the gold entry is an unbounded window (returns a large
+    value). Assumes one contiguous gold zone (all layouts observed so
+    far); with several, this prices the outermost entries only.
+    """
+    bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
+    bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
+    gold_cols = np.where((_mask(bar_hsv, *GOLD_HSV) > 0).any(axis=0))[0]
+    if len(gold_cols) == 0:
+        return None
+    red_cols = _red_columns(bar_frame)
+    bar_w = bar_frame.shape[1]
+    best = None
+    for direction, entry in ((1.0, int(gold_cols.min())),
+                             (-1.0, int(gold_cols.max()))):
+        red_ahead = _distance_ahead(red_cols, entry, direction)
+        if red_ahead is None:
+            return 10**6  # no red past the gold in this direction
+        t = eased_time_to_red_ms(entry, direction, red_ahead, v_max, bar_w)
+        if t is not None and (best is None or t > best):
+            best = t
+    return best
+
+
 def leaf_vx_px_s(
     track: list[tuple[float, int]],
     min_span_s: float = 0.02,
