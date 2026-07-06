@@ -17,6 +17,7 @@ from minigames.mining.policy import (
     scale_window,
     should_jump,
     should_slam,
+    should_steer_slam,
 )
 from minigames.mining import detector as D
 
@@ -100,6 +101,29 @@ def test_should_slam_only_airborne_over_near_ore():
     assert should_slam(**{**base, "terrain": {"kind": "pit", "x": 160, "distance_px": 15}}) is False  # never over a pit
     assert should_slam(**{**base, "terrain": {"kind": "ore", "x": 200, "distance_px": 40}}) is False  # ore too far
     assert should_slam(**{**base, "now": 10.2, "last_slam_time": 10.0}) is False  # within slam cooldown
+
+
+def test_steer_slam_fires_airborne_on_incoming_pit_in_band():
+    """#104: airborne with a pit ahead inside the steer band -> slam onto
+    bare plank (safe, user-verified 2026-07-06) to land short and re-arm the
+    grounded jump. Motivating death: run 19's rebound descended into a pit
+    first seen at 63px; the steer band must catch it."""
+    base = dict(cart=(150, 120), now=10.0, last_slam_time=0.0,
+                grounded_baseline_y=193, slam_cooldown_s=0.5,
+                steer_min=61, steer_max=91)  # [50,75] scaled to v~96
+    pit_at_63 = {"kind": "pit", "x": 300, "distance_px": 63}
+    assert should_steer_slam(**base, terrain=pit_at_63) is True
+    # Grounded -> never (this is an airborne-only rescue).
+    assert should_steer_slam(**{**base, "cart": (150, 193)}, terrain=pit_at_63) is False
+    # Below the band the slam would land at/inside the pit — don't fire.
+    assert should_steer_slam(**base, terrain={"kind": "pit", "x": 300, "distance_px": 40}) is False
+    # Above the band the natural landing is safe — preserve the rebound.
+    assert should_steer_slam(**base, terrain={"kind": "pit", "x": 300, "distance_px": 100}) is False
+    # Ore is the scoring slam's business, not steering's.
+    assert should_steer_slam(**base, terrain={"kind": "ore", "x": 300, "distance_px": 63}) is False
+    # Per-arc slam cooldown still applies.
+    assert should_steer_slam(**{**base, "now": 10.0, "last_slam_time": 9.8},
+                             terrain=pit_at_63) is False
 
 
 def test_no_fire_during_cooldown():

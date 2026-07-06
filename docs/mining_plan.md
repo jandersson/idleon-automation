@@ -605,6 +605,19 @@ it needs pit-aware slam steering (slam early over bare plank to land
 short and re-arm), filed as #104 with the blocking unknown "is a slam
 onto bare plank a safe landing?".
 
+**#104 unblocked same day:** the user verified slamming bare plank is a
+safe landing. `should_steer_slam` shipped: airborne + nearest is a PIT in
+the steer band `[50,75]` px at v_ref (scaled live) → slam onto the plank,
+landing with the pit still in the grounded jump window. Below the band
+both slam and ride land in the pit (don't fire, don't mislabel doomed
+rows); above it the natural landing is safe (preserve scoring rebounds).
+On run 19's death trace: pit first seen at 63 px inside the scaled band
+[61,91] → steer slam → touchdown with pit at ~25 → jump window [25,38]
+fires. Steer slams log as action='slam' with next_kind='pit' (scoring
+slams carry next_kind='ore'), so the DB separates them for free. The
+0.4s slam-descent estimate and the band edges are first-cut numbers —
+the next runs' steer rows refine them.
+
 Also fixed from this run's data: **outcome settling tolerated no
 detection gaps** — row 59 logged 'died' because the cart was undetected
 for the single frame its settle landed on, while it was alive mid-rebound

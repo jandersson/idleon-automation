@@ -303,6 +303,54 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
     return True
 
 
+# Steering slam (#104): while airborne with a PIT ahead in this distance
+# band (px at SCROLL_V_REF_PIT, scaled live like the other windows), slam
+# onto the bare plank to land short of the pit and re-arm the grounded
+# jump. Slamming onto empty plank is a safe landing (user-verified
+# 2026-07-06). The band's edges come from the slam descent costing the pit
+# ~0.4s * v ~= 38px of approach:
+#   - below MIN the slam would land at/inside the pit — but so does riding
+#     the arc, so firing there only mislabels doomed rows; skip.
+#   - above MAX the natural landing leaves the pit >= the jump window
+#     anyway — riding is safe and preserves a scoring rebound.
+# Motivating death (run 19, botrun_20260706_150731): rebound descended
+# into a pit that approached 63->15 during the arc; touchdown at the lip
+# left no legal move (launch needs ~19px lead at v~96). A steer slam at
+# first sight (63px) lands with the pit at ~25 — inside the jump window.
+STEER_SLAM_MIN = 50
+STEER_SLAM_MAX = 75
+
+
+def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
+                      grounded_baseline_y: Optional[int],
+                      slam_cooldown_s: float,
+                      steer_min: int, steer_max: int,
+                      airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
+    """The steering slam (#104) — cut an arc short over bare plank so an
+    incoming pit is met grounded, with jump lead in hand. Returns True iff
+    the cart is AIRBORNE, the nearest obstacle is a PIT inside the steer
+    band, and the per-arc slam cooldown has expired.
+
+    Distinct from should_slam (the scoring slam): that one requires ORE
+    under the cart and must never fire over a pit; this one requires the
+    pit to still be well AHEAD (>= steer_min) so the slam lands on wood
+    before it. Callers check should_slam first — a slammable ore both
+    scores and gets the cart down. DB rows distinguish the two by
+    next_kind (ore = scoring slam, pit = steer slam)."""
+    if cart is None or terrain is None:
+        return False
+    if terrain.get("kind") != "pit":
+        return False
+    if not is_cart_airborne(cart[1], grounded_baseline_y, airborne_eps):
+        return False
+    dist = terrain.get("distance_px")
+    if dist is None or not (steer_min <= dist <= steer_max):
+        return False
+    if now - last_slam_time < slam_cooldown_s:
+        return False
+    return True
+
+
 def should_slam(*, cart, terrain, now: float, last_slam_time: float,
                 grounded_baseline_y: Optional[int], slam_cooldown_s: float,
                 slam_max_dist: int,

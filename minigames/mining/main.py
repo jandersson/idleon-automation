@@ -57,8 +57,8 @@ from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
 from minigames.mining.policy import (
     GroundedBaseline, ScrollVelocity, should_jump, should_slam,
-    is_cart_airborne, scale_window, scale_slam_dist,
-    SCROLL_V_REF_PIT, SCROLL_V_REF_ORE,
+    should_steer_slam, is_cart_airborne, scale_window, scale_slam_dist,
+    SCROLL_V_REF_PIT, SCROLL_V_REF_ORE, STEER_SLAM_MIN, STEER_SLAM_MAX,
 )
 
 _HERE = Path(__file__).parent
@@ -376,6 +376,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
             ORE_JUMP_TRIGGER_MIN, ORE_JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_ORE)
         slam_max_dist = scale_slam_dist(
             ORE_SLAM_MAX_DIST, scroll_v, SCROLL_V_REF_ORE)
+        steer_min, steer_max = scale_window(
+            STEER_SLAM_MIN, STEER_SLAM_MAX, scroll_v, SCROLL_V_REF_PIT)
 
         # --- FIRE FIRST: decide + click immediately after detection, before
         # any bookkeeping (state publish, settle, score read, digit capture,
@@ -410,6 +412,22 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                 # Second click mid-arc = slam down onto the ore (score). Fired
                 # immediately like the jump; the airborne guard in should_jump
                 # ensures this branch only runs while airborne.
+                bot_click(win_left + cart[0], win_top + cart[1])
+                last_slam_time = now
+                jump_idx += 1
+                jump_to_log = jump_idx
+                action = "slam"
+            elif should_steer_slam(
+                    cart=cart, terrain=terrain, now=now,
+                    last_slam_time=last_slam_time,
+                    grounded_baseline_y=grounded_baseline_y,
+                    slam_cooldown_s=SLAM_COOLDOWN_S,
+                    steer_min=steer_min, steer_max=steer_max):
+                # Steering slam (#104): a pit is incoming while airborne and
+                # the natural landing would meet it — slam onto bare plank
+                # (safe, user-verified) to land short and re-arm the grounded
+                # jump. Logged as action='slam' with next_kind='pit', which
+                # distinguishes it from scoring slams (next_kind='ore').
                 bot_click(win_left + cart[0], win_top + cart[1])
                 last_slam_time = now
                 jump_idx += 1
