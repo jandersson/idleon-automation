@@ -685,6 +685,21 @@ is thus NOT steerable mid-descent — the remaining lever is scoring-slam
 timing (fire the ore slam earlier/later to move the rebound's landing
 point), which stays deferred in #104.
 
+### Run 22 (2026-07-06 15:35 live) — plank lock live debut clean; gauntlets are the wall (#105)
+
+Seventh run of the day, PTS 1: the PlankLock held 184-187 all run (zero
+flap frames live — #103's fix confirmed in production), pit widths read
+full ~50px, all 4 actions survived (slam 6-for-6), and the steer slam was
+correctly silent through the whole rebound (footprint-not-clear while the
+next pit was in band; below the band once clear). No wrong decision
+anywhere — and the run still died: jump #4 cleared its pit and landed
+with the next pit at 10px. Third consecutive ~90px-gauntlet death. The
+run-22 arithmetic (relative travel 124px/arc vs pit-N clearance capping
+the landing ≤4px from pit N+1) shows single jumps CANNOT survive this
+spacing at v≥95 — the options are a mid-arc slam into the 39px plank gap,
+affine (not proportional) trigger tops, and/or two-obstacle lookahead.
+Filed with the numbers as #105; that's the next session's design problem.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
