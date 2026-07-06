@@ -62,16 +62,21 @@ confidence noted since none of this is from the game's code.
   198/201/225ms after a registered chop were **silently ignored** (no
   re-roll, no point), while 655/720/812ms gaps registered. The
   registration boundary sits somewhere in (225, 655)ms.
-  UPDATE 2026-07-06 (runs 3-5, with live PTS ground truth): the
-  0.45 probe was losing 3-4 points per run — the **PTS counter
-  updates instantly on a scoring chop** (maintainer), so run 5's
-  truthful mid-run read (23 after chop 18 vs 27 modeled) plus its
-  four 609-631ms gaps pin the losses on sub-cooldown clicks. The
-  re-roll ack ALSO false-acks on detection flicker (all suspect
-  clicks carried registered=1 with no PTS step), so the ack is
-  necessary-not-sufficient. MIN_INTERCHOP_S is now 0.66 (just above
-  the proven-safe 655ms); `polls.pts_read` (~4Hz step function)
-  bisects the true boundary offline and can win the margin back.
+  UPDATE 2026-07-06 (runs 3-5, live PTS ground truth): **every
+  click in those runs scored** (maintainer) — gaps down to 588ms all
+  paid, so the boundary is < 588ms and the (225, 588) range stays
+  unbisected (a same-evening 0.66 floor raise blaming 609-631ms gaps
+  was wrong and was reverted). The recurring -3-per-run gap vs the
+  +1/+2 model is instead **gold fires paying +1**: the PTS counter
+  updates instantly, so run 5's truthful 23-after-chop-18 (vs 27
+  modeled) plus final 31 (vs 34) mean ~3-4 of the gold-labeled fires
+  were evaluated off-gold — 7 of its 8 ride-triggered gold fires
+  were LEFTWARD entry fires (fire the instant the detected left edge
+  crosses in), so the working hypothesis is the game's hit point
+  sits a few px right of the sprite mask's leftmost pixel. Issue
+  #110: measure the offset from `polls.pts_read` steps × fire depth
+  (pointer_x + zone_layout, already logged), then add a depth-aware
+  gold fire rule.
 - **Ignored clicks are not free**: the 00:46 round's fatal click came
   225ms after its predecessor — no point was possible, but the death
   still happened. Working model: every click is evaluated against the

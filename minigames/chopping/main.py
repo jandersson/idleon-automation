@@ -53,21 +53,18 @@ POLL_INTERVAL = 0.01
 # 655/720/812ms gaps all registered. The hold releases only when BOTH
 # the layout has re-rolled AND MIN_INTERCHOP_S has passed.
 #
-# 0.45 -> 0.66 (2026-07-06, runs 4-5): the PTS counter updates
-# INSTANTLY on a scoring chop (maintainer ground truth), which makes
-# the mid-run reads truthful — and run 5's read of 23-after-chop-18
-# vs 27 modeled means ~4 clicks silently didn't score, matching its
-# four 609-631ms gaps; run 5 finished -3 (31 vs 34), run 3 -3 with
-# three 601-626ms gaps. ≥655ms is the proven-safe side, so the floor
-# now sits just above it; the polls.pts_read step function will
-# bisect the true boundary offline and can win the margin back later.
-# (The layout re-roll ack is necessary but NOT sufficient for
-# scoring — it false-acks on detection flicker, so `registered=1`
-# with no PTS increment is exactly the sub-cooldown signature.)
+# Maintainer ground truth (2026-07-06, after runs 3-5): every click
+# in those runs SCORED — the observed gaps down to 588ms all paid, so
+# the registration boundary is below 588ms and the briefly-raised
+# 0.66 floor (which blamed 609-631ms gaps for the missing points) was
+# reverted the same evening. The score gaps are gold fires paying +1
+# instead of +2 (see the gold-entry hitbox question, issue #110), not
+# swallowed clicks. (225, 588)ms remains unbisected; the fire cadence
+# is crossing-limited at ~600ms+ anyway, so 0.45 rarely binds.
 # COOLDOWN_AFTER_CLICK is the fallback when no re-roll is ever seen
 # (a 0px re-roll is possible — shifts run 1-3px).
-MIN_INTERCHOP_S = 0.66
-COOLDOWN_AFTER_CLICK = 0.80
+MIN_INTERCHOP_S = 0.45
+COOLDOWN_AFTER_CLICK = 0.70
 
 # A registered chop's layout re-roll arrives within 86-201ms; a re-roll
 # "seen" later than this isn't credited to the chop (it could be the

@@ -129,9 +129,9 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # ~4Hz on non-fireable polls; 2026-07-06). Unfiltered. The counter
     # updates INSTANTLY on a scoring chop (maintainer ground truth),
     # so each value is the true score at sample time — the step
-    # function over t_ms attributes every point to its click, which is
-    # what exposes silently-unregistered clicks (the sub-cooldown
-    # signature: registered=1 by re-roll ack, no PTS step).
+    # function over t_ms attributes every point to its click. Primary
+    # use: per-gold-fire +1/+2 attribution against fire depth into the
+    # zone (the gold-entry hitbox question, issue #110).
     ("pts_read", "INTEGER"),
 ]
 
