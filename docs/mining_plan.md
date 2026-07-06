@@ -593,6 +593,25 @@ on the already-frozen death scene — their next_* context is garbage;
 exclude them when reading pit survival bins (the scene froze ~0.3s before
 JUMP #4, confirmed by the static full-width scans f102-127).
 
+### Run 19 (2026-07-06 15:07 live, --save-frames) — slam 3-for-3; rebound-into-pit death (#104)
+
+Fourth run of the day, PTS 1 again: jump(pit, 27) → jump(ore, 72) →
+slam(ore, 11) — the chain is now routine (slam 3-for-3 since the ≤11
+retune). Death: the slam's rebound descended into a pit that approached
+during the arc (pit_dist 63→15 while airborne descending); the cart
+touched down at the pit's lip with no legal move left (jump needs ~19px
+of lead at v≈96, pit was at 10). The loss was determined mid-air — fixing
+it needs pit-aware slam steering (slam early over bare plank to land
+short and re-arm), filed as #104 with the blocking unknown "is a slam
+onto bare plank a safe landing?".
+
+Also fixed from this run's data: **outcome settling tolerated no
+detection gaps** — row 59 logged 'died' because the cart was undetected
+for the single frame its settle landed on, while it was alive mid-rebound
+(the next action settled 'survived' moments later). `_settle_outcomes`
+now keeps an absent-cart entry pending until the absence outlasts
+CART_GONE_CONFIRM_S (0.6s); row 59 repaired to 'survived' in the DB.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

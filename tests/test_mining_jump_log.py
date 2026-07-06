@@ -179,3 +179,40 @@ def test_settle_pending_on_death_relabels_only_last_as_died():
     r = log_jump(conn2, jump_idx=1, next_kind="pit", next_distance_px=40, source="bot")
     _settle_pending_on_death(conn2, [{"row_id": r, "click_time": 0.0}], now=1.5)
     assert conn2.execute("SELECT outcome FROM jumps WHERE id = ?", (r,)).fetchone()[0] == "died"
+
+
+def test_settle_outcomes_tolerates_transient_cart_detection_gaps():
+    """Regression for row 59 (2026-07-06 15:07): the cart was undetected for
+    a single frame at the settle instant while alive mid-rebound, and the
+    outcome logged 'died'. An absent cart must keep the entry pending until
+    the absence outlasts CART_GONE_CONFIRM_S; a real death (long absence)
+    still settles 'died'."""
+    from minigames.mining.main import _settle_outcomes
+
+    conn = open_db(_tmpdb())
+    row = log_jump(conn, session_started="s", attempt_idx=1, jump_idx=1)
+    pending = [{"row_id": row, "click_time": 100.0}]
+
+    # Settle window expired (now=102), cart undetected THIS frame but seen
+    # 0.1s ago -> ambiguous, stays pending, nothing written.
+    pending = _settle_outcomes(conn, pending, 102.0, None,
+                               last_cart_seen_at=101.9)
+    assert len(pending) == 1
+    assert conn.execute("SELECT outcome FROM jumps WHERE id=?",
+                        (row,)).fetchone()[0] is None
+
+    # Cart re-detected -> survived.
+    pending = _settle_outcomes(conn, pending, 102.1, (467, 179),
+                               last_cart_seen_at=102.1)
+    assert pending == []
+    assert conn.execute("SELECT outcome FROM jumps WHERE id=?",
+                        (row,)).fetchone()[0] == "survived"
+
+    # A real death: cart unseen for longer than the confirm window.
+    row2 = log_jump(conn, session_started="s", attempt_idx=1, jump_idx=2)
+    pending = [{"row_id": row2, "click_time": 100.0}]
+    pending = _settle_outcomes(conn, pending, 102.5, None,
+                               last_cart_seen_at=101.5)
+    assert pending == []
+    assert conn.execute("SELECT outcome FROM jumps WHERE id=?",
+                        (row2,)).fetchone()[0] == "died"

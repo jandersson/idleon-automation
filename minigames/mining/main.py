@@ -138,6 +138,15 @@ SLAM_COOLDOWN_S = 0.5      # one slam per airborne arc
 # How long after a jump click before we measure the outcome.
 OUTCOME_DELAY_S = 1.8
 
+# At settle time, a currently-undetected cart only counts as dead once it
+# has been unseen this long. Transient mid-arc detection gaps of one to a
+# few frames (0.04-0.4s at the low-FPS stretches) are routine — row 59
+# (2026-07-06 15:07) settled 'died' on such a gap while the cart was alive
+# mid-rebound and the very next action's outcome measured 'survived'. An
+# ambiguous settle stays pending and re-checks next frame, so it resolves
+# within ~this much extra latency either way.
+CART_GONE_CONFIRM_S = 0.6
+
 # How long the bot keeps running after losing sight of the plank before
 # giving up — covers brief transitions in/out of the minigame UI.
 PLANK_LOST_TIMEOUT_S = 8.0
@@ -250,6 +259,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     frame_i = 0
     last_click_time = 0.0
     last_slam_time = 0.0
+    last_cart_seen_at = None  # wall-clock of the last frame with a cart fix
     last_plank_seen = time.time()
     last_telemetry_at = 0.0
     last_loop_at = 0.0  # for live FPS in telemetry
@@ -345,6 +355,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         cart = cart_det["center"] if cart_det else None
         cart_right = (cart_det["center"][0] + cart_det["half_width"]) if cart_det else None
         now = time.time()
+        if cart is not None:
+            last_cart_seen_at = now
         plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
         terrain = (find_next_terrain(frame, cart, plank_y=plank_y,
                                      cart_right=cart_right, plank_range=plank_range)
@@ -427,7 +439,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
 
         # Settle any pending-outcome jumps whose measurement window expired.
         with pending_lock:
-            pending_outcomes = _settle_outcomes(conn, pending_outcomes, now, cart)
+            pending_outcomes = _settle_outcomes(conn, pending_outcomes, now,
+                                                cart, last_cart_seen_at)
 
         # Log the fired bot jump now (after the click — bookkeeping never
         # delays the fire). plank_range was computed pre-click from the same
@@ -562,24 +575,37 @@ def _end_run(conn, pending_outcomes, pending_lock, capturer, listener,
         listener.stop()
 
 
-def _settle_outcomes(conn, pending, now, cart):
+def _settle_outcomes(conn, pending, now, cart, last_cart_seen_at=None,
+                     gone_confirm_s=CART_GONE_CONFIRM_S):
     """Walk the pending-outcome list; for any past OUTCOME_DELAY_S since
     its click, write its outcome and drop it from the list. Return the
     new pending list.
 
     Outcome is just "is the cart still there a beat later?": detected →
-    survived (it cleared the obstacle), gone → died (it fell in). Once the
-    cart is lost the attempt is over — it doesn't reappear mid-run. The old
-    plank_y branch produced "unknown" because a death often leaves the
-    plank briefly visible (seen 2026-06-15: the fatal jump logged
-    'unknown'), which is useless for survival_rate_by_distance."""
+    survived (it cleared the obstacle), gone-for-a-while → died (it fell
+    in). A cart that is merely undetected THIS frame is ambiguous —
+    transient mid-arc detection gaps are routine (row 59 settled 'died' on
+    one while alive mid-rebound) — so an absent cart keeps the entry
+    pending until the absence outlasts gone_confirm_s (measured from
+    last_cart_seen_at). Once the cart is truly lost the attempt is over —
+    it doesn't reappear mid-run. The old plank_y branch produced "unknown"
+    because a death often leaves the plank briefly visible (seen
+    2026-06-15: the fatal jump logged 'unknown'), which is useless for
+    survival_rate_by_distance."""
     still_pending = []
     for p in pending:
         elapsed = now - p["click_time"]
         if elapsed < OUTCOME_DELAY_S:
             still_pending.append(p)
             continue
-        outcome = "survived" if cart is not None else "died"
+        if cart is not None:
+            outcome = "survived"
+        elif (last_cart_seen_at is None or
+              now - last_cart_seen_at >= gone_confirm_s):
+            outcome = "died"
+        else:
+            still_pending.append(p)  # ambiguous gap — re-check next frame
+            continue
         set_outcome(conn, p["row_id"], outcome, int(elapsed * 1000))
         print(f"  OUTCOME row={p['row_id']}: {outcome} ({int(elapsed*1000)}ms)")
     return still_pending
