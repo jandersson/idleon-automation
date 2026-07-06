@@ -308,6 +308,7 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
                 trig_min: int, trig_max: int,
                 ore_trig_min: Optional[int] = None,
                 ore_trig_max: Optional[int] = None,
+                ore_fallback_min: int = 0,
                 airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
     """The grounded-jump predicate (the FIRST click). Returns True iff a jump
     should fire this frame.
@@ -339,8 +340,13 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
     if kind == "pit":
         in_window = trig_min <= dist <= trig_max
     elif kind == "ore" and ore_trig_min is not None and ore_trig_max is not None:
+        # The fallback's low edge is clamped to ore_fallback_min: pits
+        # forgive a low-floor rescue (center-based collision) but ore kills
+        # on FRONT contact, so the cart must be airborne before the ore
+        # reaches its bumper — the edge-based delta*v floor.
+        fb_lo = max(trig_min, ore_fallback_min)
         in_window = (ore_trig_min <= dist <= ore_trig_max or
-                     trig_min <= dist <= trig_max)
+                     fb_lo <= dist <= trig_max)
     else:
         return False
     if not in_window:

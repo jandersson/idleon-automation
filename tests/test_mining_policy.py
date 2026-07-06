@@ -48,16 +48,35 @@ def test_trigger_window_fires_later_than_the_old_far_lip():
     """#5 (2026-06-16): the configured trigger fires LATER (smaller pit_dist)
     than the old [30,50], so the airborne window is phased to contain the gap
     passage instead of landing into the far edge. The old fire distance (~49)
-    must no longer fire; a pit at the new max does. MIN stays >= ~18 (the
-    delta*v floor) so the cart is airborne before the gap arrives."""
+    must no longer fire; a pit at the new max does. MIN sits BELOW the
+    detector's SCAN_BUFFER floor (10) — pit collision is CENTER-based
+    (settled 2026-07-06, #105), so a landed-short rescue jump at any
+    visible distance is legal (airborne before the pit reaches the center
+    needs only delta*v - half_cart ~= 3-6px)."""
     from minigames.mining.main import JUMP_TRIGGER_MIN, JUMP_TRIGGER_MAX
     assert JUMP_TRIGGER_MAX <= 32
-    assert JUMP_TRIGGER_MIN >= 18
+    assert JUMP_TRIGGER_MIN <= 10   # rescue floor: below the scan floor
     kw = {**BASE_KW, "trig_min": JUMP_TRIGGER_MIN, "trig_max": JUMP_TRIGGER_MAX}
     far = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": 49}}
     assert should_jump(**far) is False  # the old fire point no longer fires
     at_max = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": JUMP_TRIGGER_MAX}}
     assert should_jump(**at_max) is True
+    # The landed-short rescue (runs 20/22: touched down with the next pit
+    # at the ~10px scan floor) now fires instead of watching the death.
+    rescue = {**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": 10}}
+    assert should_jump(**rescue) is True
+
+
+def test_ore_fallback_keeps_the_edge_based_floor():
+    """Ore kills on FRONT contact (run 18), not center, so the ore
+    pit-window fallback is clamped to ore_fallback_min even though the pit
+    floor dropped to the rescue level."""
+    kw = {**BASE_KW, "trig_min": 5, "trig_max": 37,
+          "ore_trig_min": 46, "ore_trig_max": 80, "ore_fallback_min": 20}
+    assert should_jump(**{**kw, "terrain": {"kind": "ore", "x": 300, "distance_px": 29}}) is True
+    assert should_jump(**{**kw, "terrain": {"kind": "ore", "x": 300, "distance_px": 10}}) is False
+    # The pit rescue at the same distance still fires.
+    assert should_jump(**{**kw, "terrain": {"kind": "pit", "x": 300, "distance_px": 10}}) is True
 
 
 def test_jump_fires_for_ore_only_in_the_ore_window():

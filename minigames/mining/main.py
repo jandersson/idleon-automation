@@ -96,25 +96,33 @@ POLL_INTERVAL = 0.005
 # earlier worsens bound (2). [20,30] fires at ~30, inside the point-model
 # feasible band [18, 88-W].
 #
-# MIN lowered 20 -> 18 (2026-07-06, run 20): 18 IS the bound-(1) physics
-# floor (delta*v at v_ref) — the old 2px of margin only mattered in
-# landed-short rescue scenarios (post-steer-slam touchdowns land with the
-# pit at ~20-25 scaled), where it denied the rescue jump outright. The
-# normal approach fires at the window TOP, so the bottom gates nothing
-# else.
+# The collision-model question above is SETTLED (2026-07-06, #105
+# analysis): pit collision is CENTER-based. Run 22's jump #1 landed with
+# its rear 12px over the jumped pit (center 6px clear of the far edge) and
+# survived; every captured death has the center inside a pit (by 1px on
+# run 22's jump #4, 5px on run 19, 16px on the 14:40 death, fully inside
+# on run 21). The full-footprint branch is falsified.
 #
-# CAVEAT — this is an EXPERIMENT, not a settled fix. Feasibility depends on
-# the (still unmeasured) gap width W and the collision model. Center/point
-# model with W~=52: a single jump clears at this timing. Full-footprint
-# model (cart ~36px wide, any overlap kills): gap+footprint (~88px) exceeds
-# the airborne relative travel (v*A ~= 70px) by ~19px, so NO single-jump
-# timing clears and the real fix is a multi-jump (land-and-re-jump) policy.
-# This window is the discriminator: a --save-frames re-run that CLEARS
-# confirms the point model; one that still dies — now landing at the far
-# lip, not mid-gap — confirms footprint + W~=52. Measure the true W on that
-# run (the [traj] log lines below print the live arc).
-JUMP_TRIGGER_MIN = 18
+# MIN lowered 18 -> 5 accordingly: bound (1) is really "airborne before
+# the pit reaches the CENTER", d >= delta*v - half_cart(18) ~= 3-6px at
+# live speeds — the old edge-based floor declared landed-short gauntlet
+# states (pit at ~10px after an arc, runs 20/22) unactionable when an
+# immediate jump escapes them. The detector floors dist at
+# SCAN_BUFFER_PX(10) anyway, so 5 effectively means "any visible pit
+# below the top fires". The normal approach still fires at the window
+# TOP; the bottom only gates rescues. Caveat: frozen death screens hold a
+# static dist~10 pit reading, so a post-death click may fire and log a
+# garbage-context row (like rows 56-57) — identifiable as the last
+# click(s) before a run end.
+JUMP_TRIGGER_MIN = 5
 JUMP_TRIGGER_MAX = 30
+
+# The rescue floor above is pit-specific: ORE kills by SIDE CONTACT with
+# the cart's front (the 15:00 run-18 death — ore mashed into the grounded
+# cart's bumper), so an ore jump still needs the cart airborne before the
+# ore reaches its front edge: the old delta*v floor. The ore pit-window
+# fallback (rebound-shadowed ore, run 18) is clamped to this.
+ORE_FALLBACK_MIN = 18
 
 # After a jump click, ignore further triggers for this long so we don't
 # spam clicks while the same pit is still in the trigger window.
@@ -406,6 +414,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
             ORE_SLAM_MAX_DIST, scroll_v, SCROLL_V_REF_ORE)
         steer_min, steer_max = scale_window(
             STEER_SLAM_MIN, STEER_SLAM_MAX, scroll_v, SCROLL_V_REF_PIT)
+        ore_fb_min, _ = scale_window(
+            ORE_FALLBACK_MIN, ORE_FALLBACK_MIN, scroll_v, SCROLL_V_REF_PIT)
 
         # --- FIRE FIRST: decide + click immediately after detection, before
         # any bookkeeping (state publish, settle, score read, digit capture,
@@ -425,7 +435,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                     cooldown_s=JUMP_COOLDOWN_S,
                     trig_min=trig_min, trig_max=trig_max,
                     ore_trig_min=ore_trig_min,
-                    ore_trig_max=ore_trig_max):
+                    ore_trig_max=ore_trig_max,
+                    ore_fallback_min=ore_fb_min):
                 bot_click(win_left + cart[0], win_top + cart[1])
                 last_click_time = now
                 jump_idx += 1

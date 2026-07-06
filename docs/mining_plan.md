@@ -700,6 +700,33 @@ spacing at v≥95 — the options are a mid-arc slam into the 39px plank gap,
 affine (not proportional) trigger tops, and/or two-obstacle lookahead.
 Filed with the numbers as #105; that's the next session's design problem.
 
+### Collision model — SETTLED (2026-07-06, #105 analysis; don't re-derive)
+
+- **Pit collision is CENTER-based.** Discriminating measurement: run 22's
+  jump #1 landed with its rear 12px over the jumped pit (center 6px clear
+  of the far edge) and SURVIVED (`botrun_20260706_153531` f45-46, scene
+  scrolling on); every captured death has the center inside a pit (+1px:
+  run 22 jump #4; +5px: run 19; +16px: the 14:40 far-lip death; fully
+  inside: run 21). The full-footprint model from the Run-11 caveat is
+  falsified.
+- **Consequences:** (a) bound (1)'s true floor is "airborne before the pit
+  reaches the CENTER" = delta*v − half_cart(18) ≈ 3-6px, so landed-short
+  states (pit at the 10px scan floor after an arc — the runs 20/22 deaths)
+  are ESCAPABLE by an immediate jump: `JUMP_TRIGGER_MIN` dropped to 5
+  (below the scan floor = any visible pit under the top fires). (b) a
+  39px gauntlet gap gives the landing CENTER ±19px of tolerance, so
+  gap-targeted firing is viable once the arc constant is pinned down.
+- **Ore stays edge-based:** the run-18 death was ore contacting the
+  grounded cart's FRONT, so ore jumps keep the delta*v floor
+  (`ORE_FALLBACK_MIN`, clamped in should_jump's ore fallback).
+- **Open (the remaining #105 work):** the arc constant S = v·(delta+A)
+  back-calculated from two landings disagrees ~15% (jump-1 vs jump-4 of
+  run 22) — likely v-estimate attribution error. Pin it with a per-jump
+  landing regression over the logged arcs (every jump has [traj] heights,
+  v, W, and the landing offset is recoverable from frames), then aim the
+  fire distance so the landing center hits gap middles, and add
+  two-obstacle lookahead so gauntlets are visible at fire time.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
