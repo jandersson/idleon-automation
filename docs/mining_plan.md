@@ -761,6 +761,24 @@ slam dropped the cart BESIDE the ore (run-14/18 side-hit death). Fix:
 ore has scrolled under/behind, so the slam fires in proper geometry or
 not at all).
 
+### Run 24 (2026-07-06 16:07 live) — ore-shadowed rebound; steer slam extended to ore
+
+PTS 1 (slam 7-for-7 — the altitude gate's first live pass at height 71).
+Death: the rebound descended toward an ORE PAIR (dist ~90/~135) and
+touched down with the first ore at the bumper (≤10px — below even the
+ore-fallback floor), side-hit ~0.3s later; JUMP #4/#5 were clicks on the
+frozen scene (rows 83-84, garbage context). Same geometry as the pit
+version (#104) with an ore in the landing shadow.
+
+Fix: `should_steer_slam` now accepts ORE in the steer band, gated to
+REBOUND arcs only (`last_slam_time > last_click_time`) — steering early
+lands with the ore at fallback-jumpable range and the run-18 flyover
+takes it. Jump arcs stay pit-only: an in-band ore there is usually the
+intended slam target of an ore-window jump, and steering would convert
+scoring approaches into flyovers. No rebound scoring is sacrificed — an
+ore that could still chain-score (slam range at height ≥40) is beyond
+the steer band at steer time.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

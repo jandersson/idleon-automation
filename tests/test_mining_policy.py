@@ -155,6 +155,28 @@ def test_steer_slam_fires_airborne_on_incoming_pit_in_band():
                              terrain=pit_at_63) is False
 
 
+def test_steer_slam_takes_ore_only_on_rebound_arcs():
+    """Run 24: a rebound landed with an ore at the bumper (below the
+    ore-fallback floor — side hit ~0.3s later). Ore in the steer band fires
+    the early slam on REBOUND arcs, landing with the ore at
+    fallback-jumpable range. On jump arcs an in-band ore is usually the
+    intended slam target of an ore-window jump — never steer there."""
+    base = dict(cart=(150, 120), now=10.0, last_slam_time=0.0,
+                grounded_baseline_y=193, slam_cooldown_s=0.5,
+                steer_min=49, steer_max=91, landing_solid=True)
+    ore = {"kind": "ore", "x": 300, "distance_px": 62}
+    assert should_steer_slam(**base, terrain=ore, rebound_arc=True) is True
+    assert should_steer_slam(**base, terrain=ore, rebound_arc=False) is False
+    # Pit steering is arc-agnostic.
+    pit = {"kind": "pit", "x": 300, "distance_px": 62}
+    assert should_steer_slam(**base, terrain=pit, rebound_arc=False) is True
+    # The other gates still apply to ore steers.
+    assert should_steer_slam(**{**base, "landing_solid": None}, terrain=ore,
+                             rebound_arc=True) is False
+    assert should_steer_slam(**base, terrain={"kind": "ore", "x": 300, "distance_px": 20},
+                             rebound_arc=True) is False
+
+
 def test_steer_slam_requires_solid_ground_below():
     """Regression for run 21 (botrun_20260706_152412): the ahead-only scan
     reported a pit 70px out, but the first pit of a three-pit gauntlet was

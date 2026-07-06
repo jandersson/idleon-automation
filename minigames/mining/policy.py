@@ -428,6 +428,7 @@ def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
                       slam_cooldown_s: float,
                       steer_min: int, steer_max: int,
                       landing_solid: Optional[bool],
+                      rebound_arc: bool = False,
                       airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
     """The steering slam (#104) — cut an arc short over bare plank so an
     incoming pit is met grounded, with jump lead in hand. Returns True iff
@@ -447,13 +448,29 @@ def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
 
     Distinct from should_slam (the scoring slam): that one requires ORE
     under the cart and must never fire over a pit; this one requires the
-    pit to still be well AHEAD (>= steer_min) so the slam lands on wood
-    before it. Callers check should_slam first — a slammable ore both
+    obstacle to still be well AHEAD (>= steer_min) so the slam lands on
+    wood before it. Callers check should_slam first — a slammable ore both
     scores and gets the cart down. DB rows distinguish the two by
-    next_kind (ore = scoring slam, pit = steer slam)."""
+    next_kind (ore under cart = scoring slam; pit/ore ahead = steer slam,
+    told apart from scoring by next_distance_px in the steer band).
+
+    ORE in the steer band fires ONLY on rebound arcs (rebound_arc =
+    last_slam more recent than last_jump click): run 24's rebound landed
+    with an ore at the bumper (below even the ore-fallback floor — the
+    ore hit the cart's side ~0.3s after touchdown), and steering early
+    lands with the ore at fallback-jumpable range instead. On JUMP arcs
+    the gate stays pit-only — an ore in the band there is usually the
+    intended slam target of an ore-window jump, and steering would
+    convert scoring approaches into flyovers. No scoring is lost on
+    rebounds: an ore that could still chain-score (reaching slam range at
+    SLAM_MIN_HEIGHT+) is beyond the steer band at steer time."""
     if cart is None or terrain is None:
         return False
-    if terrain.get("kind") != "pit":
+    kind = terrain.get("kind")
+    if kind == "ore":
+        if not rebound_arc:
+            return False
+    elif kind != "pit":
         return False
     if landing_solid is not True:
         return False

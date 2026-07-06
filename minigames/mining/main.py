@@ -471,7 +471,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                     grounded_baseline_y=grounded_baseline_y,
                     slam_cooldown_s=SLAM_COOLDOWN_S,
                     steer_min=steer_min, steer_max=steer_max,
-                    landing_solid=landing_solid):
+                    landing_solid=landing_solid,
+                    rebound_arc=last_slam_time > last_click_time):
                 # Steering slam (#104): a pit is incoming while airborne and
                 # the natural landing would meet it — slam onto bare plank
                 # (safe, user-verified) to land short and re-arm the grounded
