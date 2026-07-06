@@ -6,9 +6,15 @@ from pathlib import Path
 import cv2
 
 from minigames.mining.policy import (
+    GROUNDED_FREEZE_MAX_SAMPLES,
     GroundedBaseline,
     JUMP_GROUNDED_EPS_PX,
+    SCROLL_V_REF_ORE,
+    SCROLL_V_REF_PIT,
+    ScrollVelocity,
     is_cart_airborne,
+    scale_slam_dist,
+    scale_window,
     should_jump,
     should_slam,
 )
@@ -134,6 +140,130 @@ def test_grounded_baseline_ignores_airborne_majority_within_window():
     for _ in range(20):
         gb.update(135)          # a long airborne stretch
     assert gb.baseline() == 193  # resting level preserved
+
+
+def test_grounded_baseline_holds_through_a_rebound_chain():
+    """A slam-rebound chain keeps the cart airborne longer than the window
+    (66 frames on botrun_20260616_135951) — the level must NOT decay to an
+    airborne y (that mis-anchored the plank search to a false band at y=149
+    and froze terrain output at slam range)."""
+    gb = GroundedBaseline(window=45, warmup=8)
+    for _ in range(8):
+        gb.update(179)
+    for _ in range(70):          # airborne chain longer than the 45 window
+        gb.update(110)
+    assert gb.baseline() == 179  # held at the true grounded level
+    gb.update(180)               # landing (1px sink) re-anchors upward
+    assert gb.baseline() == 180
+
+
+def test_grounded_baseline_resists_the_slam_contact_ratchet():
+    """Slam contacts bounce the cart at ore-top height (y~155-161, ~20px
+    above grounded 179) — a staircase of window maxes that stepped an
+    eps-tolerant rule down to an airborne level on the replay. The level
+    must hold at 179 through the measured bounce pattern."""
+    gb = GroundedBaseline(window=45, warmup=8)
+    for _ in range(20):
+        gb.update(179)           # grounded run-up
+    # jump arc -> slam contact bounce -> rebound arc -> second contact,
+    # shaped like botrun_20260616_135951 frames 96-162
+    chain = ([161, 159, 146, 143, 141, 129, 128, 121, 119, 119, 115, 114] +
+             [114, 116, 122, 125, 135, 152, 155, 147, 147] +      # slam 1 down
+             [135, 125, 120, 119, 110, 107, 104, 100, 100, 98] +  # rebound up
+             [98, 99, 102, 103, 109, 111, 123, 140, 144, 158] +   # slam 2 down
+             [153, 151, 133, 133, 123, 120, 111, 110, 104, 99] +  # rebound up
+             [98, 97, 97, 98, 100, 102, 108, 114, 118, 125])
+    for y in chain:
+        gb.update(y)
+    assert gb.baseline() == 179  # no ratchet-down to a bounce height
+
+
+def test_grounded_baseline_freeze_cap_recovers_inflated_level():
+    """The freeze is capped: a one-off inflated sample (false cart match
+    below the plank) must not pin an inflated level forever — an inflated
+    level reads the TRUE grounded y as airborne and would suppress every
+    jump. After the cap, the level falls back to the window max."""
+    gb = GroundedBaseline(window=45, warmup=8)
+    for _ in range(8):
+        gb.update(193)
+    gb.update(240)               # spike far below the plank (inflated max)
+    assert gb.baseline() == 240
+    for _ in range(45 + GROUNDED_FREEZE_MAX_SAMPLES + 2):
+        gb.update(193)           # cart is really grounded the whole time
+    assert gb.baseline() == 193  # spike aged out + freeze cap expired
+
+
+# --- ScrollVelocity + speed-adaptive window scaling (#53) ---
+
+FPS = 24.5  # live loop cadence of the fixture run
+# Nearest-obstacle x per frame, replayed from botrun_20260616_135951 through
+# the live detector (real data, no frame archaeology needed at test time).
+PIT_TRACK_EARLY = [436, 433, 428, 426, 423, 419, 412, 409, 407, 402, 400,
+                   398, 393, 392, 388, 384, 381, 377, 376, 371, 368, 365,
+                   361, 357, 355, 352]          # frames 19-44, ~82 px/s
+ORE_TRACK_LATE = [419, 412, 405, 399, 396, 393, 389, 384, 381, 373, 368,
+                  365, 360, 358, 352]           # frames 147-161, ~117 px/s
+
+
+def _feed(sv, xs, kind="pit", plank_y=190, fps=FPS, t0=0.0):
+    for i, x in enumerate(xs):
+        sv.update({"kind": kind, "x": x, "distance_px": 0}, plank_y, t0 + i / fps)
+
+
+def test_scroll_velocity_measures_the_replayed_pit_approach():
+    sv = ScrollVelocity()
+    _feed(sv, PIT_TRACK_EARLY)
+    v = sv.velocity()
+    assert v is not None
+    assert 65 <= v <= 100        # segment ground truth ~82 px/s
+
+
+def test_scroll_velocity_tracks_the_late_run_ramp():
+    """Fed the late-run ore track, the estimate must land clearly above the
+    early-run speed — the within-run ramp (~82 -> ~117 px/s) is the whole
+    reason the windows scale."""
+    sv = ScrollVelocity()
+    _feed(sv, ORE_TRACK_LATE, kind="ore")
+    v = sv.velocity()
+    assert v is not None
+    assert v >= 95
+
+
+def test_scroll_velocity_warmup_returns_none():
+    sv = ScrollVelocity(warmup=8)
+    _feed(sv, PIT_TRACK_EARLY[:6])   # only 5 accepted deltas < warmup
+    assert sv.velocity() is None
+
+
+def test_scroll_velocity_rejects_identity_switches_and_mislocks():
+    """A kind change, a rightward x jump (next obstacle pops in), a frozen
+    scene (death screen), and a plank mis-lock frame must all contribute
+    nothing."""
+    sv = ScrollVelocity(warmup=1)
+    _feed(sv, [400, 396], kind="pit")
+    v0 = sv.velocity()
+    assert v0 is not None
+    sv.update({"kind": "ore", "x": 500, "distance_px": 0}, 190, 100.0)
+    sv.update({"kind": "ore", "x": 620, "distance_px": 0}, 190, 100.04)  # rightward
+    sv.update({"kind": "ore", "x": 620, "distance_px": 0}, 190, 100.08)  # frozen
+    sv.update({"kind": "ore", "x": 616, "distance_px": 0}, 149, 100.12)  # plank jumped
+    assert sv.velocity() == v0   # none of those moved the estimate
+
+
+def test_scale_window_static_until_warmed_then_scales():
+    assert scale_window(20, 30, None, SCROLL_V_REF_PIT) == (20, 30)
+    lo, hi = scale_window(20, 30, 117.0, SCROLL_V_REF_PIT)
+    assert (lo, hi) == (30, 44)  # 20*117/79, 30*117/79 rounded
+    # At the reference speed the window is unchanged.
+    assert scale_window(20, 30, SCROLL_V_REF_PIT, SCROLL_V_REF_PIT) == (20, 30)
+
+
+def test_scale_slam_dist_never_drops_below_static_floor():
+    """find_next_terrain floors ore distance at SCAN_BUFFER_PX(=10): a
+    scaled-down slam window below ~11 could never fire at all."""
+    assert scale_slam_dist(11, None, SCROLL_V_REF_ORE) == 11
+    assert scale_slam_dist(11, 60.0, SCROLL_V_REF_ORE) == 11    # slow: floor holds
+    assert scale_slam_dist(11, 117.0, SCROLL_V_REF_ORE) == 15   # fast: scales up
 
 
 def test_airborne_guard_replays_botrun_jump_arc():
