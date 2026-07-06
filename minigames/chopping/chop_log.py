@@ -125,6 +125,13 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # pass wait, gold_wait.py) or 'gold_ride' (same-sweep upgrade).
     # NULL on ordinary polls — most rows aren't at a fire decision.
     ("hold_reason", "TEXT"),
+    # Raw PTS counter reading sampled on this poll (template OCR,
+    # ~4Hz on non-fireable polls; 2026-07-06). Unfiltered — the
+    # counter's increment animation QUEUES at chopping cadence, so the
+    # display lags the true score by ~2 chops mid-run and settles in
+    # droughts. The step function of this column over t_ms is what
+    # attributes points to chops offline; single per-chop reads can't.
+    ("pts_read", "INTEGER"),
 ]
 
 
@@ -147,14 +154,15 @@ def log_poll(
     zone_layout: str | None = None,
     leaf_vx_px_s: float | None = None,
     hold_reason: str | None = None,
+    pts_read: int | None = None,
 ) -> None:
     """Append one row to the polls table. No per-row commit — caller
     commits periodically (e.g. once per fire) to bound write overhead."""
     conn.execute(
         "INSERT INTO polls (session_started, t_ms, pointer_x, zone, "
         "nearest_red_distance, bar_pixel_count, fired, zone_layout, "
-        "leaf_vx_px_s, hold_reason) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "leaf_vx_px_s, hold_reason, pts_read) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             session_started, int(t_ms),
             int(pointer_x) if pointer_x is not None else None,
@@ -164,6 +172,7 @@ def log_poll(
             zone_layout,
             float(leaf_vx_px_s) if leaf_vx_px_s is not None else None,
             hold_reason,
+            int(pts_read) if pts_read is not None else None,
         ),
     )
 

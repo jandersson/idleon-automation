@@ -87,29 +87,38 @@ _score_reader = make_score_reader(
     threshold=SCORE_BINARIZE_THRESHOLD,
 )
 
+# Continuous PTS sampling cadence (2026-07-06, run 5): the counter's
+# increment animation QUEUES — an idle counter updates instantly
+# (chop 1's +1 visible at +0.35s) but at chopping cadence the display
+# falls ~2 chops behind (chop 18's +0.35s read showed the after-chop-16
+# value) and only settles during droughts. One read per chop therefore
+# can't attribute points to chops; the step function of the counter
+# over time can. Sampled at this cadence on polls that CANNOT fire this
+# iteration (hold active, leaf absent, or leaf over none/red), so the
+# ~10ms grab+match never adds fire latency; logged raw to
+# polls.pts_read for offline reconstruction.
+PTS_POLL_EVERY_S = 0.25
+
 
 def _read_pts(
     win_left: int, win_top: int, win_w: int, win_h: int,
-    frames_dir: Path | None = None, t_ms: int | None = None,
-) -> int | None:
+) -> tuple[int | None, np.ndarray | None]:
     """Read the live PTS counter (region "score" in regions.json, picked
-    via chopping-pick-score-region) via digit-template matching. None
-    when unpicked, or when any digit lacks a template yet (see
-    SCORE_TEMPLATES_DIR). With --save-frames the crop is saved as
-    score_t<t>_r<result>.png — the bootstrap source for missing digits
-    (mining's digit_capture pattern).
+    via chopping-pick-score-region) via digit-template matching.
+
+    Returns (pts, crop): pts is None when the region is unpicked or any
+    digit lacks a template yet (see SCORE_TEMPLATES_DIR); crop is the
+    raw BGRA frame so callers can persist it — the bootstrap source for
+    missing digits (mining's digit_capture pattern).
     """
     region = get_region(_HERE, "score", win_w, win_h)
     if region is None:
-        return None
+        return None, None
     frame = grab_region(
         win_left + region["left"], win_top + region["top"],
         region["width"], region["height"],
     )
-    pts = _score_reader(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR))
-    if frames_dir is not None:
-        save_frame(frames_dir / f"score_t{t_ms or 0:07d}_r{pts}.png", frame)
-    return pts
+    return _score_reader(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)), frame
 
 
 # Bounce-vs-chop speed experiment (2026-06-11, maintainer-designed):
@@ -397,6 +406,10 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
     gold_unviable_printed = False  # print-once for a red-flanked gold
     last_starve_print = 0.0  # drought heartbeat cadence
     chops_since_pts = 0  # fires since the last accepted PTS read
+    # Continuous PTS step-function sampling (see PTS_POLL_EVERY_S).
+    last_pts_sample_t = 0.0
+    last_pts_sample_val: int | None = None  # last non-None sample (crop-edge detection)
+    last_none_crop_t = 0.0  # throttle for unreadable-crop saves
     # Bounce-vs-chop experiment state: fire pause deadline + the V_max
     # snapshot taken at pause start (also serves as the resume flag).
     experiment_pause_until = 0.0
@@ -545,9 +558,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 pending = None
             print(f"No safe fire window for {STARVE_EXIT_S:.0f}s — round has hit "
                   f"its ceiling, stopping to bank the tokens.")
-            final_pts = _read_pts(win_left, win_top, win_w, win_h,
-                                  frames_dir=frames_dir,
-                                  t_ms=int((now - session_start_t) * 1000)) or last_pts
+            final_pts = _read_pts(win_left, win_top, win_w, win_h)[0] or last_pts
             stats["summary_printed"] = True
             print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
                   f"by the game, ~{estimated_points} points expected, "
@@ -568,9 +579,10 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
         if (chop_idx > 0 and not hold_pts_read
                 and now - fire_hold_click_t >= PTS_READ_AFTER_S):
             hold_pts_read = True
-            pts = _read_pts(win_left, win_top, win_w, win_h,
-                            frames_dir=frames_dir,
-                            t_ms=int((now - session_start_t) * 1000))
+            pts, score_crop = _read_pts(win_left, win_top, win_w, win_h)
+            if frames_dir is not None and score_crop is not None:
+                save_frame(frames_dir / f"score_t{int((now - session_start_t) * 1000):07d}_r{pts}.png",
+                           score_crop)
             # Plausibility gate: within a round the counter never
             # decreases and rises at most +2 per chop. Rejects the
             # glyph-merge failure ('20 PTS' with 0+P merged reads as
@@ -590,6 +602,30 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
             elif pts is not None:
                 print(f"  [pts] implausible read {pts} "
                       f"(last {last_pts}, {chops_since_pts} chops since) — ignored")
+
+        # Continuous PTS step function (see PTS_POLL_EVERY_S): sample
+        # the counter on polls that cannot fire this iteration and log
+        # the raw value with this poll's row. Crops are saved on value
+        # changes (the step edges — prime digit-bootstrap material) and
+        # for unreadable stretches at most every 3s.
+        pts_sample = None
+        if (chop_idx > 0
+                and now - last_pts_sample_t >= PTS_POLL_EVERY_S
+                and (fire_hold_layout is not None
+                     or pointer_x is None
+                     or zone not in ("green", "gold"))):
+            last_pts_sample_t = now
+            pts_sample, score_crop = _read_pts(win_left, win_top, win_w, win_h)
+            if frames_dir is not None and score_crop is not None:
+                if pts_sample is not None and pts_sample != last_pts_sample_val:
+                    save_frame(frames_dir / f"pollscore_t{int((now - session_start_t) * 1000):07d}_r{pts_sample}.png",
+                               score_crop)
+                elif pts_sample is None and now - last_none_crop_t >= 3.0:
+                    last_none_crop_t = now
+                    save_frame(frames_dir / f"pollscore_t{int((now - session_start_t) * 1000):07d}_rNone.png",
+                               score_crop)
+            if pts_sample is not None:
+                last_pts_sample_val = pts_sample
 
         # Drought heartbeat: a starving round is silent for up to 60s
         # before the exit banks — which reads as a hang (the 21:01 run
@@ -639,7 +675,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                         log_poll(conn, session_started,
                                  int((now - session_start_t) * 1000),
                                  pointer_x, zone, red_dist, bar_px, 0,
-                                 zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                                 zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                                 pts_read=pts_sample)
                         last_poll_log = now
                     time.sleep(POLL_INTERVAL)
                     continue
@@ -652,7 +689,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                     log_poll(conn, session_started,
                              int((now - session_start_t) * 1000),
                              pointer_x, zone, red_dist, bar_px, 0,
-                             zone_layout=layout, leaf_vx_px_s=leaf_vx)
+                             zone_layout=layout, leaf_vx_px_s=leaf_vx,
+                             pts_read=pts_sample)
                     last_poll_log = now
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -701,7 +739,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                              int((now - session_start_t) * 1000),
                              pointer_x, zone, red_dist, bar_px, 0,
                              zone_layout=layout,
-                             leaf_vx_px_s=leaf_vx)
+                             leaf_vx_px_s=leaf_vx,
+                             pts_read=pts_sample)
                     last_poll_log = now
                 time.sleep(POLL_INTERVAL)
                 continue
@@ -748,7 +787,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                                      int((now - session_start_t) * 1000),
                                      pointer_x, zone, red_dist, bar_px, 0,
                                      zone_layout=layout, leaf_vx_px_s=leaf_vx,
-                                     hold_reason="gold_ride")
+                                     hold_reason="gold_ride",
+                                     pts_read=pts_sample)
                             last_poll_log = now
                         time.sleep(POLL_INTERVAL)
                         continue
@@ -780,7 +820,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                                  int((now - session_start_t) * 1000),
                                  pointer_x, zone, red_dist, bar_px, 0,
                                  zone_layout=layout, leaf_vx_px_s=leaf_vx,
-                                 hold_reason="gold_wait")
+                                 hold_reason="gold_wait",
+                                 pts_read=pts_sample)
                         last_poll_log = now
                     time.sleep(POLL_INTERVAL)
                     continue
@@ -864,7 +905,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                      int((click_time - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 1,
                      zone_layout=layout,
-                     leaf_vx_px_s=leaf_vx)
+                     leaf_vx_px_s=leaf_vx,
+                     pts_read=pts_sample)
             last_poll_log = click_time
             pending = (row_id, click_time, zone)
 
@@ -892,7 +934,8 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                      int((now - session_start_t) * 1000),
                      pointer_x, zone, red_dist, bar_px, 0,
                      zone_layout=layout,
-                     leaf_vx_px_s=leaf_vx)
+                     leaf_vx_px_s=leaf_vx,
+                     pts_read=pts_sample)
             last_poll_log = now
 
         time.sleep(POLL_INTERVAL)
