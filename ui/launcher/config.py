@@ -115,6 +115,21 @@ MINIGAMES = [
             ("Pick start button", "mining-pick-start-button"),
             ("Render overlay video", "mining-render-overlay"),
         ],
+        "bot_options": [
+            {
+                # Writes every frame to assets/captures/botrun_<stamp>/
+                # (gitignored) for offline analysis — death diagnosis, slam
+                # timing, ore characterisation. Sets MINING_SAVE_FRAMES,
+                # which main.py reads (the GUI can't pass --save-frames).
+                # Default on while the slam policy is still being validated:
+                # runs are short (~15-20s) so the disk cost is trivial, and
+                # every attempt is scarce calibration data.
+                "label": "Save frames",
+                "env": "MINING_SAVE_FRAMES",
+                "values": ["on", "off"],
+                "default": "on",
+            },
+        ],
     },
     {
         "name": "fishing",

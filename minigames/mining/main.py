@@ -29,6 +29,7 @@ Run flow:
        the user slam-corners the mouse.
 """
 import argparse
+import os
 import sys
 import threading
 import time
@@ -175,9 +176,14 @@ def run():
              "(gitignored) for offline analysis — extracting a jump-pose "
              "cart template, render_overlay QA, diagnosing what killed a "
              "run. Adds a little disk I/O; placed after the click so it "
-             "doesn't delay the fire.",
+             "doesn't delay the fire. The launcher's 'Save frames' toggle "
+             "sets MINING_SAVE_FRAMES instead.",
     )
     args = parser.parse_args()
+    # The GUI launches with no CLI args, so also honour the env var its
+    # 'Save frames' toggle sets (same pattern as catching/fishing).
+    save_frames = args.save_frames or os.environ.get(
+        "MINING_SAVE_FRAMES", "").strip().lower() in ("1", "on", "true", "yes")
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         # Own the DB connection here so it's closed in a finally even if
@@ -185,7 +191,7 @@ def run():
         # released and writes flushed before the auto-commit touches the file.
         conn = open_db(MINING_DB)
         try:
-            _run_inner(conn, watch=args.watch, save_frames=args.save_frames)
+            _run_inner(conn, watch=args.watch, save_frames=save_frames)
         finally:
             conn.close()
             # The DB is tracked so other machines get session data via
