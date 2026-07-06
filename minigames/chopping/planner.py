@@ -69,6 +69,24 @@ class Plan:
     margin_ms: float     # min time-margin from impact to a red boundary
 
 
+# Floor for the position factor in _sigma_scale: past sin(theta)=0.35
+# (the outer ~3% of the bar) the model isn't trusted at any margin.
+MIN_TARGET_SIN = 0.35
+
+
+def _sigma_scale(target_x: float, bar_w: int) -> float:
+    """Position multiplier for the timing-error budget: 1/sin(theta) at
+    the target. Near the turnarounds the leaf's local speed drops, so a
+    fixed position error costs proportionally more TIME — measured on
+    the first planner run (2026-07-06 23:44): arrival residuals were
+    ±10-20ms for mid-bar targets but +38/+41ms for both sin(theta)≈0.6
+    targets, and the one death was a sin(theta)=0.61 target whose flat
+    margin had no room for that."""
+    c = 1.0 - 2.0 * target_x / bar_w
+    s = math.sqrt(max(0.0, 1.0 - c * c))
+    return 1.0 / max(s, MIN_TARGET_SIN)
+
+
 def _sweep_times(
     x: float, direction: float, positions: list[float],
     v_max: float, bar_w: int,
@@ -116,7 +134,6 @@ def plan_shot(
     if v_max <= 0 or bar_w <= 0 or direction == 0:
         return None
     sigma_s = sigma_ms / 1000.0
-    red_margin_s = red_sigmas * sigma_s
 
     # Red boundary positions ahead of x (zone edges where red starts or
     # ends), for margin computation.
@@ -144,15 +161,18 @@ def plan_shot(
             continue  # degenerate (e.g. past the turnaround clamp)
         # Time-domain center, shifted for the cooldown if needed.
         t_star = max((t_a + t_b) / 2.0, earliest_impact_s)
-        # Must stay >= 1 sigma inside the zone.
-        if t_star < t_a + sigma_s or t_star > t_b - sigma_s:
-            continue
         if t_star > max_horizon_s:
             continue
         # Predicted impact position: invert the eased model by bisecting
         # position along the span (monotone in time).
         target_x = _position_at(x, direction, t_star, v_max, bar_w)
         if target_x is None:
+            continue
+        # Position-scaled error budget (see _sigma_scale): edge-region
+        # impacts need proportionally larger margins.
+        sigma_local_s = sigma_s * _sigma_scale(target_x, bar_w)
+        # Must stay >= 1 (local) sigma inside the zone.
+        if t_star < t_a + sigma_local_s or t_star > t_b - sigma_local_s:
             continue
         # Margin to red: nearest red boundary crossing in time.
         margin_s = math.inf
@@ -163,7 +183,7 @@ def plan_shot(
         )
         if red_times:
             margin_s = min(abs(rt - t_star) for rt in red_times)
-        if margin_s < red_margin_s:
+        if margin_s < red_sigmas * sigma_local_s:
             continue
         margin_ms = margin_s * 1000 if margin_s != math.inf else 10.0**6
         value = 2 if z.kind == "o" else 1

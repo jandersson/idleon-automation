@@ -76,11 +76,19 @@ CLICK_LATENCY_S = 0.055
 # error over the ~120ms commit horizon (~10ms), position sample age
 # (~10ms), click-latency variance (~10ms), sub-ms spin-wait release.
 PLAN_SIGMA_MS = 16.0
-# Impacts must be this many sigmas from every red boundary (deaths are
-# the only real cost). 3 -> 4 sigma (64ms) after the chop-18 death:
-# its 51ms-margin plan would have been rejected and the wide green
-# taken instead. Costs some late-round gold plans; misses beat deaths.
-PLAN_RED_SIGMAS = 4.0
+# Impacts must be this many sigmas from every red boundary — a LADDER
+# keyed on drought time, because the cost of a death changes: fresh, a
+# death forfeits the round's remaining EV, so demand 4 sigma (the
+# chop-18 death took a 51ms ~3-sigma plan; 4 sigma rejects it). Deep
+# in a drought, a death and the coming starve exit both just end the
+# round — and deaths still bank the points — so a 2.5-3 sigma shot is
+# nearly free +1/+2 EV. Replay on run 5's starve tail: 4 sigma leaves
+# 2% of polls plannable (the bot starves), 3 sigma 35%, 2.5 sigma 37%.
+# Position scaling (planner._sigma_scale) applies at every rung, so
+# turnaround pockets stay protected.
+PLAN_RED_SIGMAS_FRESH = 4.0      # drought < 15s
+PLAN_RED_SIGMAS_DROUGHT = 3.0    # 15-30s without a fire
+PLAN_RED_SIGMAS_STARVING = 2.5   # 30s+ (starve exit at 60s anyway)
 # Commit to a shot (stop re-planning, spin-wait, fire) when the
 # scheduled click is at most this far away. One loop iteration is
 # ~15-25ms, so the final plan uses a sample at most ~one frame old.
@@ -730,12 +738,17 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 [(x, v) for _, x, v in speed_track], bar_frame.shape[1])
             plan = None
             if v_max_p is not None:
+                drought_s = (now - fire_hold_click_t if chop_idx > 0
+                             else now - session_start_t)
+                red_sigmas = (PLAN_RED_SIGMAS_FRESH if drought_s < 15.0
+                              else PLAN_RED_SIGMAS_DROUGHT if drought_s < 30.0
+                              else PLAN_RED_SIGMAS_STARVING)
                 plan = plan_shot(
                     parse_layout(layout), float(pointer_x),
                     1.0 if leaf_vx > 0 else -1.0,
                     max(v_max_p, abs(leaf_vx)), bar_frame.shape[1],
                     earliest_impact_s=CLICK_LATENCY_S,
-                    sigma_ms=PLAN_SIGMA_MS, red_sigmas=PLAN_RED_SIGMAS,
+                    sigma_ms=PLAN_SIGMA_MS, red_sigmas=red_sigmas,
                 )
             if plan is not None:
                 since_last_fire = (

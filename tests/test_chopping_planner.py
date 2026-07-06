@@ -100,3 +100,21 @@ def test_no_plan_without_speed():
     zones = parse_layout("n10 g100 n112")
     assert plan_shot(zones, 5.0, 1.0, 0.0, BAR_W) is None
     assert plan_shot(zones, 5.0, 0.0, 400.0, BAR_W) is None
+
+
+def test_edge_targets_need_scaled_margins_chop18_regression():
+    """The 23:44 run's death: gold at 180-214 with turnaround red
+    slivers past it, leaf at 173 rightward, ~700 px/s V_max. The flat
+    3-sigma margin accepted a 51ms plan at sin(theta)=0.61; the
+    position-scaled budget must reject any plan into that pocket."""
+    zones = parse_layout("n1 r94 g85 o34 r2 g3 r2 n1")
+    plan = plan_shot(zones, 173.0, 1.0, 700.0, BAR_W,
+                     earliest_impact_s=0.055, red_sigmas=4.0)
+    assert plan is None or plan.zone_kind != "o" or plan.target_x < 180
+
+
+def test_mid_bar_plans_unaffected_by_sigma_scaling():
+    # sin(theta) ~ 1 at bar center: scaling is a no-op there.
+    zones = parse_layout("r40 g100 n42 r40")
+    plan = plan_shot(zones, 45.0, 1.0, 400.0, BAR_W)
+    assert plan is not None and 60 < plan.target_x < 130
