@@ -126,11 +126,12 @@ _POLLS_LATE_COLUMNS: list[tuple[str, str]] = [
     # NULL on ordinary polls — most rows aren't at a fire decision.
     ("hold_reason", "TEXT"),
     # Raw PTS counter reading sampled on this poll (template OCR,
-    # ~4Hz on non-fireable polls; 2026-07-06). Unfiltered — the
-    # counter's increment animation QUEUES at chopping cadence, so the
-    # display lags the true score by ~2 chops mid-run and settles in
-    # droughts. The step function of this column over t_ms is what
-    # attributes points to chops offline; single per-chop reads can't.
+    # ~4Hz on non-fireable polls; 2026-07-06). Unfiltered. The counter
+    # updates INSTANTLY on a scoring chop (maintainer ground truth),
+    # so each value is the true score at sample time — the step
+    # function over t_ms attributes every point to its click, which is
+    # what exposes silently-unregistered clicks (the sub-cooldown
+    # signature: registered=1 by re-roll ack, no PTS step).
     ("pts_read", "INTEGER"),
 ]
 

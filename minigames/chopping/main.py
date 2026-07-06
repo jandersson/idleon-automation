@@ -50,15 +50,24 @@ POLL_INTERVAL = 0.01
 # in-game ack the chop registered. But the re-roll is NOT the end of
 # the game's own chop cooldown: clicks fired 198/201/225ms after a
 # registered chop were silently IGNORED (no re-roll, no point), while
-# 655/720/812ms gaps all registered. So the hold releases only when
-# BOTH the layout has re-rolled AND MIN_INTERCHOP_S has passed; the
-# 450ms value bisects the unmeasured (225, 655)ms registration
-# boundary — each session's polls show whether 450ms chops register
-# (re-roll follows) and the bound tightens for free.
+# 655/720/812ms gaps all registered. The hold releases only when BOTH
+# the layout has re-rolled AND MIN_INTERCHOP_S has passed.
+#
+# 0.45 -> 0.66 (2026-07-06, runs 4-5): the PTS counter updates
+# INSTANTLY on a scoring chop (maintainer ground truth), which makes
+# the mid-run reads truthful — and run 5's read of 23-after-chop-18
+# vs 27 modeled means ~4 clicks silently didn't score, matching its
+# four 609-631ms gaps; run 5 finished -3 (31 vs 34), run 3 -3 with
+# three 601-626ms gaps. ≥655ms is the proven-safe side, so the floor
+# now sits just above it; the polls.pts_read step function will
+# bisect the true boundary offline and can win the margin back later.
+# (The layout re-roll ack is necessary but NOT sufficient for
+# scoring — it false-acks on detection flicker, so `registered=1`
+# with no PTS increment is exactly the sub-cooldown signature.)
 # COOLDOWN_AFTER_CLICK is the fallback when no re-roll is ever seen
 # (a 0px re-roll is possible — shifts run 1-3px).
-MIN_INTERCHOP_S = 0.45
-COOLDOWN_AFTER_CLICK = 0.70
+MIN_INTERCHOP_S = 0.66
+COOLDOWN_AFTER_CLICK = 0.80
 
 # A registered chop's layout re-roll arrives within 86-201ms; a re-roll
 # "seen" later than this isn't credited to the chop (it could be the
@@ -87,16 +96,16 @@ _score_reader = make_score_reader(
     threshold=SCORE_BINARIZE_THRESHOLD,
 )
 
-# Continuous PTS sampling cadence (2026-07-06, run 5): the counter's
-# increment animation QUEUES — an idle counter updates instantly
-# (chop 1's +1 visible at +0.35s) but at chopping cadence the display
-# falls ~2 chops behind (chop 18's +0.35s read showed the after-chop-16
-# value) and only settles during droughts. One read per chop therefore
-# can't attribute points to chops; the step function of the counter
-# over time can. Sampled at this cadence on polls that CANNOT fire this
-# iteration (hold active, leaf absent, or leaf over none/red), so the
-# ~10ms grab+match never adds fire latency; logged raw to
-# polls.pts_read for offline reconstruction.
+# Continuous PTS sampling cadence (2026-07-06, run 5). The counter
+# updates INSTANTLY on a scoring chop (maintainer ground truth), so
+# each read is the true score at read time — the step function of
+# these samples over t_ms attributes every point to its click within
+# one sample period, which is what settles the registration-boundary
+# and latency-crossing questions per chop (single per-chop reads only
+# give the value 0.35s post-click; steps give exact timing). Sampled
+# on polls that CANNOT fire this iteration (hold active, leaf absent,
+# or leaf over none/red), so the ~10ms grab+match never adds fire
+# latency; logged raw to polls.pts_read.
 PTS_POLL_EVERY_S = 0.25
 
 
