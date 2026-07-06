@@ -496,6 +496,47 @@ at SCAN_BUFFER_PX=10, so 11 fires in the ~10-11 success zone). If the next run
 shows the bot never slams (window too tight → runs into ore grounded), drop
 SCAN_BUFFER_PX so the ore is seen closer and widen the window.
 
+### Run 15 (2026-07-06, offline, no attempt spent) — rebound + speed ramp measured; baseline ratchet fixed
+
+Replayed `botrun_20260616_135951` (the scoring run) through the live
+pipeline end-to-end, emulating the loop state (grounded baseline anchoring,
+cart prior) at the run's ~24.5 FPS cadence. Three findings, all acted on:
+
+- **The slam rebound is a full free jump — and the existing policy already
+  chains it.** Reconstructed arc: slam 1 clicked ~f113 (ore_dist 10),
+  contact ~f118 at ore-top height, rebound to apex y≈97 (**82px above
+  grounded 179 — same height as a grounded jump**, apex ~0.45s after
+  contact); a second ore arrived mid-rebound and the human slammed it at
+  f135 (dist 10–11, airborne) into a second full rebound. `should_slam`'s
+  conditions (airborne + ore ≤ slam window + 0.5s cooldown) would have
+  fired both slams — rebound chaining (#53 mechanic 2) needs no new code.
+  Pits scrolling by mid-rebound are ridden out by the airborne guard as-is.
+- **Scroll speed RAMPS within the run: ~82 px/s (first pit, f19-44) →
+  ~86-89 mid-run → ~117 px/s (f147-161) — +40% in six seconds.** The
+  trigger constants are distances but the physics bounds are times, so the
+  static windows drift lethal as v grows (D ≥ δ·v needs 23px at v=100 vs
+  static min 20). Built: `policy.ScrollVelocity` (px/s, wall-clock,
+  gates against identity switches / death screens / plank mis-locks) +
+  per-frame `scale_window`/`scale_slam_dist` by v/v_ref in the loop, with
+  the static windows as the un-warmed fallback (#53 mechanic 3).
+  `scroll_v_px_s` + `next_width_px` (the Run-11 gap width W) now log per
+  jump, so W stops being frame archaeology.
+- **GroundedBaseline decayed during the rebound chain and mis-anchored the
+  plank.** The chain keeps the cart airborne longer than the 45-frame
+  window; the window max decayed 179→159, the near_y plank search then
+  locked a false tan band at y=149 (f141-146) and terrain froze at a
+  spurious slam-range dist=11 — spurious slam fuel in auto mode. An
+  eps-tolerant hold is defeated by slam-contact bounces (~20px above
+  grounded) ratcheting the max down within eps; the level now never moves
+  down except via a 200-sample safety cap (inflated-level recovery).
+  Replay-validated: baseline holds 179 end-to-end, zero mis-lock frames.
+
+Still live-gated: slam-window validation (the 25→11 retune has n=0 live
+fires), ore VALUE discrimination (#53 mechanic 1 — every scored ore in the
+captures is the same brown pile; platinum/starfire may not even match the
+current brown HSV signature, i.e. would be INVISIBLE and crash the cart,
+not just under-prioritised), and digits 5-9 for the PTS reader (#6).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
@@ -516,8 +557,10 @@ width W + the collision model, which the next `--save-frames` re-run resolves.
 
 ## Open questions
 
-- Does a slam onto an ore reliably rebound enough to clear the *next* pit,
-  or is a fresh jump still needed? (Observe in Phase A.)
+- ~~Does a slam onto an ore reliably rebound enough to clear the *next*
+  pit, or is a fresh jump still needed?~~ **Answered (Run 15):** the
+  rebound is a full jump-height arc (~82px apex) — no fresh jump needed;
+  the human chained two slams off rebounds with zero grounded clicks.
 - Ore colour → point value: worth prioritising high-value ore, or just
   slam every ore? (Decide after seeing point density.)
 - Two-click jump→slam combo latency: is `random_delay`'s 80-200ms between
