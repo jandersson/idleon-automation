@@ -883,6 +883,26 @@ noted in #107. Refining T_REB needs runtime touchdown instrumentation
 (the [traj] lines carry it; a settle-time landing log column would make
 it queryable).
 
+### Run 29 (2026-07-06 16:50 live) — PTS 4; 22 actions, 20 survived; the full stack works
+
+New record on every axis: PTS 4, 22 actions (previous best 11), ~18s of
+play, speeds reaching v≈130. Everything fired and survived together:
+
+- **The #107 pick fired live**: ore jumps at 62 (row 115, v=80) and 61
+  (row 118, v=101) — well below their window entries (~73/~92) — with
+  downstream obstacles in next2; both chains survived.
+- **Four steer slams** (ore@87, pit@66, pit@62, pit@86), all with
+  surviving follow-ups — including the rebound-arc ore steer's first
+  live save (the run-24 death class, now handled).
+- **Four scoring slams** (PTS 1-4) + rescue jumps at dist 10 surviving
+  three times; the gap-aware ceiling fired at 55 (the clamp) at v=129.
+
+The death after ~18s: a forced-rescue cascade ending at a 72px-wide pit
+— JUMP #22's rescue clicked on an already-decided landing. Scoring
+stalled at 4 through the last ~6s (slam #13 fired but PTS held — worth a
+look when refining). Remaining #107 items unchanged: touchdown
+instrumentation for T_REB, conversion-slam gating.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
