@@ -272,8 +272,15 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
     A PIT fires in [trig_min, trig_max] (jump to clear it). An ORE fires in
     [ore_trig_min, ore_trig_max] when those are supplied — a FARTHER window so
     the cart is airborne by the time the ore scrolls under it to be slammed
-    (see should_slam). With the ore window omitted (None) ore never jumps, so
-    the pit-only behaviour is unchanged."""
+    (see should_slam) — and ALSO in the pit window as a survival fallback: an
+    ore can emerge below its own window when the cart was airborne (a
+    slam-rebound arc) through the whole [ore_trig_min, ore_trig_max] approach,
+    and a grounded cart that just waits eats the ore and dies (the 15:00
+    2026-07-06 death: landed from a rebound with the next ore at 29px, ore
+    window [46,80] — no branch fired). The pit-style late jump flies over it;
+    if the arc lines up, should_slam converts the flyover into a scoring slam
+    for free. With the ore window omitted (None) ore never jumps, so the
+    pit-only behaviour is unchanged."""
     if cart is None or plank_y is None or terrain is None:
         return False
     kind = terrain.get("kind")
@@ -281,12 +288,13 @@ def should_jump(*, cart, plank_y, terrain, now: float, last_click_time: float,
     if dist is None:
         return False
     if kind == "pit":
-        lo, hi = trig_min, trig_max
+        in_window = trig_min <= dist <= trig_max
     elif kind == "ore" and ore_trig_min is not None and ore_trig_max is not None:
-        lo, hi = ore_trig_min, ore_trig_max
+        in_window = (ore_trig_min <= dist <= ore_trig_max or
+                     trig_min <= dist <= trig_max)
     else:
         return False
-    if not (lo <= dist <= hi):
+    if not in_window:
         return False
     if now - last_click_time < cooldown_s:
         return False

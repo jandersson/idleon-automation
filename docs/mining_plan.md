@@ -568,6 +568,31 @@ Two live auto runs on the Run-15 build, both attempts productive:
   the arbiter (D=29/31 survive at v≈80-92, D=39 dies at v≈80; A measured
   ~0.96s this run vs 0.88 earlier).
 
+### Run 18 (2026-07-06 15:00 live, --save-frames) — chain reproduced; rebound-shadowed ore found a policy gap
+
+Third live run of the day (PTS 1 again): jump(pit, d=29) → jump(ore, d=80)
+→ slam(ore, d=12) all survived — the jump-slam rhythm is now reproducible
+(slam n=2). The windowed ScrollVelocity fix validated live: 75-84 px/s
+early, ~99-103 late, no overshoot; the pit jump fired at d=29 (correct
+window, cleared cleanly).
+
+The death found the next policy gap: **a rebound-shadowed ore.** The
+slam's rebound arc (~1.1s airborne, apex 94px) kept the airborne guard
+suppressing the ore-jump through the SECOND ore's entire scaled window
+[46,80]; the cart landed with that ore at ~29px — below the ore window,
+no branch fires — and the ore crashed into the grounded cart (frames:
+freeze at f102 with the ore mashed against the cart's front; the Run-12
+death mode, this time with detection working fine). Fix: an ore in the
+PIT window now fires the pit-style late jump as a survival fallback — the
+cart flies over, and mid-arc `should_slam` can convert the flyover into a
+scoring slam for free (a low-altitude slam is untested territory; the DB's
+`cart_height_above_plank` on slam rows will show how those land).
+
+**Data caveat:** rows 56-57 (JUMP #4/#5, "pit d=25/28, died") are clicks
+on the already-frozen death scene — their next_* context is garbage;
+exclude them when reading pit survival bins (the scene froze ~0.3s before
+JUMP #4, confirmed by the static full-width scans f102-127).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

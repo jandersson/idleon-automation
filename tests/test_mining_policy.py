@@ -66,10 +66,27 @@ def test_jump_fires_for_ore_only_in_the_ore_window():
     ore = {"kind": "ore", "x": 300, "distance_px": 60}  # in [40,70], not pit [30,50]
     kw = {**BASE_KW, "terrain": ore, "ore_trig_min": 40, "ore_trig_max": 70}
     assert should_jump(**kw) is True
-    # ore below the ore window doesn't fire (cart not yet airborne-able in time)
+    # ore below BOTH windows doesn't fire (too close to launch in time)
     assert should_jump(**{**kw, "terrain": {"kind": "ore", "x": 300, "distance_px": 20}}) is False
     # backward-compat: no ore window -> ore never jumps
     assert should_jump(**{**BASE_KW, "terrain": ore}) is False
+
+
+def test_too_close_ore_fires_the_pit_window_fallback():
+    """Regression for the 15:00 2026-07-06 death: the slam-rebound arc kept
+    the cart airborne through the ore's whole [46,80] window; it landed with
+    the ore at ~29px and no branch fired — the ore crashed the grounded cart
+    (frames botrun_20260706_150022, freeze at f102 with the ore mashed into
+    the cart's front). An ore in the PIT window must fire a survival jump."""
+    kw = {**BASE_KW, "trig_min": 25, "trig_max": 38,
+          "ore_trig_min": 46, "ore_trig_max": 80}
+    ore_close = {"kind": "ore", "x": 300, "distance_px": 29}
+    assert should_jump(**{**kw, "terrain": ore_close}) is True
+    # Between the windows: no fire yet (it enters the pit window frames later).
+    ore_gap = {"kind": "ore", "x": 300, "distance_px": 42}
+    assert should_jump(**{**kw, "terrain": ore_gap}) is False
+    # The fallback still respects the airborne guard.
+    assert should_jump(**{**kw, "terrain": ore_close, "cart": (150, 133)}) is False
 
 
 def test_should_slam_only_airborne_over_near_ore():
