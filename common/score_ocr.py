@@ -16,6 +16,7 @@ This module is intentionally minigame-agnostic — anything with a numeric
 readout (hoops, darts, future minigames) can call read_score(crop_gray).
 """
 import os
+import re
 import shutil
 import sys
 
@@ -72,14 +73,14 @@ if _HAVE_PYTESSERACT:
         pytesseract.pytesseract.tesseract_cmd = _binary
 
 
-def _ocr_one(binary: np.ndarray, psm: int) -> int | None:
-    """Single tesseract call. Returns parsed int or None."""
+def _ocr_text(binary: np.ndarray, psm: int, digits_only: bool = True) -> str | None:
+    """Single tesseract call returning raw text, or None on any failure."""
     global _BINARY_WARNED
+    config = f"--psm {psm}"
+    if digits_only:
+        config += " -c tessedit_char_whitelist=0123456789"
     try:
-        text = pytesseract.image_to_string(
-            binary,
-            config=f"--psm {psm} -c tessedit_char_whitelist=0123456789",
-        )
+        return pytesseract.image_to_string(binary, config=config)
     except TesseractNotFoundError:
         if not _BINARY_WARNED:
             hint = ("brew install tesseract" if sys.platform == "darwin"
@@ -93,10 +94,38 @@ def _ocr_one(binary: np.ndarray, psm: int) -> int | None:
             print(f"[score_ocr] tesseract call failed (non-fatal): {e}")
             _BINARY_WARNED = True
         return None
+
+
+def _ocr_one(binary: np.ndarray, psm: int) -> int | None:
+    """Single tesseract call. Returns parsed int or None."""
+    text = _ocr_text(binary, psm, digits_only=True)
+    if text is None:
+        return None
     text = text.strip()
     if not text or not text.isdigit():
         return None
     return int(text)
+
+
+def parse_leading_int(text: str | None) -> int | None:
+    """First digit-run in `text`, as an int — '21 PTS' -> 21."""
+    if not text:
+        return None
+    m = re.search(r"\d+", text)
+    return int(m.group()) if m else None
+
+
+def _preprocessings(crop_gray: np.ndarray, scale: int) -> list[np.ndarray]:
+    """The upscale/threshold variants both readers vote across."""
+    h, w = crop_gray.shape[:2]
+    upscaled = cv2.resize(crop_gray, (w * scale, h * scale),
+                          interpolation=cv2.INTER_CUBIC)
+    _, binary = cv2.threshold(upscaled, 0, 255,
+                              cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inverted = cv2.bitwise_not(binary)
+    kernel = np.ones((2, 2), np.uint8)
+    dilated = cv2.dilate(binary, kernel, iterations=1)
+    return [binary, inverted, dilated]
 
 
 def read_score(crop_gray: np.ndarray, scale: int = 6) -> int | None:
@@ -116,14 +145,7 @@ def read_score(crop_gray: np.ndarray, scale: int = 6) -> int | None:
     h, w = crop_gray.shape[:2]
     if h < 4 or w < 4:
         return None
-    # Generate a few preprocessings to OCR independently.
-    upscaled = cv2.resize(crop_gray, (w * scale, h * scale), interpolation=cv2.INTER_CUBIC)
-    _, binary = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    inverted = cv2.bitwise_not(binary)
-    # Slightly dilated copy so digit strokes are thicker (helps tesseract on
-    # very thin pixel fonts).
-    kernel = np.ones((2, 2), np.uint8)
-    dilated = cv2.dilate(binary, kernel, iterations=1)
+    binary, inverted, dilated = _preprocessings(crop_gray, scale)
     # PSM 8 = single word, PSM 10 = single character. Different segmentation
     # assumptions; agreement across both is a stronger signal.
     candidates = [
@@ -136,6 +158,39 @@ def read_score(crop_gray: np.ndarray, scale: int = 6) -> int | None:
     if not candidates:
         return None
     # Take the most common; require at least 2 votes for agreement.
+    from collections import Counter
+    most_common, count = Counter(candidates).most_common(1)[0]
+    if count < 2:
+        return None
+    return most_common
+
+
+def read_leading_int(crop_gray: np.ndarray, scale: int = 6) -> int | None:
+    """Like read_score, for readouts with a text suffix — e.g. Idleon
+    chopping's "21 PTS" counter.
+
+    The digit whitelist is exactly wrong for these: it forces the
+    suffix glyphs onto digit shapes, so "16 PTS" came back as "1675"
+    and "20 PTS" as "2081" (2026-07-06 21:17 chopping run — 15/18
+    reads rejected, 2 garbage agreements). Instead OCR WITHOUT the
+    whitelist (PSM 7, single line: the label helps segmentation) and
+    parse the first digit-run. Same multi-pass voting as read_score:
+    require 2 of the preprocessing variants to agree.
+    """
+    if not _HAVE_PYTESSERACT or crop_gray is None or crop_gray.size == 0:
+        return None
+    h, w = crop_gray.shape[:2]
+    if h < 4 or w < 4:
+        return None
+    binary, inverted, dilated = _preprocessings(crop_gray, scale)
+    candidates = [
+        parse_leading_int(_ocr_text(binary, 7, digits_only=False)),
+        parse_leading_int(_ocr_text(inverted, 7, digits_only=False)),
+        parse_leading_int(_ocr_text(dilated, 7, digits_only=False)),
+    ]
+    candidates = [c for c in candidates if c is not None]
+    if not candidates:
+        return None
     from collections import Counter
     most_common, count = Counter(candidates).most_common(1)[0]
     if count < 2:

@@ -14,7 +14,7 @@ from common.capture import grab_region
 from common.input import click, random_delay, check_failsafe
 from common.monitor import save_frame
 from common.regions import get_region
-from common.score_ocr import read_score
+from common.score_ocr import read_leading_int
 from common.session_log import session_log
 from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
@@ -73,9 +73,19 @@ REROLL_ACK_MAX_S = 0.40
 PTS_READ_AFTER_S = 0.35
 
 
-def _read_pts(win_left: int, win_top: int, win_w: int, win_h: int) -> int | None:
+def _read_pts(
+    win_left: int, win_top: int, win_w: int, win_h: int,
+    frames_dir: Path | None = None, t_ms: int | None = None,
+) -> int | None:
     """OCR the live PTS counter (region "score" in regions.json, picked
-    via chopping-pick-score-region). None when unpicked or unreadable."""
+    via chopping-pick-score-region). None when unpicked or unreadable.
+
+    The counter renders as "N PTS", so this uses read_leading_int —
+    the digits-only read_score whitelisted the PTS glyphs onto digits
+    ("16 PTS" -> 1675; 21:17 run). With --save-frames the crop is also
+    saved as score_t<t>_r<result>.png so misreads are diagnosable
+    offline (mining's digit_capture pattern).
+    """
     region = get_region(_HERE, "score", win_w, win_h)
     if region is None:
         return None
@@ -84,7 +94,10 @@ def _read_pts(win_left: int, win_top: int, win_w: int, win_h: int) -> int | None
         region["width"], region["height"],
     )
     gray = cv2.cvtColor(cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR), cv2.COLOR_BGR2GRAY)
-    return read_score(gray)
+    pts = read_leading_int(gray)
+    if frames_dir is not None:
+        save_frame(frames_dir / f"score_t{t_ms or 0:07d}_r{pts}.png", frame)
+    return pts
 
 
 # Bounce-vs-chop speed experiment (2026-06-11, maintainer-designed):
@@ -287,11 +300,24 @@ def run():
     args, _ = parser.parse_known_args()
     save_frames = args.save_frames or os.environ.get(
         "CHOPPING_SAVE_FRAMES", "").strip().lower() in ("1", "on", "true", "yes")
+    # Session counters mirrored out of _run_inner so an abnormal exit
+    # (failsafe abort — how the user actually ends most runs) still
+    # gets a summary; clean exits set summary_printed and print richer
+    # ones themselves.
+    stats = {"clicks": 0, "registered": 0, "points": 0, "pts": None,
+             "summary_printed": False}
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         try:
-            _run_inner(save_frames=save_frames)
+            _run_inner(save_frames=save_frames, stats=stats)
         finally:
+            if stats["clicks"] and not stats["summary_printed"]:
+                pts = stats["pts"]
+                print(f"Session result (aborted): {stats['clicks']} clicks, "
+                      f"{stats['registered']} registered by the game, "
+                      f"~{stats['points']} points expected, last in-game PTS "
+                      f"read: {pts if pts is not None else 'unread'}. "
+                      f"EXIT the minigame in-game to bank the points.")
             # The DB is tracked so other machines get session data via
             # `git pull`. Rollback-journal mode keeps the on-disk file
             # consistent between transactions, so this is safe even if
@@ -303,7 +329,9 @@ def run():
             )
 
 
-def _run_inner(save_frames: bool = False):
+def _run_inner(save_frames: bool = False, stats: dict | None = None):
+    if stats is None:
+        stats = {}
     print(f"Chopping bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     frames_dir = None
     if save_frames:
@@ -397,10 +425,20 @@ def _run_inner(save_frames: bool = False):
         )
         leaf_frame = None
         if leaf_region is not None:
+            # Horizontal extent comes from the BAR region, not the
+            # leaf's own: analyze_bar maps the leaf's column index
+            # straight onto the bar's zone columns, so the two crops
+            # MUST share left/width. The hand-picked leaf region sat
+            # 2px left of the bar (regions.json fracs 0.078125 vs
+            # 0.079167), biasing every zone lookup 2px right of truth
+            # — rightward gold rides fired while the game still scored
+            # green (21:17 run: 28 expected vs 21 actual PTS, the four
+            # rightward "gold" chops account for 4 of the 7 missing).
+            # Only top/height are the leaf region's own.
             leaf_frame = grab_region(
-                win_left + leaf_region["left"],
+                win_left + bar_region["left"],
                 win_top + leaf_region["top"],
-                leaf_region["width"],
+                bar_region["width"],
                 leaf_region["height"],
             )
         pointer_x, zone = analyze_bar(bar_frame, leaf_frame=leaf_frame)
@@ -449,6 +487,8 @@ def _run_inner(save_frames: bool = False):
                 set_registered(conn, pending[0], 1)
                 registered_chops += 1
                 estimated_points += 2 if pending[2] == "gold" else 1
+                stats["registered"] = registered_chops
+                stats["points"] = estimated_points
                 if (
                     BOUNCE_EXPERIMENT_EVERY_N
                     and registered_chops % BOUNCE_EXPERIMENT_EVERY_N == 0
@@ -472,6 +512,7 @@ def _run_inner(save_frames: bool = False):
                                 int((now - click_time) * 1000))
                     pending = None
                 print(f"Bar gone for {now - bar_dead_since:.1f}s (bar_px={bar_px}) — round ended, stopping.")
+                stats["summary_printed"] = True
                 print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
                       f"by the game, ~{estimated_points} points expected, last in-game "
                       f"PTS read: {last_pts if last_pts is not None else 'unread'}.")
@@ -491,7 +532,10 @@ def _run_inner(save_frames: bool = False):
                 pending = None
             print(f"No safe fire window for {STARVE_EXIT_S:.0f}s — round has hit "
                   f"its ceiling, stopping to bank the tokens.")
-            final_pts = _read_pts(win_left, win_top, win_w, win_h) or last_pts
+            final_pts = _read_pts(win_left, win_top, win_w, win_h,
+                                  frames_dir=frames_dir,
+                                  t_ms=int((now - session_start_t) * 1000)) or last_pts
+            stats["summary_printed"] = True
             print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
                   f"by the game, ~{estimated_points} points expected, "
                   f"in-game PTS: {final_pts if final_pts is not None else 'unread'}. "
@@ -549,9 +593,12 @@ def _run_inner(save_frames: bool = False):
                     # mandatory inter-chop wait — zero throughput cost.
                     if not hold_pts_read and now - fire_hold_click_t >= PTS_READ_AFTER_S:
                         hold_pts_read = True
-                        pts = _read_pts(win_left, win_top, win_w, win_h)
+                        pts = _read_pts(win_left, win_top, win_w, win_h,
+                                        frames_dir=frames_dir,
+                                        t_ms=int((now - session_start_t) * 1000))
                         if pts is not None:
                             last_pts = pts
+                            stats["pts"] = pts
                             if pending is not None:
                                 set_pts(conn, pending[0], pts)
                     if now - last_poll_log >= POLL_LOG_INTERVAL:
@@ -714,6 +761,7 @@ def _run_inner(save_frames: bool = False):
                 stagnation_count += 1
                 if stagnation_count >= STAGNATION_LIMIT:
                     print(f"Pointer stuck at x={pointer_x} in {zone} for {stagnation_count} clicks — minigame likely over, stopping.")
+                    stats["summary_printed"] = True
                     print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
                           f"by the game, ~{estimated_points} points expected.")
                     conn.commit()
@@ -752,6 +800,7 @@ def _run_inner(save_frames: bool = False):
                             int((click_time - prev_click_time) * 1000))
 
             chop_idx += 1
+            stats["clicks"] = chop_idx
             row_id = log_chop(
                 conn,
                 session_started=session_started,

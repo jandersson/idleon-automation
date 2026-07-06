@@ -10,10 +10,13 @@ import cv2
 import numpy as np
 import pytest
 
-from common.score_ocr import read_score
+from common.score_ocr import read_score, _find_tesseract_binary
 
 
-HAS_TESSERACT = shutil.which("tesseract") is not None
+# The bot resolves the binary via _find_tesseract_binary (PATH plus the
+# standard install dirs — winget doesn't always update PATH), so gate
+# the live-OCR tests on the same lookup, not bare PATH.
+HAS_TESSERACT = _find_tesseract_binary() is not None
 needs_tesseract = pytest.mark.skipif(
     not HAS_TESSERACT, reason="tesseract binary not on PATH"
 )
@@ -50,3 +53,29 @@ def test_reads_two_digit_number():
     crop = np.zeros((40, 50), dtype=np.uint8)
     cv2.putText(crop, "23", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 2)
     assert read_score(crop) == 23
+
+
+def test_parse_leading_int():
+    from common.score_ocr import parse_leading_int
+    assert parse_leading_int("21 PTS") == 21
+    assert parse_leading_int("  7 PTS\n") == 7
+    assert parse_leading_int("PTS") is None
+    assert parse_leading_int("") is None
+    assert parse_leading_int(None) is None
+
+
+def test_read_leading_int_returns_none_for_empty_input():
+    from common.score_ocr import read_leading_int
+    assert read_leading_int(np.zeros((0, 0), dtype=np.uint8)) is None
+    assert read_leading_int(np.full((20, 60), 128, dtype=np.uint8)) is None
+
+
+@needs_tesseract
+def test_read_leading_int_ignores_text_suffix():
+    """The chopping PTS counter renders '21 PTS' — the digits-only
+    whitelist mangled the suffix into digits ('16 PTS' -> 1675, 21:17
+    run). The leading-int reader must return just the number."""
+    from common.score_ocr import read_leading_int
+    crop = np.zeros((40, 160), dtype=np.uint8)
+    cv2.putText(crop, "21 PTS", (5, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 2)
+    assert read_leading_int(crop) == 21
