@@ -117,6 +117,12 @@ def test_should_slam_only_airborne_over_near_ore():
                 slam_cooldown_s=0.5, slam_max_dist=25)
     assert should_slam(**base) is True                                   # airborne + near ore
     assert should_slam(**{**base, "cart": (150, 193)}) is False           # grounded -> no slam
+    # Run 23's "too quick" jump-slam: barely past the airborne threshold
+    # (height ~25) with the ore still at the front bumper — the slam
+    # dropped the cart beside the ore and died. Below SLAM_MIN_HEIGHT_PX
+    # the slam must hold.
+    assert should_slam(**{**base, "cart": (150, 193 - 25)}) is False
+    assert should_slam(**{**base, "cart": (150, 193 - 41)}) is True
     assert should_slam(**{**base, "terrain": {"kind": "pit", "x": 160, "distance_px": 15}}) is False  # never over a pit
     assert should_slam(**{**base, "terrain": {"kind": "ore", "x": 200, "distance_px": 40}}) is False  # ore too far
     assert should_slam(**{**base, "now": 10.2, "last_slam_time": 10.0}) is False  # within slam cooldown

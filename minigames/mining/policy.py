@@ -467,10 +467,24 @@ def should_steer_slam(*, cart, terrain, now: float, last_slam_time: float,
     return True
 
 
+# A scoring slam must fall onto the ore's TOP, which takes real altitude:
+# every successful slam (6/6, runs 16-23) fired from 69-76px above rest,
+# while the one slam fired from ~22px (run 23's SLAM #7 — the first frame
+# past the 18px airborne threshold, ore still at the front bumper behind
+# the 10px dist floor) dropped the cart IN FRONT of the ore and died to
+# the side hit. Requiring this much height means a low flyover (the ore
+# pit-window fallback jump) just flies over: by the time the arc passes
+# 40px the ore has scrolled under or behind, so the slam fires in proper
+# geometry or not at all. User-observed as "the last jump slam was a
+# little too quick".
+SLAM_MIN_HEIGHT_PX = 40
+
+
 def should_slam(*, cart, terrain, now: float, last_slam_time: float,
                 grounded_baseline_y: Optional[int], slam_cooldown_s: float,
                 slam_max_dist: int,
-                airborne_eps: int = JUMP_GROUNDED_EPS_PX) -> bool:
+                airborne_eps: int = JUMP_GROUNDED_EPS_PX,
+                min_height: int = SLAM_MIN_HEIGHT_PX) -> bool:
     """The slam predicate (the SECOND click) — drop the airborne cart onto
     ore to mine it. Returns True iff:
 
@@ -489,6 +503,11 @@ def should_slam(*, cart, terrain, now: float, last_slam_time: float,
     if terrain.get("kind") != "ore":
         return False
     if not is_cart_airborne(cart[1], grounded_baseline_y, airborne_eps):
+        return False
+    # Enough altitude to come down ON the ore, not beside it (see
+    # SLAM_MIN_HEIGHT_PX). grounded_baseline_y is not None here — the
+    # airborne check above already returned False otherwise.
+    if grounded_baseline_y - cart[1] < min_height:
         return False
     dist = terrain.get("distance_px")
     if dist is None or dist > slam_max_dist:

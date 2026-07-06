@@ -741,6 +741,26 @@ Filed with the numbers as #105; that's the next session's design problem.
   the ceiling + rescue chain — T's calibration rests on n=3 exact
   landings, all from today's window/room.
 
+### Run 23 (2026-07-06 16:03 live) — ceiling + rescue validated; slam altitude floor added
+
+Deepest run yet (7 actions, 5 survived, PTS 1). The #105 machinery worked
+live: jumps #4/#5 fired at 44/43 (the affine ceiling firing ABOVE the old
+proportional top at v≈104-108) and landed cleanly with wide margins;
+jump #1 survived a fire at 18 under the new floor; the post-jump-#4
+landing had the next pit at 76 — the targeted landings are leaving room
+instead of touching down at lips.
+
+The death was a new interaction, user-observed as "the last jump slam
+was a little too quick": JUMP #6 was the run-18 ore fallback (survival
+flyover, ore at 33 below the v=122 ore window) and SLAM #7 fired ~0.15s
+later at height ~22 — the first frame past the 18px airborne threshold,
+with the ore still at the front bumper behind the 10px dist floor. The
+slam dropped the cart BESIDE the ore (run-14/18 side-hit death). Fix:
+`SLAM_MIN_HEIGHT_PX = 40` — every successful slam (6/6) fired from
+69-76px, and a low flyover now stays a flyover (by 40px of height the
+ore has scrolled under/behind, so the slam fires in proper geometry or
+not at all).
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.
