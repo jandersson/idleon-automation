@@ -1,9 +1,11 @@
 """Mining minigame bot.
 
-Loop: detect cart + next obstacle, click to jump when an approaching pit
-is within the trigger-distance window. First-pass policy is jump-only —
-no slam — the goal of this version is just "don't fall into the first
-pit." Tune JUMP_TRIGGER_MIN/MAX and JUMP_COOLDOWN_S empirically.
+Loop: detect cart + next obstacle, then per frame either JUMP (grounded
+click — clear an approaching pit, or get airborne ahead of an ore) or SLAM
+(airborne click — drop onto ore to score; the rebound is a free jump that
+chains into the next slam). Trigger windows are distances tuned at a
+reference scroll speed and scaled live by a ScrollVelocity estimate, since
+the track accelerates within a run (see policy.py).
 
 Every click is logged to assets/mining.db with the detector state at
 fire time. After OUTCOME_DELAY_S the outcome (survived/died/unknown) is
@@ -52,7 +54,11 @@ from minigames.mining.detector import (
 )
 from minigames.mining.jump_log import open_db, log_jump, log_run, set_outcome
 from minigames.mining.digit_capture import DigitCapturer
-from minigames.mining.policy import GroundedBaseline, should_jump, should_slam, is_cart_airborne
+from minigames.mining.policy import (
+    GroundedBaseline, ScrollVelocity, should_jump, should_slam,
+    is_cart_airborne, scale_window, scale_slam_dist,
+    SCROLL_V_REF_PIT, SCROLL_V_REF_ORE,
+)
 
 _HERE = Path(__file__).parent
 LOGS_DIR = _HERE / "assets" / "logs"
@@ -68,6 +74,11 @@ POLL_INTERVAL = 0.005
 # Click policy. Trigger when a pit's leading edge is within this distance
 # (px) of the cart. The bot fires on the first frame the pit enters the
 # window, i.e. at ~JUMP_TRIGGER_MAX.
+#
+# ALL trigger constants below are distances AT THEIR REFERENCE SPEED
+# (policy.SCROLL_V_REF_PIT / _ORE) and are scaled by the live
+# ScrollVelocity estimate each frame — the track accelerates within a run,
+# so a fixed px window drifts off the time bounds it encodes (#53).
 #
 # Retuned 2026-06-16 (#5) from the first-pit death trace
 # (session_20260616_131320), worked through in ABSOLUTE time. Once the cart
@@ -250,6 +261,11 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
     # click is a SLAM, which drives the cart down into an approaching pit
     # (the spaced-obstacle death). See minigames/mining/policy.py.
     grounded = GroundedBaseline()
+    # Live scroll-speed estimate (px/s). The trigger constants above are
+    # distances tuned at a reference speed, but the track ACCELERATES within
+    # a run (~82 -> ~117 px/s over the scoring run) — the windows are scaled
+    # by v/v_ref each frame so their time behaviour holds through the ramp.
+    scroll = ScrollVelocity()
 
     # State the human-click listener needs to read. Captured in a closure;
     # mutated in the main loop each tick. The listener thread reads the
@@ -260,6 +276,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         "cart_pose": None,
         "terrain": None,
         "plank_range": None,
+        "scroll_v": None,
         "score": None,
         "win_left": 0, "win_top": 0, "win_w": 0, "win_h": 0,
     }
@@ -330,6 +347,17 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # the fire decision so it reflects this frame).
         grounded.update(cart[1] if cart is not None else None)
         grounded_baseline_y = grounded.baseline()
+        # Live scroll speed -> scale the trigger windows for this frame.
+        # Pure arithmetic (no IO), so it doesn't violate fire-first; it has
+        # to precede the decision because the decision consumes the windows.
+        scroll.update(terrain, plank_y, now)
+        scroll_v = scroll.velocity()
+        trig_min, trig_max = scale_window(
+            JUMP_TRIGGER_MIN, JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_PIT)
+        ore_trig_min, ore_trig_max = scale_window(
+            ORE_JUMP_TRIGGER_MIN, ORE_JUMP_TRIGGER_MAX, scroll_v, SCROLL_V_REF_ORE)
+        slam_max_dist = scale_slam_dist(
+            ORE_SLAM_MAX_DIST, scroll_v, SCROLL_V_REF_ORE)
 
         # --- FIRE FIRST: decide + click immediately after detection, before
         # any bookkeeping (state publish, settle, score read, digit capture,
@@ -347,9 +375,9 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                     last_click_time=last_click_time,
                     grounded_baseline_y=grounded_baseline_y,
                     cooldown_s=JUMP_COOLDOWN_S,
-                    trig_min=JUMP_TRIGGER_MIN, trig_max=JUMP_TRIGGER_MAX,
-                    ore_trig_min=ORE_JUMP_TRIGGER_MIN,
-                    ore_trig_max=ORE_JUMP_TRIGGER_MAX):
+                    trig_min=trig_min, trig_max=trig_max,
+                    ore_trig_min=ore_trig_min,
+                    ore_trig_max=ore_trig_max):
                 bot_click(win_left + cart[0], win_top + cart[1])
                 last_click_time = now
                 jump_idx += 1
@@ -360,7 +388,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                     last_slam_time=last_slam_time,
                     grounded_baseline_y=grounded_baseline_y,
                     slam_cooldown_s=SLAM_COOLDOWN_S,
-                    slam_max_dist=ORE_SLAM_MAX_DIST):
+                    slam_max_dist=slam_max_dist):
                 # Second click mid-arc = slam down onto the ore (score). Fired
                 # immediately like the jump; the airborne guard in should_jump
                 # ensures this branch only runs while airborne.
@@ -384,6 +412,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
             detector_state["cart_pose"] = cart_det["template"] if cart_det else None
             detector_state["plank_range"] = plank_range
             detector_state["terrain"] = terrain
+            detector_state["scroll_v"] = scroll_v
             detector_state["score"] = last_score
             detector_state["win_left"] = win_left
             detector_state["win_top"] = win_top
@@ -409,6 +438,8 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                 next_kind=terrain["kind"],
                 next_x=terrain["x"],
                 next_distance_px=terrain["distance_px"],
+                next_width_px=terrain.get("width"),
+                scroll_v_px_s=scroll_v,
                 plank_y=plank_y,
                 plank_x_left=plank_range[0] if plank_range else None,
                 plank_x_right=plank_range[1] if plank_range else None,
@@ -447,9 +478,10 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         if now - last_telemetry_at >= TELEMETRY_INTERVAL_S:
             last_telemetry_at = now
             fps = (1.0 / (now - last_loop_at)) if last_loop_at else 0.0
+            v_str = f"{scroll_v:.0f}" if scroll_v is not None else "warmup"
             print(f"  [t+{now - last_plank_seen:5.2f}] "
                   f"plank_y={plank_y} cart={cart} pts={last_score} "
-                  f"next={terrain} (~{fps:.0f}fps)")
+                  f"next={terrain} v={v_str} (~{fps:.0f}fps)")
         last_loop_at = now
 
         # While a fired jump's outcome is pending, log the cart's arc every
@@ -471,18 +503,12 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
             # plank-lost timeout. (Validated against trace_20260515: the
             # button reappears ~frame 56, vs an 8s timeout.)
             if plank_ever_seen and find_play_button(frame) is not None:
-                with pending_lock:
-                    _settle_pending_on_death(conn, pending_outcomes, time.time())
-                log_run(conn, session_started=session_started,
-                        attempt_idx=attempt_idx,
-                        ended_at=datetime.now().isoformat(timespec="seconds"),
-                        final_score=last_score, end_reason="play_button",
-                        code_commit=code_commit)
-                print(f"Run ended — Play Game prompt returned (final PTS={last_score}). Exiting.")
-                _print_summary(conn, session_started, attempt_idx)
-                _finalize_capture(capturer)
-                if listener is not None:
-                    listener.stop()
+                print(f"Run ended — Play Game prompt returned "
+                      f"(final PTS={last_score}). Exiting.")
+                _end_run(conn, pending_outcomes, pending_lock, capturer,
+                         listener, session_started, attempt_idx,
+                         final_score=last_score, end_reason="play_button",
+                         code_commit=code_commit, log_the_run=True)
                 return
             stale = time.time() - last_plank_seen > PLANK_LOST_TIMEOUT_S
             if watch and not plank_ever_seen:
@@ -491,21 +517,13 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                 # begins (they need time to navigate + click Play themselves).
                 last_plank_seen = time.time()
             elif stale:
-                with pending_lock:
-                    _settle_pending_on_death(conn, pending_outcomes, time.time())
-                if plank_ever_seen:
-                    log_run(conn, session_started=session_started,
-                            attempt_idx=attempt_idx,
-                            ended_at=datetime.now().isoformat(timespec="seconds"),
-                            final_score=last_score, end_reason="plank_lost",
-                            code_commit=code_commit)
                 print(f"Plank lost for >{PLANK_LOST_TIMEOUT_S}s — exiting.")
                 if not plank_ever_seen and last_frame is not None:
                     _dump_diagnostics(last_frame, win_w, win_h)
-                _print_summary(conn, session_started, attempt_idx)
-                _finalize_capture(capturer)
-                if listener is not None:
-                    listener.stop()
+                _end_run(conn, pending_outcomes, pending_lock, capturer,
+                         listener, session_started, attempt_idx,
+                         final_score=last_score, end_reason="plank_lost",
+                         code_commit=code_commit, log_the_run=plank_ever_seen)
                 return
             time.sleep(POLL_INTERVAL)
             continue
@@ -515,6 +533,27 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # before the per-frame bookkeeping.
 
         time.sleep(POLL_INTERVAL)
+
+
+def _end_run(conn, pending_outcomes, pending_lock, capturer, listener,
+             session_started, attempt_idx, *, final_score, end_reason,
+             code_commit, log_the_run: bool) -> None:
+    """Shared run-end teardown: settle pending jump outcomes, write the
+    per-attempt runs row (skipped when play never started — log_the_run
+    False), print the session summary, flush the digit-capture manifest,
+    and stop the watch-mode click listener."""
+    with pending_lock:
+        _settle_pending_on_death(conn, pending_outcomes, time.time())
+    if log_the_run:
+        log_run(conn, session_started=session_started,
+                attempt_idx=attempt_idx,
+                ended_at=datetime.now().isoformat(timespec="seconds"),
+                final_score=final_score, end_reason=end_reason,
+                code_commit=code_commit)
+    _print_summary(conn, session_started, attempt_idx)
+    _finalize_capture(capturer)
+    if listener is not None:
+        listener.stop()
 
 
 def _settle_outcomes(conn, pending, now, cart):
@@ -616,6 +655,8 @@ def _start_human_click_listener(conn, session_started, attempt_idx,
             next_kind=s["terrain"]["kind"] if s["terrain"] else None,
             next_x=s["terrain"]["x"] if s["terrain"] else None,
             next_distance_px=s["terrain"]["distance_px"] if s["terrain"] else None,
+            next_width_px=s["terrain"].get("width") if s["terrain"] else None,
+            scroll_v_px_s=s["scroll_v"],
             plank_y=s["plank_y"],
             plank_x_left=s["plank_range"][0] if s["plank_range"] else None,
             plank_x_right=s["plank_range"][1] if s["plank_range"] else None,

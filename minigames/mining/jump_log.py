@@ -18,9 +18,9 @@ Outcomes (filled in after a settle delay):
                  when a death left the plank briefly visible). survival
                  queries filter to survived/died.
 
-next_kind is 'pit' or NULL today — ore detection is disabled (it found only
-parallax background; see detector._scan_plank_ore), so no row carries
-next_kind='ore'.
+next_kind is 'pit' or 'ore' (NULL when no obstacle was in view). Ore
+detection went live 2026-06-16 (above-plank brown signature, see
+detector._scan_plank_ore); rows before that are pit/NULL only.
 
 Usage:
     from minigames.mining.jump_log import open_db, log_jump, set_outcome
@@ -67,6 +67,12 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("cart_height_above_plank", "INTEGER"),  # plank_y - cart_y at click (altitude)
     ("cart_pose", "TEXT"),                 # matched cart template name
     ("score_at_click", "INTEGER"),         # last OCR'd PTS at fire time
+    # Speed-adaptive triggers (#53). next_width_px is the obstacle's x-extent
+    # (the gap width W of the Run-11 feasibility bound); scroll_v_px_s is the
+    # live ScrollVelocity estimate at fire time (NULL = estimator not warmed
+    # up, i.e. the static windows were in effect).
+    ("next_width_px", "INTEGER"),
+    ("scroll_v_px_s", "REAL"),
 ]
 
 

@@ -385,8 +385,11 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
                       plank_range=None) -> Optional[dict]:
     """Return the nearest obstacle (pit or ore) ahead of the cart.
 
-    Result: {"kind": "pit"|"ore", "x": int, "distance_px": int} where
-    x is the left edge of the obstacle and distance_px is x - cart_right.
+    Result: {"kind": "pit"|"ore", "x": int, "distance_px": int, "width": int}
+    where x is the left edge of the obstacle, distance_px is x - cart_right,
+    and width is the obstacle's x-extent — the gap width W that bounds
+    single-jump feasibility (Run 11: D + W <= v*(delta+A)), logged per jump
+    so W accumulates in mining.db instead of needing frame archaeology.
 
     plank_y, cart_right and plank_range are accepted so the hot path can
     pass values it already computed this frame. Recomputing them here cost a
@@ -429,7 +432,9 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
     if not candidates:
         return None
     nearest = min(candidates, key=lambda c: c[1])
-    return {"kind": nearest[0], "x": nearest[1], "distance_px": nearest[1] - cart_right}
+    return {"kind": nearest[0], "x": nearest[1],
+            "distance_px": nearest[1] - cart_right,
+            "width": nearest[2] - nearest[1]}
 
 
 def _build_cart_mask(template: np.ndarray) -> np.ndarray:
