@@ -796,6 +796,25 @@ it; a rescue from 10 has no landing choice). Row 92 is a corpse click.
 The remaining lever for dense fields is #105's two-obstacle lookahead:
 choose landings while there is still a choice. #104 closed on this run.
 
+### Run 26 (2026-07-06 16:17 live) — PTS 3; lookahead shipped; cadence issue found (#106)
+
+New record: PTS 3 (triple slam chain — slams #3/#5/#8 all scored, plus
+both steer variants firing and surviving, including the ore-steer's
+first live outing). Death: the ore-steer's landing left ~0.28s to ore
+contact vs ~0.3s click→launch — a photo finish lost because the ore was
+FIRST SIGHTED at 73px, already deep in the band. The late sighting is a
+loop-cadence problem: cart-miss frames (pose transitions) trigger
+~0.25s full-frame template searches, blinding the bot ~27px per frame
+at v≈109 exactly when sightings drive decisions → filed #106.
+
+**Two-obstacle lookahead shipped (closes #105's remaining scope):**
+`find_terrain_ahead` returns every obstacle ahead (nearest first;
+find_next_terrain is now its head), the second obstacle logs per jump
+(`next2_kind/x/width_px`), and `pit_fire_ceiling` takes the measured
+gap to the next obstacle — tight gaps shrink the landing clear-target
+(enter at the near edge, floor 4px) so the next obstacle stays out of
+the forced-rescue zone; wide/unknown gaps keep the 12px default.
+
 ### Next session
 
 1–2. **DONE** (Runs 5–6): airborne detection; ore/obstacle classification.

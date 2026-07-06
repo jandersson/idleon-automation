@@ -430,3 +430,23 @@ def test_find_plank_top_y_lock_excludes_rival_row():
     locked = _find_plank_top_y(frame, lock_y=PLANK_Y)
     assert locked is not None
     assert abs(locked - PLANK_Y) <= 3
+
+
+def test_find_terrain_ahead_returns_all_obstacles_sorted():
+    """#105 lookahead: every pit/ore ahead of the cart, nearest first, with
+    widths — dense fields must be visible at fire time."""
+    from minigames.mining.detector import find_terrain_ahead
+    frame = _frame_with_plank()
+    frame[PLANK_Y:PLANK_Y + 12, 500:550] = 0   # pit 1 (50px)
+    frame[PLANK_Y:PLANK_Y + 12, 590:640] = 0   # pit 2 (50px)
+    frame[PLANK_Y - 12:PLANK_Y, 700:724] = (30, 70, 130)  # ore beyond
+    ahead = find_terrain_ahead(frame, (300, PLANK_Y), plank_y=PLANK_Y,
+                               cart_right=350)
+    assert [(t["kind"], t["x"], t["width"]) for t in ahead] == [
+        ("pit", 500, 50), ("pit", 590, 50), ("ore", 700, 24)]
+    assert ahead[0]["distance_px"] == 150
+    # find_next_terrain is exactly the head of the list.
+    res = find_next_terrain(frame, (300, PLANK_Y), plank_y=PLANK_Y, cart_right=350)
+    assert res == ahead[0]
+    # No cart -> empty list, not None.
+    assert find_terrain_ahead(frame, None) == []

@@ -483,3 +483,18 @@ def test_airborne_guard_replays_botrun_jump_arc():
     # The up-arc peak (frames 35-36, cart_y ~133-137) is airborne -> suppressed.
     assert airborne_by_frame[35] is True
     assert airborne_by_frame[36] is True
+
+
+def test_pit_fire_ceiling_gap_aware_clear_target():
+    """#105 lookahead: with the next obstacle visible, tight gaps shrink the
+    landing clearance (enter the gap at its near edge, keep the next
+    obstacle out of the forced-rescue zone); wide/unknown gaps keep the
+    default 12px target."""
+    from minigames.mining.policy import pit_fire_ceiling
+    base = pit_fire_ceiling(90.0, 50)                       # default target 12
+    assert pit_fire_ceiling(90.0, 50, gap_to_next=100) == base   # wide: unchanged
+    assert pit_fire_ceiling(90.0, 50, gap_to_next=None) == base  # unknown: unchanged
+    # 39px gauntlet gap: target (39-18)//2 = 10 -> ceiling 2px higher.
+    assert pit_fire_ceiling(90.0, 50, gap_to_next=39) == base + 2
+    # Very tight gap: target floors at 4 (still clears this pit's far edge).
+    assert pit_fire_ceiling(90.0, 50, gap_to_next=20) == base + 8

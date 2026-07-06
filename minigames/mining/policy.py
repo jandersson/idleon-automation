@@ -309,14 +309,26 @@ CART_HALF_WIDTH_PX = 18
 PIT_CEILING_CLAMP = (20, 55)
 
 
-def pit_fire_ceiling(v: Optional[float], width: Optional[int]) -> Optional[int]:
+def pit_fire_ceiling(v: Optional[float], width: Optional[int],
+                     gap_to_next: Optional[int] = None) -> Optional[int]:
     """The landing-targeted fire ceiling D* for a pit of the given width at
     live speed v — replaces the proportional window top for pits. None when
     v (estimator warming up) or width is unavailable; callers fall back to
-    the v-scaled top."""
+    the v-scaled top.
+
+    gap_to_next (#105 lookahead): plank px between this pit's far edge and
+    the NEXT obstacle's near edge, when a second obstacle is visible at
+    fire time. In a tight gap the default 12px landing clearance would put
+    the center deep into the gap and the next obstacle inside the
+    forced-rescue zone — instead land at most halfway across the usable
+    gap (floor 4px so the landing still clears this pit's far edge). Wide
+    or unknown gaps keep the default."""
     if v is None or width is None:
         return None
-    d = v * ARC_T_TOTAL_S - CART_HALF_WIDTH_PX - width - LAND_CLEAR_TARGET_PX
+    clear_t = LAND_CLEAR_TARGET_PX
+    if gap_to_next is not None:
+        clear_t = min(clear_t, max(4, (gap_to_next - CART_HALF_WIDTH_PX) // 2))
+    d = v * ARC_T_TOTAL_S - CART_HALF_WIDTH_PX - width - clear_t
     lo, hi = PIT_CEILING_CLAMP
     return int(round(min(max(d, lo), hi)))
 

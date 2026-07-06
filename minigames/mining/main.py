@@ -49,7 +49,7 @@ from common.git_info import current_code_commit
 from common.auto_commit import commit_file_if_changed
 from common.window import get_bounds, WindowNotFoundError
 from minigames.mining.detector import (
-    find_cart_detailed, find_next_terrain, find_play_button,
+    find_cart_detailed, find_terrain_ahead, find_play_button,
     read_score_from_crop, score_crop, plank_dark_fraction,
     CART_MAX_X_JUMP_PX, _find_plank_top_y, _find_plank_x_range,
 )
@@ -312,6 +312,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         "cart": None,
         "cart_pose": None,
         "terrain": None,
+        "next2": None,
         "plank_range": None,
         "scroll_v": None,
         "score": None,
@@ -380,9 +381,12 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         if cart is not None:
             last_cart_seen_at = now
         plank_range = _find_plank_x_range(frame, plank_y) if plank_y else None
-        terrain = (find_next_terrain(frame, cart, plank_y=plank_y,
-                                     cart_right=cart_right, plank_range=plank_range)
-                   if cart is not None else None)
+        terrain_ahead = (find_terrain_ahead(frame, cart, plank_y=plank_y,
+                                            cart_right=cart_right,
+                                            plank_range=plank_range)
+                         if cart is not None else [])
+        terrain = terrain_ahead[0] if terrain_ahead else None
+        next2 = terrain_ahead[1] if len(terrain_ahead) > 1 else None
         # Track the cart's resting y for the airborne guard (updated before
         # the fire decision so it reflects this frame).
         grounded.update(cart[1] if cart is not None else None)
@@ -412,9 +416,16 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
         # Landing-targeted ceiling for pits (#105): with live v and the
         # pit's measured width, aim the landing center ~CLEAR_TARGET past
         # the far edge instead of firing at the proportional window edge.
-        # Falls back to the scaled top while the estimator warms up.
+        # With a second obstacle in view (lookahead), the clear target
+        # shrinks so tight gaps are entered at their near edge, keeping
+        # the next obstacle out of the forced-rescue zone. Falls back to
+        # the scaled top while the estimator warms up.
         if terrain is not None and terrain.get("kind") == "pit":
-            ceiling = pit_fire_ceiling(scroll_v, terrain.get("width"))
+            gap_to_next = None
+            if next2 is not None:
+                gap_to_next = next2["x"] - (terrain["x"] + terrain["width"])
+            ceiling = pit_fire_ceiling(scroll_v, terrain.get("width"),
+                                       gap_to_next=gap_to_next)
             if ceiling is not None:
                 trig_max = ceiling
         ore_trig_min, ore_trig_max = scale_window(
@@ -498,6 +509,7 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
             detector_state["cart_pose"] = cart_det["template"] if cart_det else None
             detector_state["plank_range"] = plank_range
             detector_state["terrain"] = terrain
+            detector_state["next2"] = next2
             detector_state["scroll_v"] = scroll_v
             detector_state["score"] = last_score
             detector_state["win_left"] = win_left
@@ -526,6 +538,9 @@ def _run_inner(conn, watch: bool = False, save_frames: bool = False):
                 next_x=terrain["x"],
                 next_distance_px=terrain["distance_px"],
                 next_width_px=terrain.get("width"),
+                next2_kind=next2["kind"] if next2 else None,
+                next2_x=next2["x"] if next2 else None,
+                next2_width_px=next2["width"] if next2 else None,
                 scroll_v_px_s=scroll_v,
                 plank_y=plank_y,
                 plank_x_left=plank_range[0] if plank_range else None,
@@ -756,6 +771,9 @@ def _start_human_click_listener(conn, session_started, attempt_idx,
             next_x=s["terrain"]["x"] if s["terrain"] else None,
             next_distance_px=s["terrain"]["distance_px"] if s["terrain"] else None,
             next_width_px=s["terrain"].get("width") if s["terrain"] else None,
+            next2_kind=s["next2"]["kind"] if s["next2"] else None,
+            next2_x=s["next2"]["x"] if s["next2"] else None,
+            next2_width_px=s["next2"]["width"] if s["next2"] else None,
             scroll_v_px_s=s["scroll_v"],
             plank_y=s["plank_y"],
             plank_x_left=s["plank_range"][0] if s["plank_range"] else None,

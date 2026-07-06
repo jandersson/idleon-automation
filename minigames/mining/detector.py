@@ -383,13 +383,27 @@ def find_cart_detailed(frame, plank_y=None, prior=None,
 
 def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
                       plank_range=None) -> Optional[dict]:
-    """Return the nearest obstacle (pit or ore) ahead of the cart.
+    """Return the nearest obstacle (pit or ore) ahead of the cart — the
+    first entry of find_terrain_ahead. See there for the dict shape."""
+    ahead = find_terrain_ahead(frame, cart, plank_y=plank_y,
+                               cart_right=cart_right, plank_range=plank_range)
+    return ahead[0] if ahead else None
 
-    Result: {"kind": "pit"|"ore", "x": int, "distance_px": int, "width": int}
-    where x is the left edge of the obstacle, distance_px is x - cart_right,
+
+def find_terrain_ahead(frame, cart, plank_y=None, cart_right=None,
+                       plank_range=None) -> list[dict]:
+    """Return ALL obstacles (pits and ore) ahead of the cart, nearest
+    first (#105 two-obstacle lookahead — dense pit fields and shadowed
+    ore are invisible at fire time when only the nearest is reported, and
+    the landing-targeted ceiling needs the NEXT obstacle to pick a
+    landing spot while there is still a choice).
+
+    Each entry: {"kind": "pit"|"ore", "x": int, "distance_px": int,
+    "width": int} where x is the left edge, distance_px is x - cart_right,
     and width is the obstacle's x-extent — the gap width W that bounds
-    single-jump feasibility (Run 11: D + W <= v*(delta+A)), logged per jump
-    so W accumulates in mining.db instead of needing frame archaeology.
+    single-jump feasibility (Run 11: D + W <= v*(delta+A)), logged per
+    jump so W accumulates in mining.db instead of needing frame
+    archaeology.
 
     plank_y, cart_right and plank_range are accepted so the hot path can
     pass values it already computed this frame. Recomputing them here cost a
@@ -399,13 +413,13 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
     recomputation when omitted, so existing callers/tests are unaffected.
     """
     if cart is None:
-        return None
+        return []
     if frame.shape[2] == 4:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     if plank_y is None:
         plank_y = _find_plank_top_y(frame)
     if plank_y is None:
-        return None
+        return []
     # cart[0] is center_x; estimate cart_right from the matched template
     # width unless the caller already has it.
     if cart_right is None:
@@ -425,16 +439,13 @@ def find_next_terrain(frame, cart, plank_y=None, cart_right=None,
         scan_x = max(scan_x, plank_range[0])
     pits = _scan_plank_pits(frame, plank_y, x_start=scan_x, x_end=x_end)
     ores = _scan_plank_ore(frame, plank_y, x_start=scan_x, x_end=x_end)
-    candidates = (
+    candidates = sorted(
         [("pit", a, b) for a, b in pits] +
-        [("ore", a, b) for a, b in ores]
+        [("ore", a, b) for a, b in ores],
+        key=lambda c: c[1],
     )
-    if not candidates:
-        return None
-    nearest = min(candidates, key=lambda c: c[1])
-    return {"kind": nearest[0], "x": nearest[1],
-            "distance_px": nearest[1] - cart_right,
-            "width": nearest[2] - nearest[1]}
+    return [{"kind": k, "x": a, "distance_px": a - cart_right,
+             "width": b - a} for k, a, b in candidates]
 
 
 def _build_cart_mask(template: np.ndarray) -> np.ndarray:

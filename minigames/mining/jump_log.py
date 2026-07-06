@@ -73,6 +73,12 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     # up, i.e. the static windows were in effect).
     ("next_width_px", "INTEGER"),
     ("scroll_v_px_s", "REAL"),
+    # Two-obstacle lookahead (#105): the SECOND-nearest obstacle at fire
+    # time, so dense spacings are analysable per jump (and the gap-aware
+    # clear target is reconstructable: gap = next2_x - (next_x + next_width)).
+    ("next2_kind", "TEXT"),
+    ("next2_x", "INTEGER"),
+    ("next2_width_px", "INTEGER"),
 ]
 
 
