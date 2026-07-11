@@ -1,249 +1,148 @@
-# Choppin minigame — mechanics research (2026-06-11)
+# Choppin minigame — mechanics + bot architecture notes
 
-Community-sourced mechanics model for the choppin minigame, gathered
-because attempts are capped (5/day) and each one needs to count.
-Cross-referenced against the bot's own first instrumented session
-(2026-06-11 00:13, see TODO.md). Sources at the bottom; per-claim
-confidence noted since none of this is from the game's code.
+Started 2026-06-11 as community-sourced mechanics research; rewritten
+2026-07-11 after the planner era (runs 6-17) settled most questions
+with instrumented data. History lives in issue #46's comment thread
+and the chops/polls tables of `assets/chopping.db`; this file is the
+current model. Best bot score: **52** (run 13); human best: 66.
 
-## Scoring
+## Mechanics (settled, instrumented)
 
-- **Green chop = +1 point, yellow/gold chop = +2.** (wiki + DigitalTQ,
-  consistent everywhere; high confidence)
-- Score thresholds that matter beyond per-attempt rewards: a quest
-  wants 150, an achievement at 141 pays 25 gems + 4hr time candy, and
-  **mage skill progression scales with the account's best score** —
-  so peak score matters, not just average rewards. (Steam threads +
-  DigitalTQ; medium-high confidence)
-- Rewards per attempt: Choppin EXP, logs of that tree, leaves —
-  scaling with points. **Needs ≥5% choppin efficiency on the
-  character or the attempt pays nothing.** (wiki summary; medium
-  confidence on the 5% number)
+- **Scoring: green +1, gold +2** — verified per-chop by the PTS OCR
+  trail (every gold impact planned mid-zone pays +2; the 2026-07-06
+  "gold pays +1 sometimes" era was entry-edge fires being evaluated
+  off-zone, fixed by center-targeting). Score thresholds that matter:
+  quest at 150, achievement at 141, mage skill scales with account
+  best — peak score is the objective.
+- **PTS counter updates instantly on a scoring chop** (maintainer
+  ground truth) — but gold's +2 lands as TWO ticks, the second up to
+  seconds late. Settled step-function values (polls.pts_read) are the
+  analysis anchor; single reads 0.35s post-click under-read golds by 1.
+- **The speed ramp is TIME-accumulated and applied at chop events.**
+  A round idled ~15 min at a normal ~211 px/s, then the FIRST chop
+  jumped the leaf to median 1684 / p90 2511 px/s (~10x). The original
+  "chops ramp it, per-chop" finding was confounded (chops ∝ time at
+  normal cadence); the ~600-650 px/s "saturation" is just f(t) at
+  normal round lengths. Calibration points: +42s → +34 px/s;
+  +15 min → +1500 px/s. **Operational rule: zero idle — the bot
+  auto-clicks Play Game the moment it sees the prompt.**
+- **Waiting mid-round is free at ≤45s scales** (pause experiments:
+  flat speeds inside chop-free pauses) but see above — round AGE
+  still accrues ramp that the next chop applies.
+- **Deaths bank the points.** Clicking red ends the round; the
+  accumulated points pay out the same as a voluntary exit. This makes
+  late-round risk cheap (the EV ranking uses it).
+- **No inactivity timeout** observed (≤45s tested); rounds end only
+  by red-click or in-game exit.
+- **Leaf motion is EASED**: x(θ) = (W/2)(1−cosθ). Mid-bar ~550-750
+  px/s vs ~280-420 at the edges at typical speeds. All planning uses
+  this model; its measured arrival error is +5ms mean / ~12ms sigma
+  mid-bar at ≤120ms horizons, degrading superlinearly near the
+  turnarounds (see the edge exponent below).
+- **A registered chop re-rolls the zone layout within 86-201ms** (the
+  in-game ack); the layout is otherwise STATIC between chops — a
+  red-flanked gold stays unfireable until something chops.
+- **Chop cooldown**: clicks ≤225ms after a registered chop are
+  silently ignored; ≥588ms observed gaps all scored. (225, 588)ms
+  unbisected; the fire hold (MIN_INTERCHOP_S=0.45 + re-roll ack)
+  makes it moot at planner cadence.
+- **The layout re-roll ack is necessary-but-not-sufficient** as a
+  scoring signal (it false-acks on detection flicker); pts_read is
+  the scoring truth.
+- **The overlay anchors above the PLAYER** — its screen position
+  changes per environment/map. Never cache overlay coordinates
+  (regions.json is fallback-only); the bar is auto-located visually.
+- "Gold slows the leaf" (community): no signal in any session.
 
-## Speed model (settled 2026-06-11, 01:08 session — 97s, 19 chops)
+## Bot architecture (the planner era, 2026-07-06 →)
 
-- **Chops ramp the speed; bounces do NOT — confirmed unconfounded by
-  the pause experiment (10:51 session, 2026-06-11).** The bot paused
-  firing 12s after the 5th and 10th registered chops; per-sweep peaks
-  INSIDE the chop-free pauses were flat at both low and mid speed
-  (pause 1: first-half mean ~455 → second-half ~433 px/s over ~20
-  bounces; pause 2: ~576 → ~560 over ~25). This closes the original
-  confound (the opening ramp had chops+bounces together; the 01:08
-  droughts were at high speed where saturation could mask). The
-  experiment stays available via BOUNCE_EXPERIMENT_EVERY_N (set 0 to
-  disable now that it's answered). Corollary intact: waiting is free,
-  deaths are the only cost.
-- **Therefore waiting is FREE** — *within the tested envelope of
-  ≤45s.* A skipped fire window costs wall-clock, not points or
-  difficulty. Deaths are the only real cost in this game. The
-  front-loading doctrine ("time not scoring is actively harmful") is
-  WRONG and is hereby retracted.
-  **BOUNDED 2026-07-11: waiting is NOT free at minute scales.** A
-  round left open ~15 minutes idled at a normal ~211 px/s the whole
-  time, then the FIRST chop jumped the leaf to median 1684 / p90 2511
-  px/s (~8-12x, unplayable). The ramp has a TIME-accumulated
-  component that is applied at chop events — invisible during the
-  wait (which is why the 12-45s pause experiments showed flat speeds)
-  and cashed in on the next chop. The original per-chop attribution
-  was partly confounded (chops ∝ time at normal cadence); the ~600-650
-  px/s "saturation" was just the value reached within normal round
-  lengths. Two calibration points: +42s gap → +34 px/s (02:10
-  session, chop 30); +~15 min → +~1500 px/s. Operational rule: START
-  THE BOT FIRST, then open the round (the bot waits for the bar), so
-  no idle time ever accumulates.
-- **No inactivity timeout** at least up to 45s (the longest drought —
-  the round did not end). The 97s round ended only by the bot's own
-  marginal fire.
-- **Leaf motion is EASED**: mid-bar median ~550–750 px/s vs ~280–420
-  near the edges (profile is trapezoid-ish — broad fast middle, slow
-  edges). Gate consequence: instantaneous vx near the edges flatters
-  time-to-red; the gate floors projected speed at
-  EASING_SPEED_FLOOR_FRAC of the recent max (0.75 since the 01:08
-  death — chop 20 fired at nominal ttr=150ms on vx=425 while the true
-  crossing speed was ~630-750, real ttr ~100ms).
-- **True-speed kill boundary ≈ 100–115ms**: all three deaths to date
-  had true ttr ≤ ~110ms; survivals observed at 115–123ms.
-- **Yellow chops slow the leaf down** ("Hitting yellow slows down the
-  speed the mark moves") — community claim, still unconfirmed: 7 gold
-  chops in the 01:08 session produced no visible dip (any brake may be
-  cancelled by the chop's own ramp).
+`main.py` flow: auto-locate → auto-play → planned shots → banked exit.
 
-## Chop registration (measured, 00:46 session)
+- **Overlay auto-location** (`detector.find_bar_rect` +
+  `derive_overlay_regions`): the bar is found as a wide thin band
+  where zone green and red coexist (contiguous column runs, 1px gap
+  bridge; decorative end caps split off); leaf strip / Chop button /
+  PTS counter hang off it at offsets calibrated from the original
+  hand-picked regions. The bot WAITS for the bar (~1/s) instead of
+  exiting, so it can be started before the round.
+- **Auto-start** (`detector.find_play_button`): while waiting, the
+  'Play Game' prompt is template-matched (shared sprite with mining;
+  0.992 live match) and clicked — capped 2/session (each consumes a
+  shared daily try). Zero idle by construction.
+- **Planned shots** (`planner.py`): pick a target impact inside an
+  upcoming zone crossing, schedule the click for impact −
+  CLICK_LATENCY_S (55ms), re-plan every poll, commit inside an 80ms
+  window with a sleep/spin release (sub-ms). Fires from any leaf
+  position; impacts land mid-zone. Every zone yields a sweep-0 and a
+  sweep-1 (through-bounce) candidate; red boundary CROSSING TIMES
+  from both sweeps bound every margin (turnaround pockets repel from
+  both sides). Cross-sweep candidates steer ~36% of approaches
+  (plan_saw_sweep1) but re-label to sweep-0 by commit time.
+- **Error model (all terms measured)**: sigma_local = 12ms (mid-bar
+  fire residuals) × (1/sinθ)^1.5 at the target (thin EDGE fires died
+  at 29% vs mid 8% under linear scaling — five-death split) + 5% ×
+  horizon (V_max estimator drift). Hard feasibility rungs by drought:
+  3.0σ fresh / 2.5σ at 15s / 2.25σ at 30s.
+- **EV ranking**: candidates rank by value − death_cost ×
+  death_risk(σ-margin); death_risk is the empirical fit exp(1.63 −
+  1.39k) (P(3σ)=0.08 — the real tail is ~50x fatter than Gaussian at
+  the floor), death_cost is the remaining round's points decaying
+  with age and drought. A floor gold loses to a fat green while the
+  round is worth living for. EV reorders but NEVER refuses: a lone
+  rung-passing candidate fires (the alternative on a static layout is
+  the starve exit — same banked points, zero upside).
+- **Gold chase** (`gold_wait.py`): same-sweep ride + cross-pass wait
+  share a 6s give-up clock and a viability pricing check
+  (`detector.gold_window_ms` — don't chase a gold whose best entry
+  window can't clear the gate at current speed).
+- **Starve exit at 40s** (was 60): the longest drought that ever
+  revived in the planner era is 31.2s; nothing in (32, 60)s ever
+  fired again. Banks and tells the user to exit in-game.
+- **PTS OCR**: template-based (`common.score_template_ocr`), digit
+  library complete (0-9) in `assets/digit_templates/` — tesseract is
+  unusable on the pixel font. Suffix-tolerant reader (the "PTS"
+  label), binarize threshold 200 (white-on-sky), plausibility gate
+  (monotonic, ≤+2/chop). Continuous ~4Hz sampling on non-fireable
+  polls → polls.pts_read step function = scoring ground truth.
+- **Instrumentation**: every fire in chops (plan fields: aim_mode,
+  target_x, plan_margin_ms, plan_impact_in_ms, plan_sweep,
+  plan_saw_sweep1, gold_wait_ms), full-rate polls with layout RLE +
+  pts_read; --save-frames (launcher toggle) persists leaf+bar
+  composites (~2Hz + per chop) and score crops. DB commits every ~2s
+  so aborts lose nothing.
+- **Legacy fallback**: CHOPPING_AIM=gate (the reactive time-to-red
+  gate that starved at saturation), CHOPPING_AUTOREGIONS=off
+  (regions.json). Kept for A/B only.
 
-- A registered chop re-rolls the zone layout within **86–201ms** —
-  the re-roll is the in-game ack.
-- The re-roll is NOT the end of the game's chop cooldown: clicks
-  198/201/225ms after a registered chop were **silently ignored** (no
-  re-roll, no point), while 655/720/812ms gaps registered. The
-  registration boundary sits somewhere in (225, 655)ms.
-  UPDATE 2026-07-06 (runs 3-5, live PTS ground truth): **every
-  click in those runs scored** (maintainer) — gaps down to 588ms all
-  paid, so the boundary is < 588ms and the (225, 588) range stays
-  unbisected (a same-evening 0.66 floor raise blaming 609-631ms gaps
-  was wrong and was reverted). The recurring -3-per-run gap vs the
-  +1/+2 model is instead **gold fires paying +1**: the PTS counter
-  updates instantly, so run 5's truthful 23-after-chop-18 (vs 27
-  modeled) plus final 31 (vs 34) mean ~3-4 of the gold-labeled fires
-  were evaluated off-gold — 7 of its 8 ride-triggered gold fires
-  were LEFTWARD entry fires (fire the instant the detected left edge
-  crosses in), so the working hypothesis is the game's hit point
-  sits a few px right of the sprite mask's leftmost pixel. Issue
-  #110: measure the offset from `polls.pts_read` steps × fire depth
-  (pointer_x + zone_layout, already logged), then add a depth-aware
-  gold fire rule.
-- **Ignored clicks are not free**: the 00:46 round's fatal click came
-  225ms after its predecessor — no point was possible, but the death
-  still happened. Working model: every click is evaluated against the
-  logic-leaf position (green during cooldown → nothing; red → death,
-  always). So clicks during the cooldown window carry pure downside —
-  the fire hold now enforces the full interval.
-- The fatal click itself: the leaf read the same x twice 127ms apart
-  (stale/frozen render or capture) → vx = exactly 0.0 → the old
-  `abs(vx) > 1e-6` check disarmed the directional gate → click landed
-  with the real leaf likely ~355 px/s and red ~31px (~87ms) ahead.
-  Direction-unknown fires are now banned (MIN_VX_FOR_FIRE).
+## Post-mortem discipline
 
-## Round end
+Every death gets replayed (`plan_shot` on the logged state — pass
+sigma_ms=12, the live value; the signature default is 16 and silently
+rejects everything the bot fired). Deaths so far: 2 pre-EV avoidable
+floor-golds (led to EV ranking), 3 vindicated forced fires (lone
+candidates / drought rungs on hostile layouts), of which the edge
+cluster led to the ^1.5 exponent. The maintainer's direct in-game
+observation outranks any statistical reconstruction — two plausible
+theories died in one evening against one sentence each (see memory:
+verify-mechanics-with-user).
 
-- **Clicking while the leaf is over red ends the round.** One
-  mistake, no lives. (Steam "broken" thread + our chop #3 death:
-  fired 19px ahead of red at ~50–75ms time-to-red, leaf vanished
-  250ms later, bar gone.) No timer or chop-cap mentioned anywhere —
-  rounds appear to end only by red-click. UNVERIFIED: whether
-  inactivity ends a round, and whether a voluntary exit keeps the
-  score.
+## Open questions
 
-## Zone dynamics
-
-- **A successful chop shifts/re-rolls the zone layout under the
-  leaf** ("double clicking moves it twice and you run the risk of
-  clicking the red space that moves under the cursor" — Steam tips).
-  Matches the bot's RLE observation: red grew r50→r53 / r45→r48 and
-  green shrank 120→114 across three chops. Implication: any cached
-  layout is stale the instant a chop registers — always re-sample
-  before the next click (the loop already does).
-- Gold zones exist in some layouts (seen once in a transition frame);
-  unknown what makes them appear.
-
-## Strategy (community consensus + implications for the bot)
-
-1. **Front-load chops.** "Click multiple times when the arrow passes
-   over the green at the start" is the community max-score line: the
-   first seconds are the slowest and safest, and points-per-pass is
-   highest before the speed ramp. IMPLEMENTED 2026-06-11: the fixed
-   150ms post-chop sleep became a layout-settle hold — the bot
-   re-arms the moment the zone layout re-rolls (the in-game signal
-   the chop registered), with 150ms as the fallback deadline only.
-   The polls record the actual settle lag (fired=1 row → first
-   changed zone_layout), which calibrates whether the fallback can
-   shrink further.
-2. **Always take yellow.** +2 and a slowdown. IMPLEMENTED 2026-06-11
-   as the same-sweep gold upgrade: a safe green fire is deferred when
-   gold lies ahead of the leaf before any red (same sweep, no extra
-   bounce, capped at GOLD_RIDE_MAX_MS); a leaf already over gold
-   fires as before. Cross-pass gold waiting was deliberately NOT
-   built — its value depends on the unresolved speed-attribution
-   question below. UPDATE 2026-07-06: speed attribution settled
-   per-chop, so cross-pass waiting is now IMPLEMENTED
-   (`gold_wait.py`): with chops (not time) bounding the score, a
-   green→gold upgrade is a pure +1 point, and the 2026-06-11 data
-   showed 20/48 registered green chops fired with gold sitting
-   elsewhere on the bar (gold is on the bar in ~95% of long-session
-   polls, the leaf over it only ~10-15%). LESSON from the first live
-   run (18:32 session, stalled at chop 9): the layout only re-rolls
-   on a chop, so a red-flanked gold (that run: ~29ms from red, gate
-   needs 120) stays unfireable until the next chop — and the
-   same-sweep ride, which had NO deadline, held every safe green for
-   ~20s until the failsafe. Fix: ride + wait share one chase clock
-   (`update_gold_chase`); at MAX_CHASE_S=6s (~4 sweeps) the bot gives
-   up on that layout's gold and takes greens until the next re-roll.
-   Cross-pass waits also only START within START_LATEST_S=10s of the
-   last fire, so the chase can't trip the 60s starve exit.
-   Instrumented via `chops.gold_wait_ms` (chase duration preceding a
-   fire; zone says whether it paid off) and `polls.hold_reason`
-   ('gold_wait'/'gold_ride').
-3. **Never click red** — the bot's one death condition. The
-   directional time-to-red gate (MIN_TIME_TO_RED_MS) is the
-   load-bearing control; late-round it will (correctly) starve fires
-   as speed rises, at which point the attempt has reached its
-   natural ceiling.
-   UPDATE 2026-07-06: the gate's starve IS the score ceiling — at the
-   ~600-650 px/s saturation a 74px green crosses in ~116ms, so no
-   moment ever satisfies a 120ms-runway gate (runs 2-5 all ended
-   there, 18-24 chops). Replaced as default by **planned shots**
-   (`planner.py`): pick the time-domain center of an upcoming zone
-   crossing, schedule the click for impact minus CLICK_LATENCY_S
-   (40ms), re-plan every poll, spin-wait to the instant, fire.
-   Impacts must clear a required number of sigmas from every red
-   boundary and 1σ inside their own zone. Replay over run 5's polls:
-   feasible plans on 37% of the starve-tail polls where the gate
-   found nothing (median margin 62ms). Also fires from any leaf
-   position and lands mid-zone (absorbs the #110 hit-point offset).
-   The gate survives as CHOPPING_AIM=gate.
-   CROSS-SWEEP (2026-07-07): the planner also targets zone crossings
-   on the pass AFTER the upcoming bounce (every zone yields a sweep-0
-   and a sweep-1 candidate; turnaround red pockets are crossed twice
-   and both crossing times bound the margins). Error model, all
-   measured: base σ 12ms (run-6 mid-bar fire residuals) × 1/sin(θ)
-   at the target (edge fires ran +40ms) + 5% of the horizon (V_max
-   drift); required sigmas ladder 3.0/2.5/2.25 by drought time (EV:
-   skipping a 3σ gold costs more expected points than the ~0.1%
-   death it avoids — and mid-drought, deaths bank anyway). Impact
-   placement scans fractions of the crossing, not just the center,
-   so a one-sided red buys margin by shifting away. chops.plan_sweep
-   counts how often through-bounce fires happen. CLICK_LATENCY_S is
-   55ms since run 6's post-mortem.
-4. Edge bounces can't be prevented (leaf motion is autonomous), so
-   "avoid the sides" translates for a bot into: score as much as
-   possible per unit time early, and bank yellow slowdowns.
-
-## Open unknowns
-
-- ~~Chop-vs-bounce speed attribution~~ — settled: per-chop (above).
-- ~~Does inactivity end a round?~~ — no, at least ≤45s.
-- ~~Does a voluntary exit keep the score?~~ — YES (maintainer,
-  2026-06-11): points bank as in-game tokens on exit; each game
-  starts fresh. Exit-on-starve implemented (STARVE_EXIT_S=60): after
-  60s without a safe fire the bot ends the session with the score
-  summary and the user exits in-game to bank. Every bot death so far
-  came from finally taking a marginal window during a starve — this
-  removes that failure mode entirely.
-- Minimum inter-chop delay: all 560ms+ gaps registered; the (225,
-  560)ms range is untested but moot while the fire cadence is
-  crossing-limited anyway.
-- What spawns gold zones (first gold appeared at chop 7-8 in the
-  01:08 session and persisted; gold width shrank o41 → o33 over the
-  round).
-- Whether the per-chop ramp keeps compounding at higher scores
-  ("hyperspeed" reports) or truly saturates.
-- ~~Position-aware eased time-to-red~~ — BUILT 2026-06-11, after the
-  01:39 starve-at-23-points proved the flat 0.75×recent-max floor was
-  a bug, not the game's ceiling (maintainer's human best is 66 by
-  just clicking greens). Root cause: detection-jitter spikes of
-  1600–1800 px/s (physically impossible 45px inter-poll jumps)
-  poisoned the recent-MAX for 3s at a time, pricing windows at ~190px
-  of needed runway when greens are 70–110px. The eased model
-  (detector.eased_time_to_red_ms, V_max = median of sin-corrected
-  samples via detector.infer_vmax) is jitter-immune and
-  position-aware. Back-test over all 45 recorded fires
-  (scripts/validate_chop_gate.py): both computable deaths price at
-  28ms and 110ms (skip), 40/41 survivals price ≥116ms (fire) — the
-  kill boundary is bracketed at 110–116ms and the budget sits at
-  120ms. The late-round fires the old floor starved out price at
-  135–159ms and now fire.
-- **PTS ground truth (2026-06-11):** the overlay renders a live
-  "N PTS" counter (left of the bar) and the account best ("66 BEST",
-  right). The bot OCRs PTS once per fire hold (~0.35s post-click,
-  zero throughput cost) into `chops.pts_after_ocr` — per-chop
-  increments verify the +1/+2 mapping — and reports the in-game
-  score at session end. Requires a one-time
-  `chopping-pick-score-region` around the PTS digits.
+- The time-ramp function f(round_age): only two calibration points.
+  More large-idle observations would pin the shape (observational —
+  don't burn tries on it).
+- Gold-zone spawn triggers (observational; gold sits on the bar in
+  ~95% of long-session polls).
+- The (225, 588)ms chop-cooldown boundary (moot at current cadence).
+- #110 hit-point offset: absorbed by center-targeting; the offset
+  number itself is recoverable from pts_read × fire depth if ever
+  wanted.
 
 ## Sources
 
-- IdleOn wiki — Choppin: <https://idleon.wiki/wiki/Choppin> (page is
-  Cloudflare-gated to scripts; content via search summaries)
+- IdleOn wiki — Choppin: <https://idleon.wiki/wiki/Choppin> (403 to
+  WebFetch; use curl / the MediaWiki API)
 - DigitalTQ Choppin guide: <https://www.digitaltq.com/wiki/idleon/choppin-guide>
-- Steam: "Tips for minigames": <https://steamcommunity.com/app/1476970/discussions/0/3807284068743364838/>
-- Steam: "The chopping and mining mini-game are not fun or completely
-  broken": <https://steamcommunity.com/app/1476970/discussions/0/3167694551647775610/>
+- Steam: "Tips for minigames", "The chopping and mining mini-game are
+  not fun or completely broken" (see git history for URLs)
+- Everything else: `assets/chopping.db` + issue #46's comment thread.

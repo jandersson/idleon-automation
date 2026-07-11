@@ -362,6 +362,30 @@ investigations:
   signal. The secondary red-chain/life mechanic (3 consecutive bullseyes
   = +1 life) is NOT modelled (needs life tracking): issue #56.
 
+### Chopping: established findings
+
+Settled with instrumented data (2026-06-11 → 2026-07-11) — don't
+re-derive; full model in `docs/chopping_notes.md`, history on #46:
+
+- **Speed ramp is TIME-accumulated, applied at chop events** (an idle
+  round explodes on its first chop — the bot auto-plays for zero
+  idle). The apparent ~650 px/s "saturation" is just f(t) at normal
+  round lengths. Waiting ≤45s mid-round is free.
+- **Green +1 / gold +2, verified per-chop** via the PTS step function
+  (`polls.pts_read`; counter updates instantly, gold's second tick
+  can lag seconds). Deaths bank the points — late-round risk is cheap.
+- **Never cache overlay coordinates** — the overlay anchors above the
+  player and moves per map. The bar is auto-located visually; every
+  other region derives from it.
+- **Planned shots beat reactive gating** (the gate starves where a
+  74px green crosses in ~116ms). The planner's error model is fully
+  measured: 12ms base sigma × (1/sinθ)^1.5 (thin edge fires died at
+  29% vs mid 8%) + 5% horizon; empirical death-risk curve (the tail
+  is ~50x Gaussian at floor margins); EV ranking that reorders but
+  never refuses a lone candidate. Post-mortem replays must pass
+  sigma_ms=12 (the signature default 16 silently rejects real fires).
+- Tesseract cannot read the score's pixel font — template OCR only.
+
 ### Safety
 
 `pyautogui.FAILSAFE = True` is set globally in `common/input.py`. Slamming the mouse into any screen corner aborts. Every `main.run()` opens with a 2-second sleep so the user can switch to the game window before clicks start. Preserve both conventions in new bots.
