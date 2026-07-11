@@ -3,7 +3,8 @@
 How the catching bot decides *when* to flap, the dynamics fit from a dense
 trajectory trace, and the open control problem. The loop + fallback live in
 `main.py`; the model in `controller.py`; the offline fit in `fit_dynamics.py`;
-a closed-loop check in `sim.py`.
+a closed-loop check in `sim.py`; the crossing extraction that calibrated the
+collision model in `analyze_crossings.py`.
 
 ## The control problem
 
@@ -64,10 +65,76 @@ inside the passable opening (the detected band inset by the rim thickness,
 the original `should_flap_now` — is wrong: the avatar zips through the hole and
 clips. `descent_time_to`/`predict_descent_window` remain only for analysis.
 
+## Collision model, measured (#62, settled 2026-07-11)
+
+Extracted from all four 2026-06-17 traces via `catching-analyze-crossings`
+(per-hoop track fitting -> extrapolated ring-centre crossings -> fly_y at
+the crossing, cross-referenced with the flaps table's score reads). Don't
+re-derive:
+
+- **Rings are small ovals, NOT pipe pairs. Dodging is safe**: passing
+  entirely above/below the ring's outer band scores nothing and kills
+  nothing. Run 17 dodged UNDER six rings at +34..+53px below centre and
+  lived; run 14 dodged over one at -34. The old sim scored any non-hole
+  crossing as a clip — that (not single-plane vs overlap) was why it
+  threaded 0 while reality threaded 9.
+- **Rim touch is lethal across the FULL x-overlap**, not just at the centre
+  plane. Run 16's death: at the centre-plane instant it was at y=45, safely
+  ABOVE the band — but it had been at hole_centre-15 early in the overlap
+  while rising, and died. Run 18 fell through the bottom rim mid-overlap.
+- **The passable hole is hole_centre ± 15px** (PASS_HALF): threads survived
+  to |off| 14; deaths measured at +15 (run 16), +18 (run 17, the final
+  bottom-rim clip at hc=73 the notes call "the green ring").
+- **Ring geometry**: outer band ~52px tall (DET_HALF 26), drawn width ~17px
+  (RING_HALF_W 8.5 — the old 12 was a wiki-sprite guess). Hole centres vary
+  47..120 in play-crop coords; spacing ~270px, occasionally a close pair
+  (~55px apart).
+- **The scroll speed RAMPS**: run 17 fits v(t) ≈ 63 + 0.87·t px/s (63 → 105
+  over 48s). The fitted `approach_speed` 78 is just the run median. Fixed
+  ~270px spacing means the crossing cadence accelerates 3.9s → 2.3s — any
+  fixed-period resonance drifts, and the controller's constant-speed belief
+  grows stale late in a run.
+- **Points ≠ threads (#52)**: run 17 threaded **9 rings for 12 points**
+  (e.g. 6 orange +1 and 3 green +2 — greens sit higher/smaller). Earlier
+  notes saying reality "threaded 12" conflated the two. Real thread counts
+  for the model-era runs 14/16/17/18: **2, 2, 9, 1**.
+
+### Actuation timing, measured (same traces)
+
+- **The in-game flap lands ~75ms after the fire decision** (fall-depth
+  during the post-fire blind window vs descent speed).
+- **`click()` + bookkeeping block the poll loop ~160ms per fired flap**
+  (every fired trace row is followed by a 144-185ms gap; genuine detector
+  dropouts are separate — 13% of polls, only 40-65ms).
+- The stall causes an **echo double-flap**: the loop wakes ~160ms later,
+  the (already-turned) avatar still reads below the floor bound, and the
+  rescue refires — live flaps come in pairs 160-215ms apart, and the second
+  flap lifts the apex ~13px above a single bob. Half of run 17's floor
+  rescues were echoes. Top-rim deaths (run 16) trace to over-lift.
+- The same mechanism killed launches: the coast rescue used to fire
+  ascent-blind, re-flapping the fresh launch (which starts 33-55px below
+  centre, deeper than the gb-6 coast floor) every rate-limit tick. Fixed:
+  `coast_rescue_due` requires measured descent (fly_vy > 0).
+
+### Sim status after recalibration
+
+`sim.py` now models: rim-lethal-in-overlap collision with safe dodges,
+measured geometry, the speed ramp, actuation latency, the post-fire stall,
+finite-difference vy for decisions, and (noisy mode, default for --replay)
+measured dropout/ring-visibility rates. `--replay` runs run 17's actual
+hoop stream; `--clean` is the deterministic mode.
+
+Acceptance vs reality: conditioned on surviving the first ring, sim thread
+totals average **1.7 — exactly matching** the real ring-1-threading runs
+(1, 2, 2). Unconditionally the sim is deadlier (median 0, max ~6 vs
+reality's lucky 9): the game's deterministic start sequence lands ring 1
+at a favourable phase 3/4 times, which a seed-phase sweep can't know, and
+the extraction's per-ring timing carries some error. The bias direction is
+safe — a policy that threads in-sim should thread live.
+
 ## The open problem: phase-locking (why threading isn't solved yet)
 
-`sim.py` runs this exact policy against the fitted dynamics and threads **0**:
-the launch only fires when the avatar *happens* to be at launch height during
+The launch only fires when the avatar *happens* to be at launch height during
 the timing window, which rarely coincides. The root cause is structural:
 
 > With a fixed-impulse flap, the bob **period is constant** (`P = 2·t_apex`,
@@ -161,9 +228,10 @@ lands. Don't expect an unbounded score.
 
 1. `catching --trace --save-frames` → `catching-fit-dynamics` (writes/refreshes
    `dynamics.json`); eyeball the fit against the trace.
-2. `catching-sim` to check a controller change threads in-model before a live
-   run (compare variants; absolute counts are indicative — the geometry consts
-   are estimates).
-3. `catching --model --trace` live; inspect the `where='model'` flaps and the
-   dense trace to see whether apexes land on crossings. Tune the phase-lock to
-   the live latency. Iterate on the trace, not single-pixel constant nudges.
+2. `catching-sim --replay` to check a controller change against run 17's
+   measured hoop stream (geometry + noise are calibrated, #62; the sim runs
+   slightly deadlier than reality, so in-sim gains are trustworthy).
+3. `catching --model --trace` live; then `catching-analyze-crossings` on the
+   new trace to see each crossing's offset/verdict and where deaths happened.
+   Tune the phase-lock to the live latency. Iterate on the trace, not
+   single-pixel constant nudges.
