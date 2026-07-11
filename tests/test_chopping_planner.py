@@ -179,9 +179,13 @@ def test_fat_margin_gold_still_beats_green():
     assert plan is not None and plan.zone_kind == "o"
 
 
-def test_all_negative_ev_returns_none():
-    # Only a razor-thin candidate available + a young round: skipping
-    # beats firing.
-    zones = parse_layout("r95 o18 r109")
-    assert plan_shot(zones, 40.0, 1.0, 650.0, BAR_W, red_sigmas=2.25,
-                     death_cost_pts=28.0) is None
+def test_lone_thin_candidate_still_fires():
+    # A lone rung-passing candidate fires regardless of EV: the layout
+    # is static between chops, so the alternative is the starve exit —
+    # which banks the same points a death would, with zero upside.
+    # (Run 14's chop 9: forced thin gold, no green anywhere.)
+    zones = parse_layout("r54 g112 r6 o40 r8")
+    lone = plan_shot(zones, 164.0, 1.0, 450.0, BAR_W - 2,
+                     earliest_impact_s=0.055, sigma_ms=12.0,
+                     red_sigmas=3.0, death_cost_pts=28.0)
+    assert lone is not None and lone.zone_kind == "o"

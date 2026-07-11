@@ -153,9 +153,16 @@ def plan_shot(
     to a fat-margin green (+1 at ~0) whenever the remaining round is
     worth more than ~12 points, which is exactly the trade that killed
     runs 12 and 13. death_cost_pts=0 (the default) reduces to the old
-    value-first ranking. When every candidate's EV is <= 0, returns
-    None — skipping is the better bet, and the caller's drought
-    ladder / starve exit still bound the wait.
+    value-first ranking.
+
+    EV REORDERS but never refuses: a lone rung-passing candidate fires
+    regardless of its EV. The layout is static between chops, so the
+    alternative to a lone candidate isn't "a better shot later" — it's
+    the starve exit, which banks the same points a death would (run 14's
+    chop 9: a forced 3.1-sigma gold with no green anywhere was the
+    round's only path forward; firing at ~7% death risk dominates
+    starving at 100% round-end). The hard sigma rungs remain the only
+    absolute refusal.
     """
     if v_max <= 0 or bar_w <= 0 or direction == 0:
         return None
@@ -249,8 +256,6 @@ def plan_shot(
                 # Rank by expected value (see docstring), then safety,
                 # then sooner.
                 ev = value - death_cost_pts * death_risk(sigmas)
-                if death_cost_pts > 0 and ev <= 0:
-                    continue
                 key = (ev, sigmas, -t_star)
                 if best is None or key > best_key:
                     best = Plan(target_x, t_star, z.kind, value, margin_ms, sweep)
