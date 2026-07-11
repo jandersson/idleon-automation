@@ -1,37 +1,42 @@
 """Subprocess machinery: start/stop bots and one-shot setup tools.
 
 Each bot/tool runs as `uv run --no-sync <entry-point>`; stdout is drained
-on a background thread into app.log_queue, which the app shell's poll loop
-renders. Functions take the Launcher app as their first argument and read
-its shared registries (processes, status_labels, setup_buttons,
-bot_option_vars).
+on a background thread into the app's event queue, which the shell's poll
+loop dispatches on the Tk thread (see app.Launcher.EVENTS). This module
+never touches widgets directly — it emits events; the tabs subscribe.
+
+Events emitted (all via app.emit, thread-safe):
+    log(text)                — one log line
+    bot_started(name)        — a tracked bot began
+    bot_exited(name, code)   — a tracked bot ended
+    tool_started(entry)      — a setup/observe tool began
+    tool_exited(entry)       — a setup/observe tool ended
 """
 import os
 import subprocess
 import sys
 import threading
 
-from ui.launcher import theme
 from ui.launcher.config import PROJECT_ROOT
+
+
+def running_bot(app) -> str | None:
+    """Name of the currently-running bot, or None. Bots are mutually
+    exclusive: they drive a single mouse/keyboard via pyautogui — two at
+    once produced cross-fired clicks and polluted DB rows (2026-05-24)."""
+    for name, proc in app.processes.items():
+        if proc is not None:
+            return name
+    return None
 
 
 def start_bot(app, mg: dict) -> None:
     name = mg["name"]
-    if app.processes.get(name) is not None:
-        app.enqueue_log(f"[{name}] already running\n")
-        return
-    # Mutual exclusion: bots drive a single mouse/keyboard via pyautogui.
-    # Running two at once produced (on 2026-05-24) darts throws getting
-    # fired mid-arm-swing by hoops's platform clicks, plus polluted DB
-    # rows in both bots. Refuse the launch and tell the user which bot
-    # is holding the slot so they can stop it first.
-    already_running = [n for n, p in app.processes.items() if p is not None]
-    if already_running:
-        holder = already_running[0]
-        app.enqueue_log(
-            f"[{name}] not started — {holder} is running. "
-            f"Stop {holder} first; only one bot at a time.\n"
-        )
+    holder = running_bot(app)
+    if holder is not None:
+        # The UI disables Start buttons while a bot runs, so this is a
+        # race backstop, not the primary guard.
+        app.emit("log", f"[{name}] not started — {holder} is running\n")
         return
     extra_env: dict[str, str] = {}
     for opt in mg.get("bot_options", []):
@@ -40,28 +45,29 @@ def start_bot(app, mg: dict) -> None:
             extra_env[opt["env"]] = var.get()
     if extra_env:
         kv = ", ".join(f"{k}={v}" for k, v in extra_env.items())
-        app.enqueue_log(f"[{name}] options: {kv}\n")
-    spawn(app, mg["bot"], track_as=name, extra_env=extra_env)
-    app.status_labels[name].config(text="running", foreground=theme.SUCCESS)
+        app.emit("log", f"[{name}] options: {kv}\n")
+    _spawn(app, mg["bot"], track_as=name, extra_env=extra_env)
 
 
 def stop_bot(app, mg: dict) -> None:
-    name = mg["name"]
-    proc = app.processes.get(name)
+    proc = app.processes.get(mg["name"])
     if proc is None:
         return
-    app.enqueue_log(f"[{name}] stopping...\n")
+    app.emit("log", f"[{mg['name']}] stopping...\n")
     _kill(proc)
+
+
+def run_oneshot(app, entry_point: str) -> None:
+    _spawn(app, entry_point, track_as=None)
 
 
 def stop_oneshot(app, entry_point: str) -> None:
     """Stop a running setup/observe tool (observe, capture, watch-wind have
-    no other GUI stop). The button restores itself when the process exits,
-    via the setup_done queue message."""
+    no other GUI stop control)."""
     proc = app.oneshot_procs.get(entry_point)
     if proc is None:
         return
-    app.enqueue_log(f"[{entry_point}] stopping...\n")
+    app.emit("log", f"[{entry_point}] stopping...\n")
     _kill(proc)
 
 
@@ -73,18 +79,13 @@ def _kill(proc: subprocess.Popen) -> None:
         proc.terminate()
 
 
-def run_oneshot(app, cmd: str) -> None:
-    spawn(app, cmd, track_as=None)
-
-
-def spawn(app, entry_point: str, track_as: str | None,
-          extra_env: dict[str, str] | None = None) -> None:
+def _spawn(app, entry_point: str, track_as: str | None,
+           extra_env: dict[str, str] | None = None) -> None:
     creationflags = 0
     if sys.platform == "win32":
         creationflags = subprocess.CREATE_NO_WINDOW
-    # PYTHONUNBUFFERED=1 so the bot's stdout flushes line-by-line
-    # rather than block-buffering — keeps the launcher log live
-    # instead of dumping everything at session end.
+    # PYTHONUNBUFFERED=1 so the bot's stdout flushes line-by-line rather
+    # than block-buffering — keeps the launcher log live.
     env = {**os.environ, "PYTHONUNBUFFERED": "1"}
     if extra_env:
         env.update(extra_env)
@@ -105,42 +106,29 @@ def spawn(app, entry_point: str, track_as: str | None,
             env=env,
         )
     except FileNotFoundError:
-        app.enqueue_log(f"[{entry_point}] could not run — is `uv` on your PATH?\n")
+        app.emit("log", f"[{entry_point}] could not run — is `uv` on your PATH?\n")
         return
     if track_as is not None:
         app.processes[track_as] = proc
-    if entry_point in app.setup_buttons:
-        # Setup tools are launched as one-shots (track_as=None), but some
-        # run until stopped (observe, capture, watch-wind). Turn the button
-        # into a Stop while it runs so there's a GUI control — without this
-        # there was no way to stop observe from the launcher. Quick tools
-        # (pickers) just exit and restore the button. setup_done restores it.
+        app.emit("bot_started", track_as)
+    else:
         app.oneshot_procs[entry_point] = proc
-        btn, label = app.setup_buttons[entry_point]
-        btn.config(state="normal", text=f"■ Stop {label}", style="Stop.TButton",
-                   command=lambda e=entry_point: stop_oneshot(app, e))
-    app.enqueue_log(f"[{entry_point}] started (pid {proc.pid})\n")
-    threading.Thread(target=drain, args=(app, entry_point, proc, track_as),
+        app.emit("tool_started", entry_point)
+    app.emit("log", f"[{entry_point}] started (pid {proc.pid})\n")
+    threading.Thread(target=_drain, args=(app, entry_point, proc, track_as),
                      daemon=True).start()
 
 
-def drain(app, entry_point: str, proc: subprocess.Popen, track_as: str | None) -> None:
+def _drain(app, entry_point: str, proc: subprocess.Popen,
+           track_as: str | None) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
-        app.log_queue.put(f"[{entry_point}] {line}")
+        app.emit("log", f"[{entry_point}] {line}")
     proc.wait()
-    app.log_queue.put(f"[{entry_point}] exited (code {proc.returncode})\n")
+    app.emit("log", f"[{entry_point}] exited (code {proc.returncode})\n")
     if track_as is not None:
-        app.log_queue.put(("status", track_as, "stopped", theme.MUTED))
         app.processes[track_as] = None
-        if track_as == "hoops":
-            # Hoops session just ended — fresh stats are in shots.db,
-            # and the in-game cooldown just got reset. We don't know
-            # the new cooldown's duration (it appears to escalate
-            # with consecutive plays via OLA[424]); rely on the
-            # save-mtime watcher to pick up the real value as soon
-            # as Idleon flushes.
-            app.log_queue.put(("refresh_hoops_stats",))
-            app.log_queue.put(("refresh_tries",))
-    if entry_point in app.setup_buttons:
-        app.log_queue.put(("setup_done", entry_point))
+        app.emit("bot_exited", track_as, proc.returncode)
+    else:
+        app.oneshot_procs[entry_point] = None
+        app.emit("tool_exited", entry_point)

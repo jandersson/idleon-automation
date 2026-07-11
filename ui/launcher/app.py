@@ -1,144 +1,254 @@
-"""The Launcher shell: the notebook, shared state, and the log poll loop.
+"""The Launcher shell: header bar, notebook, event bus, poll loop.
 
-The shell owns the cross-tab state (process registry, log queue, status
-labels, widget refs) and the single Tk poll loop that drains log_queue;
-each tab module builds its own widgets into the shell and reads/writes that
-state via the `app` reference passed to its build()/helpers.
+Architecture (2026-07-11 refactor):
+- The shell owns cross-tab state (process registry, persisted UI state)
+  and a single thread-safe EVENT BUS: background threads call app.emit
+  (queue put), the Tk poll loop dispatches to handlers registered with
+  app.on. This replaces the old magic-tuple queue protocol.
+- The header bar (title + tries/cooldown/reset readouts) is part of the
+  shell so it stays visible on every tab.
+- Each tab module builds its widgets into a notebook page via
+  build(parent, app); the Bots tab additionally registers event handlers
+  for bot/tool lifecycle events emitted by process.py.
 """
 import queue
 import subprocess
 import sys
+import time
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
 from PIL import ImageTk
 
-from ui.launcher import books_tab, bots_tab, cards_tab, frames_tab, process, setup_tab, sql_tab, stamps_tab, theme
+from common import tries_counter
+from common.hoops_cooldown_observer import (
+    record_observation as _record_hoops_cooldown_observation,
+    estimate_daily_reset,
+    next_daily_reset,
+)
+from common.idleon_save import read_minigame_plays_shared, read_hoops_cooldown
+from ui.launcher import (
+    books_tab, bots_tab, cards_tab, frames_tab, setup_tab,
+    sql_tab, stamps_tab, state, theme,
+)
 from ui.launcher.config import MINIGAMES
+
+TABS = [
+    ("🤖 Bots", bots_tab),
+    ("🔧 Setup", setup_tab),
+    ("🖼 Frames", frames_tab),
+    ("🗃 SQL", sql_tab),
+    ("📚 Books", books_tab),
+    ("🃏 Cards", cards_tab),
+    ("🪙 Stamps", stamps_tab),
+]
 
 
 class Launcher:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Idleon bot launcher")
-        self.root.geometry("980x720")
-        self.root.minsize(820, 560)
+        self.root.geometry("1000x760")
+        self.root.minsize(860, 580)
         theme.apply_theme(self.root)
 
-        self.processes: dict[str, subprocess.Popen | None] = {m["name"]: None for m in MINIGAMES}
-        self.status_labels: dict[str, ttk.Label] = {}
-        self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
-        # Running setup/observe tools, keyed by entry point, so the launcher
-        # can stop the long-running ones (observe, capture, watch-wind) —
-        # they have no other stop control in the GUI.
+        # --- cross-tab state ---
+        self.ui_state = state.load()
+        self.processes: dict[str, subprocess.Popen | None] = {
+            m["name"]: None for m in MINIGAMES}
         self.oneshot_procs: dict[str, subprocess.Popen | None] = {}
-        self.log_queue: queue.Queue = queue.Queue()
-        # Maps (minigame_name, env_var_name) -> Tk StringVar holding the
-        # currently-selected option value for that minigame's bot.
+        # (minigame_name, env_var) -> StringVar of the selected option.
         self.bot_option_vars: dict[tuple[str, str], tk.StringVar] = {}
-        # Hoops predictor comparison cards (Pokemon-style, one per kind).
-        # Map predictor_kind -> dict of widget refs for fast updating.
-        # Built in bots_tab when the hoops row is constructed.
+        # Registered setup-tool buttons: entry_point -> (Button, label).
+        self.setup_buttons: dict[str, tuple[ttk.Button, str]] = {}
+        # Hoops predictor cards (built by bots_tab when hoops row exists).
         self.predictor_cards: dict[str, dict] = {}
-        # Per-game digit-template status labels (template OCR coverage),
-        # keyed by minigame name. Updated on launcher open + after each
-        # template-refresh button click.
         self.template_status_labels: dict[str, ttk.Label] = {}
-        # Snapshot of the shared hoops cooldown anchored to the save
-        # mtime it came from: (save_mtime, cd_at_save_time). The display
-        # extrapolates remaining = cd - (now - save_mtime). Anchoring
-        # to save_mtime (not read time) keeps the math correct across
-        # save flushes and surfaces save-staleness as a separate signal.
+        # Hoops cooldown snapshot anchored to the save mtime it came from:
+        # (save_mtime, cd_at_save_time); display extrapolates from it.
         self.hoops_cooldown_snapshot: tuple[float, float] | None = None
-        # Estimated daily-reset time-of-day, derived from logged plays-drop
-        # boundaries (#22). dict {"hour","minute","samples","spread_min"}
-        # or None when there isn't enough data yet. Recomputed on launcher
-        # open + on manual Refresh; the per-second tick renders the live
-        # countdown from it.
+        # Estimated daily-reset time-of-day from logged plays-drop
+        # boundaries (#22); None until enough data.
         self.reset_estimate: dict | None = None
-        # Last-seen save file mtime, so the periodic display loop can
-        # re-pull when Idleon writes a fresh save (e.g. after a hoops
-        # session ends in-game and the cooldown jumps to its full value).
         self.last_save_mtime: float = 0.0
 
-        # Frames tab state — keep PhotoImage refs alive so Tk doesn't GC them.
+        # Frames tab state — PhotoImage refs must outlive Tk's GC.
         self.frame_images: list[ImageTk.PhotoImage] = []
-        # Maps listbox display name -> Path of the directory it represents.
         self.frame_dirs: dict[str, Path] = {}
+
+        # --- event bus ---
+        self._queue: queue.Queue = queue.Queue()
+        self._handlers: dict[str, list] = {}
+        self.on("log", lambda text: self._append_log(text))
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self._poll_log_queue()
+        self._poll_queue()
+        self._tick()
 
-    def _build_ui(self):
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True, padx=4, pady=4)
+    # ---- event bus -------------------------------------------------------
+    def emit(self, event: str, *args) -> None:
+        """Queue an event from any thread; dispatched on the Tk thread."""
+        self._queue.put((event, args))
 
-        bots_frame = ttk.Frame(nb)
-        setup_frame = ttk.Frame(nb)
-        frames_frame = ttk.Frame(nb)
-        sql_frame = ttk.Frame(nb)
-        books_frame = ttk.Frame(nb)
-        cards_frame = ttk.Frame(nb)
-        stamps_frame = ttk.Frame(nb)
-        nb.add(bots_frame, text="Bots")
-        nb.add(setup_frame, text="Setup")
-        nb.add(frames_frame, text="Frames")
-        nb.add(sql_frame, text="SQL")
-        nb.add(books_frame, text="Books")
-        nb.add(cards_frame, text="Cards")
-        nb.add(stamps_frame, text="Stamps")
+    def on(self, event: str, handler) -> None:
+        """Register a handler (called on the Tk thread with the emit args)."""
+        self._handlers.setdefault(event, []).append(handler)
 
-        bots_tab.build(bots_frame, self)
-        setup_tab.build(setup_frame, self)
-        frames_tab.build(frames_frame, self)
-        sql_tab.build(sql_frame, self)
-        books_tab.build(books_frame, self)
-        cards_tab.build(cards_frame, self)
-        stamps_tab.build(stamps_frame, self)
-
-    def enqueue_log(self, text: str):
-        self.log_queue.put(text)
-
-    def _poll_log_queue(self):
+    def _poll_queue(self) -> None:
         try:
             while True:
-                item = self.log_queue.get_nowait()
-                if isinstance(item, tuple) and item:
-                    if item[0] == "status":
-                        _, name, text, color = item
-                        if name in self.status_labels:
-                            self.status_labels[name].config(text=text, foreground=color)
-                    elif item[0] == "setup_done":
-                        _, entry_point = item
-                        self.oneshot_procs[entry_point] = None
-                        if entry_point in self.setup_buttons:
-                            btn, label = self.setup_buttons[entry_point]
-                            # Restore the launch button (it became a Stop
-                            # button while the tool ran — see process.spawn).
-                            btn.config(
-                                state="normal", text=label, style="TButton",
-                                command=lambda c=entry_point: process.run_oneshot(self, c),
-                            )
-                    elif item[0] == "refresh_hoops_stats":
-                        bots_tab.refresh_hoops_stats(self)
-                    elif item[0] == "refresh_tries":
-                        bots_tab.refresh_tries(self, silent=True)
-                else:
-                    self._append_log(str(item))
+                event, args = self._queue.get_nowait()
+                for handler in self._handlers.get(event, []):
+                    try:
+                        handler(*args)
+                    except Exception as e:  # a bad handler must not kill the loop
+                        self._append_log(f"[ui] {event} handler failed: {e!r}\n")
         except queue.Empty:
             pass
-        self.root.after(80, self._poll_log_queue)
+        self.root.after(80, self._poll_queue)
 
-    def _append_log(self, text: str):
-        self.log_text.config(state="normal")
-        self.log_text.insert("end", text)
-        self.log_text.see("end")
-        self.log_text.config(state="disabled")
+    # Back-compat shim for tabs that log directly.
+    def enqueue_log(self, text: str) -> None:
+        self.emit("log", text)
 
-    def _on_close(self):
-        for name, proc in list(self.processes.items()):
+    # ---- UI construction ---------------------------------------------------
+    def _build_ui(self) -> None:
+        self._build_header()
+        nb = ttk.Notebook(self.root)
+        nb.pack(fill="both", expand=True, padx=theme.PAD_S, pady=(0, theme.PAD_S))
+        for title, module in TABS:
+            page = ttk.Frame(nb)
+            nb.add(page, text=title)
+            module.build(page, self)
+
+    def _build_header(self) -> None:
+        """Top bar: wordmark + the account readouts (tries, hoops cooldown,
+        daily reset). Lives above the notebook so it's visible on every
+        tab — these numbers gate whether playing is even possible."""
+        bar = ttk.Frame(self.root, style="Header.TFrame", padding=(theme.PAD_L, theme.PAD))
+        bar.pack(fill="x")
+        ttk.Label(bar, text="🌳 Idleon Launcher",
+                  style="HeaderTitle.TLabel").pack(side="left")
+
+        def chip(caption: str) -> ttk.Label:
+            box = ttk.Frame(bar, style="Header.TFrame")
+            box.pack(side="right", padx=(theme.PAD_L, 0))
+            ttk.Label(box, text=caption, style="HeaderMuted.TLabel").pack(anchor="e")
+            value = ttk.Label(box, text="—", style="HeaderValue.TLabel")
+            value.pack(anchor="e")
+            return value
+
+        # Right-to-left packing: refresh button outermost, then chips.
+        ttk.Button(bar, text="⟳", width=3, style="Ghost.TButton",
+                   command=self.refresh_account).pack(side="right", padx=(theme.PAD_L, 0))
+        self.reset_label = chip("🔄 daily reset")
+        self.hoops_label = chip("🏀 cooldown 🚧")
+        self.tries_label = chip("🪓🪰⛏ tries")
+
+        self.refresh_account(silent=True)
+
+    # ---- account readouts (save-file derived) ------------------------------
+    def refresh_account(self, silent: bool = False) -> None:
+        """Re-read tries + hoops cooldown from the local Idleon save and
+        recompute the daily-reset estimate."""
+        cd = read_hoops_cooldown()
+        if cd is not None:
+            # Anchor to save mtime, not read time: cd reflects the cooldown
+            # at save time, so extrapolation stays exact across flushes.
+            anchor = _save_mtime() or time.time()
+            self.hoops_cooldown_snapshot = (anchor, cd)
+            try:
+                # Feeds the cooldown-formula work (#22); gitignored output.
+                _record_hoops_cooldown_observation()
+            except Exception as e:
+                if not silent:
+                    self.emit("log", f"[cooldown-obs] skipped: {e}\n")
+        plays = read_minigame_plays_shared()
+        if plays is None:
+            self.tries_label.config(text="?")
+            if not silent:
+                self.emit("log", "[tries] couldn't read save (Idleon not "
+                                 "installed, or plyvel missing)\n")
+        else:
+            self.tries_label.config(text=str(plays))
+            tries_counter.write(plays)  # persist for external consumers
+            if not silent:
+                self.emit("log", f"[tries] refreshed: {plays}\n")
+        try:
+            self.reset_estimate = estimate_daily_reset()
+        except Exception as e:
+            self.reset_estimate = None
+            if not silent:
+                self.emit("log", f"[reset-est] skipped: {e}\n")
+
+    def _tick(self) -> None:
+        """1 Hz UI tick: live hoops-cooldown countdown, reset countdown,
+        save-flush detection, and per-bot runtime timers (via event)."""
+        mtime = _save_mtime()
+        if mtime > self.last_save_mtime:
+            self.last_save_mtime = mtime
+            self.refresh_account(silent=True)
+        self._render_hoops_label()
+        self._render_reset_label()
+        self.emit("tick")
+        self.root.after(1000, self._tick)
+
+    def _render_hoops_label(self) -> None:
+        snap = self.hoops_cooldown_snapshot
+        if snap is None:
+            self.hoops_label.config(text="—")
+            return
+        save_at, stored_cd = snap
+        now = time.time()
+        remaining = stored_cd - (now - save_at)
+        save_age = now - save_at
+        stale = save_age > 30
+        if remaining <= 0:
+            # Don't claim "ready" off a stale snapshot — the user may have
+            # played since the last flush (verified misleading 2026-05-10).
+            text = "?" if stale else "ready"
+        else:
+            m, s = divmod(int(remaining) + 1, 60)
+            text = f"{m}:{s:02d}"
+        if stale:
+            am, asec = divmod(int(save_age), 60)
+            text += f" ({am}m old)" if am else f" ({asec}s old)"
+        self.hoops_label.config(text=text)
+
+    def _render_reset_label(self) -> None:
+        est = self.reset_estimate
+        nxt = next_daily_reset(est)
+        if nxt is None:
+            self.reset_label.config(text="?")
+            return
+        rem = max(0, int((nxt - datetime.now()).total_seconds()))
+        h, r = divmod(rem, 3600)
+        countdown = f"{h}h{r // 60:02d}m" if h else f"{r // 60}m"
+        rough = "?" if est.get("samples", 0) < 2 or est.get("spread_min", 0.0) > 20.0 else ""
+        self.reset_label.config(text=f"~{est['hour']:02d}:{est['minute']:02d}{rough} · {countdown}")
+
+    # ---- log pane (widget owned by bots_tab; writer lives here) ------------
+    def _append_log(self, text: str) -> None:
+        widget = getattr(self, "log_text", None)
+        if widget is None:
+            return
+        widget.config(state="normal")
+        # Per-source coloring: lines look like "[source] ...".
+        tag = None
+        if text.startswith("["):
+            source = text[1:text.find("]")] if "]" in text else ""
+            tag = bots_tab.log_tag_for(self, source)
+        widget.insert("end", text, tag)
+        if getattr(self, "log_autoscroll", None) is None or self.log_autoscroll.get():
+            widget.see("end")
+        widget.config(state="disabled")
+
+    # ---- lifecycle ---------------------------------------------------------
+    def _on_close(self) -> None:
+        for proc in list(self.processes.values()) + list(self.oneshot_procs.values()):
             if proc is None:
                 continue
             if sys.platform == "win32":
@@ -148,8 +258,21 @@ class Launcher:
                 proc.terminate()
         self.root.destroy()
 
-    def run(self):
+    def run(self) -> None:
         self.root.mainloop()
+
+
+def _save_mtime() -> float:
+    """Newest mtime among the Idleon LevelDB save files, 0 if unreachable."""
+    import glob
+    import os
+    save_dir = os.path.expandvars(r"%APPDATA%\legends-of-idleon\Local Storage\leveldb")
+    try:
+        files = (glob.glob(os.path.join(save_dir, "*.log"))
+                 + glob.glob(os.path.join(save_dir, "*.ldb")))
+        return max((os.path.getmtime(p) for p in files), default=0.0)
+    except OSError:
+        return 0.0
 
 
 def run():
