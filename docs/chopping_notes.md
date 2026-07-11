@@ -33,10 +33,24 @@ confidence noted since none of this is from the game's code.
   experiment stays available via BOUNCE_EXPERIMENT_EVERY_N (set 0 to
   disable now that it's answered). Corollary intact: waiting is free,
   deaths are the only cost.
-- **Therefore waiting is FREE.** A skipped fire window costs
-  wall-clock, not points or difficulty. Deaths are the only real cost
-  in this game. The front-loading doctrine ("time not scoring is
-  actively harmful") is WRONG and is hereby retracted.
+- **Therefore waiting is FREE** — *within the tested envelope of
+  ≤45s.* A skipped fire window costs wall-clock, not points or
+  difficulty. Deaths are the only real cost in this game. The
+  front-loading doctrine ("time not scoring is actively harmful") is
+  WRONG and is hereby retracted.
+  **BOUNDED 2026-07-11: waiting is NOT free at minute scales.** A
+  round left open ~15 minutes idled at a normal ~211 px/s the whole
+  time, then the FIRST chop jumped the leaf to median 1684 / p90 2511
+  px/s (~8-12x, unplayable). The ramp has a TIME-accumulated
+  component that is applied at chop events — invisible during the
+  wait (which is why the 12-45s pause experiments showed flat speeds)
+  and cashed in on the next chop. The original per-chop attribution
+  was partly confounded (chops ∝ time at normal cadence); the ~600-650
+  px/s "saturation" was just the value reached within normal round
+  lengths. Two calibration points: +42s gap → +34 px/s (02:10
+  session, chop 30); +~15 min → +~1500 px/s. Operational rule: START
+  THE BOT FIRST, then open the round (the bot waits for the bar), so
+  no idle time ever accumulates.
 - **No inactivity timeout** at least up to 45s (the longest drought —
   the round did not end). The 97s round ended only by the bot's own
   marginal fire.
