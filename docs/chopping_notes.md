@@ -160,12 +160,25 @@ confidence noted since none of this is from the game's code.
    (`planner.py`): pick the time-domain center of an upcoming zone
    crossing, schedule the click for impact minus CLICK_LATENCY_S
    (40ms), re-plan every poll, spin-wait to the instant, fire.
-   Impacts must clear 3σ (σ=16ms) from every red boundary and 1σ
-   inside their own zone. Replay over run 5's polls: feasible plans
-   on 37% of the starve-tail polls where the gate found nothing
-   (median margin 62ms). Also fires from any leaf position and lands
-   mid-zone (absorbs the #110 hit-point offset). The gate survives as
-   CHOPPING_AIM=gate.
+   Impacts must clear a required number of sigmas from every red
+   boundary and 1σ inside their own zone. Replay over run 5's polls:
+   feasible plans on 37% of the starve-tail polls where the gate
+   found nothing (median margin 62ms). Also fires from any leaf
+   position and lands mid-zone (absorbs the #110 hit-point offset).
+   The gate survives as CHOPPING_AIM=gate.
+   CROSS-SWEEP (2026-07-07): the planner also targets zone crossings
+   on the pass AFTER the upcoming bounce (every zone yields a sweep-0
+   and a sweep-1 candidate; turnaround red pockets are crossed twice
+   and both crossing times bound the margins). Error model, all
+   measured: base σ 12ms (run-6 mid-bar fire residuals) × 1/sin(θ)
+   at the target (edge fires ran +40ms) + 5% of the horizon (V_max
+   drift); required sigmas ladder 3.0/2.5/2.25 by drought time (EV:
+   skipping a 3σ gold costs more expected points than the ~0.1%
+   death it avoids — and mid-drought, deaths bank anyway). Impact
+   placement scans fractions of the crossing, not just the center,
+   so a one-sided red buys margin by shifting away. chops.plan_sweep
+   counts how often through-bounce fires happen. CLICK_LATENCY_S is
+   55ms since run 6's post-mortem.
 4. Edge bounces can't be prevented (leaf motion is autonomous), so
    "avoid the sides" translates for a bot into: score as much as
    possible per unit time early, and bank yellow slowdowns.
