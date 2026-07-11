@@ -68,6 +68,22 @@ class Plan:
     sweep: int = 0       # 0 = current sweep, 1 = after the next bounce
 
 
+# Empirical death-risk curve (2026-07-11, calibrated on the three runs
+# using the current sigma model: 87 planned fires, 2 deaths — BOTH at
+# floor margins, 3.05 and 2.54 sigmas; 2/30 below 3.5 sigmas = 6.7%,
+# 0/57 above). The real tail is ~50x fatter than Gaussian at the floor
+# (model breakdowns, not sampling noise), so risk is priced from this
+# fit rather than normal tables: P(death | k sigmas) = exp(A - B*k),
+# anchored at P(3)=0.08 and P(5)=0.005, capped at 0.5.
+RISK_A = 1.63
+RISK_B = 1.39
+
+
+def death_risk(sigmas: float) -> float:
+    """Empirical per-shot death probability at a margin of `sigmas`."""
+    return min(0.5, math.exp(RISK_A - RISK_B * sigmas))
+
+
 # Horizon-proportional error term (2026-07-07, cross-sweep planning):
 # a fractional V_max mis-estimate shifts arrival by that fraction of
 # the whole horizon, so distant impacts carry proportionally more
@@ -108,6 +124,7 @@ def plan_shot(
     red_sigmas: float = 3.0,
     max_horizon_s: float = 2.5,
     horizon_err_frac: float = HORIZON_ERR_FRAC,
+    death_cost_pts: float = 0.0,
 ) -> Plan | None:
     """Pick the best planned impact on the current sweep OR the next
     one (through the upcoming bounce), or None.
@@ -127,10 +144,18 @@ def plan_shot(
 
     sigma_local = sigma_ms * _sigma_scale(target) + horizon_err_frac *
     horizon: edge impacts and distant impacts both demand more margin
-    (see the constants' comments). Feasible candidates rank by
-    (value, margin-in-sigmas): gold beats green; among equals the
-    statistically safest impact wins — which inherently prefers the
-    near sweep at equal geometry.
+    (see the constants' comments).
+
+    Ranking (2026-07-11, the floor-margin gold-vs-green pass): feasible
+    candidates rank by EXPECTED VALUE — value minus death_cost_pts *
+    death_risk(sigmas) — then by sigmas, then sooner. With the
+    calibrated risk curve a floor-margin gold (+2 at ~8% death) loses
+    to a fat-margin green (+1 at ~0) whenever the remaining round is
+    worth more than ~12 points, which is exactly the trade that killed
+    runs 12 and 13. death_cost_pts=0 (the default) reduces to the old
+    value-first ranking. When every candidate's EV is <= 0, returns
+    None — skipping is the better bet, and the caller's drought
+    ladder / starve exit still bound the wait.
     """
     if v_max <= 0 or bar_w <= 0 or direction == 0:
         return None
@@ -221,8 +246,12 @@ def plan_shot(
                 if sigmas < red_sigmas:
                     continue
                 margin_ms = margin_s * 1000 if margin_s != math.inf else 10.0**6
-                # Rank: value, then statistical safety, then sooner.
-                key = (value, sigmas, -t_star)
+                # Rank by expected value (see docstring), then safety,
+                # then sooner.
+                ev = value - death_cost_pts * death_risk(sigmas)
+                if death_cost_pts > 0 and ev <= 0:
+                    continue
+                key = (ev, sigmas, -t_star)
                 if best is None or key > best_key:
                     best = Plan(target_x, t_star, z.kind, value, margin_ms, sweep)
                     best_key = key

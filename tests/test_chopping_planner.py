@@ -146,3 +146,42 @@ def test_mid_bar_green_is_planned_with_ample_margin():
     assert plan is not None
     assert 45 < plan.target_x < 140  # inside the green, ahead of the leaf
     assert plan.margin_ms > 100
+
+
+# --- EV ranking (floor-margin gold-vs-green, 2026-07-11) ---
+
+def test_death_risk_matches_calibration_anchors():
+    from minigames.chopping.planner import death_risk
+    assert abs(death_risk(3.0) - 0.08) < 0.015
+    assert death_risk(5.0) < 0.01
+    assert death_risk(2.0) <= 0.5  # capped
+
+
+def test_floor_margin_gold_loses_to_fat_green_when_round_is_young():
+    # Gold squeezed near red (thin margins) vs a wide-open green: with
+    # a young round's death cost, EV must pick the green — the exact
+    # trade that killed runs 12 and 13.
+    zones = parse_layout("n10 g80 n30 r12 o22 r12 n56")
+    risky = plan_shot(zones, 15.0, 1.0, 500.0, BAR_W, death_cost_pts=25.0)
+    assert risky is not None
+    assert risky.zone_kind == "g"
+    # Same geometry with no death cost: value-first takes the gold if
+    # it clears the hard rung at all.
+    legacy = plan_shot(zones, 15.0, 1.0, 500.0, BAR_W, death_cost_pts=0.0)
+    if legacy is not None and legacy.zone_kind == "o":
+        assert legacy.margin_ms < risky.margin_ms
+
+
+def test_fat_margin_gold_still_beats_green():
+    # Gold with generous clearance keeps winning under EV ranking.
+    zones = parse_layout("n10 g60 n30 o40 n42 r40")
+    plan = plan_shot(zones, 5.0, 1.0, 350.0, BAR_W, death_cost_pts=25.0)
+    assert plan is not None and plan.zone_kind == "o"
+
+
+def test_all_negative_ev_returns_none():
+    # Only a razor-thin candidate available + a young round: skipping
+    # beats firing.
+    zones = parse_layout("r95 o18 r109")
+    assert plan_shot(zones, 40.0, 1.0, 650.0, BAR_W, red_sigmas=2.25,
+                     death_cost_pts=28.0) is None

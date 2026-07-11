@@ -95,6 +95,19 @@ PLAN_SIGMA_MS = 12.0
 PLAN_RED_SIGMAS_FRESH = 3.0      # drought < 15s
 PLAN_RED_SIGMAS_DROUGHT = 2.5    # 15-30s without a fire
 PLAN_RED_SIGMAS_STARVING = 2.25  # 30s+ (starve exit at 60s anyway)
+
+# Death cost for the planner's EV ranking (planner.death_risk): the
+# remaining round's expected points, decaying with round age (the time
+# ramp shortens what's left) and with drought (a starving round is
+# nearly over regardless — deaths bank, so risk gets cheap). Runs
+# 12-13 both died taking a floor-margin gold (+1 over a green) while
+# ~10+ points of round remained — this prices that trade instead of
+# letting value-first ranking take it blindly. Floor of 3: a death is
+# never entirely free (it forfeits the drought's tail chance).
+DEATH_COST_BASE = 28.0
+DEATH_COST_PER_AGE_S = 0.3
+DEATH_COST_PER_DROUGHT_S = 0.4
+DEATH_COST_MIN = 3.0
 # Commit to a shot (stop re-planning, spin-wait, fire) when the
 # scheduled click is at most this far away. One loop iteration is
 # ~15-25ms, so the final plan uses a sample at most ~one frame old.
@@ -835,12 +848,19 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 red_sigmas = (PLAN_RED_SIGMAS_FRESH if drought_s < 15.0
                               else PLAN_RED_SIGMAS_DROUGHT if drought_s < 30.0
                               else PLAN_RED_SIGMAS_STARVING)
+                death_cost = max(
+                    DEATH_COST_MIN,
+                    DEATH_COST_BASE
+                    - DEATH_COST_PER_AGE_S * (now - session_start_t)
+                    - DEATH_COST_PER_DROUGHT_S * drought_s,
+                )
                 plan = plan_shot(
                     parse_layout(layout), float(pointer_x),
                     1.0 if leaf_vx > 0 else -1.0,
                     max(v_max_p, abs(leaf_vx)), bar_frame.shape[1],
                     earliest_impact_s=CLICK_LATENCY_S,
                     sigma_ms=PLAN_SIGMA_MS, red_sigmas=red_sigmas,
+                    death_cost_pts=death_cost,
                 )
             if plan is not None:
                 saw_sweep1 = saw_sweep1 or plan.sweep == 1
