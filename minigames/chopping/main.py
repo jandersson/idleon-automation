@@ -25,7 +25,9 @@ from minigames.chopping.planner import parse_layout, plan_shot
 from minigames.chopping.detector import (
     analyze_bar,
     bar_pixel_count,
+    derive_overlay_regions,
     eased_time_to_red_ms,
+    find_bar_rect,
     gold_distance_ahead,
     gold_window_ms,
     infer_vmax,
@@ -97,6 +99,21 @@ PLAN_RED_SIGMAS_STARVING = 2.25  # 30s+ (starve exit at 60s anyway)
 # ~15-25ms, so the final plan uses a sample at most ~one frame old.
 PLAN_COMMIT_S = 0.08
 
+# Overlay auto-location (2026-07-11): the minigame overlay anchors
+# above the PLAYER, so its position changes per environment — a new-map
+# run pointed the picked regions.json rectangles at scenery and the bot
+# exited on 'bar dead' in 4 seconds. By default the bot now finds the
+# bar visually at startup (detector.find_bar_rect — a wide thin band
+# where zone green and red coexist) and derives the leaf/button/score
+# regions from it (detector.derive_overlay_regions, offsets calibrated
+# from the original hand-picked regions and verified on a second
+# environment). Until the bar appears the bot WAITS (retrying ~1/s)
+# instead of exiting — so it can be started before the round is opened.
+# Set CHOPPING_AUTOREGIONS=off to use regions.json as before.
+AUTO_REGIONS = os.environ.get(
+    "CHOPPING_AUTOREGIONS", "on").strip().lower() not in ("0", "off", "false", "no")
+AUTO_LOCATE_EVERY_S = 1.0
+
 # Post-chop fire hold. A successful chop re-rolls the zone layout
 # within 86-201ms (observed, 00:46 session) — that re-roll is the
 # in-game ack the chop registered. But the re-roll is NOT the end of
@@ -159,17 +176,17 @@ PTS_POLL_EVERY_S = 0.25
 
 
 def _read_pts(
-    win_left: int, win_top: int, win_w: int, win_h: int,
+    win_left: int, win_top: int, region: dict | None,
 ) -> tuple[int | None, np.ndarray | None]:
-    """Read the live PTS counter (region "score" in regions.json, picked
-    via chopping-pick-score-region) via digit-template matching.
+    """Read the live PTS counter via digit-template matching. `region`
+    is window-relative (auto-derived from the bar, or regions.json when
+    CHOPPING_AUTOREGIONS=off).
 
-    Returns (pts, crop): pts is None when the region is unpicked or any
-    digit lacks a template yet (see SCORE_TEMPLATES_DIR); crop is the
-    raw BGRA frame so callers can persist it — the bootstrap source for
-    missing digits (mining's digit_capture pattern).
+    Returns (pts, crop): pts is None when the region is unavailable or
+    any digit lacks a template yet (see SCORE_TEMPLATES_DIR); crop is
+    the raw BGRA frame so callers can persist it — the bootstrap source
+    for missing digits (mining's digit_capture pattern).
     """
-    region = get_region(_HERE, "score", win_w, win_h)
     if region is None:
         return None, None
     frame = grab_region(
@@ -438,6 +455,11 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
 
     last_click: tuple[int, str] | None = None
     stagnation_count = 0
+    # Overlay auto-location state (see AUTO_REGIONS).
+    auto_regions: dict | None = None
+    auto_win_size: tuple[int, int] | None = None
+    last_locate_t = 0.0
+    locate_waiting_printed = False
     last_poll_log = 0.0
     last_db_commit = 0.0
     bar_dead_since: float | None = None  # wall-clock t when bar first looked dead
@@ -493,13 +515,42 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
             time.sleep(1)
             continue
 
-        bar_region = get_region(_HERE, "bar", win_w, win_h)
-        leaf_region = get_region(_HERE, "leaf", win_w, win_h)
-        button_region = get_region(_HERE, "button", win_w, win_h)
-        if bar_region is None or button_region is None:
-            print("Missing region(s) in regions.json. Run chopping-pick-bar-region and chopping-pick-button-region first.")
-            time.sleep(2)
-            continue
+        if AUTO_REGIONS:
+            # Locate the overlay visually (see AUTO_REGIONS). Retry ~1/s
+            # until the bar shows up — the round may not be open yet.
+            if auto_regions is None or auto_win_size != (win_w, win_h):
+                t_now = time.time()
+                if t_now - last_locate_t < AUTO_LOCATE_EVERY_S:
+                    time.sleep(0.05)
+                    continue
+                last_locate_t = t_now
+                full = grab_region(win_left, win_top, win_w, win_h)
+                rect = find_bar_rect(full)
+                if rect is None:
+                    auto_regions = None
+                    if not locate_waiting_printed:
+                        locate_waiting_printed = True
+                        print("Waiting for the minigame bar to appear "
+                              "(open the chopping round in-game)...")
+                    continue
+                auto_regions = derive_overlay_regions(rect)
+                auto_win_size = (win_w, win_h)
+                locate_waiting_printed = False
+                print(f"Overlay located: bar at {rect} "
+                      f"(regions derived; regions.json not used)")
+            bar_region = auto_regions["bar"]
+            leaf_region = auto_regions["leaf"]
+            button_region = auto_regions["button"]
+            score_region = auto_regions["score"]
+        else:
+            bar_region = get_region(_HERE, "bar", win_w, win_h)
+            leaf_region = get_region(_HERE, "leaf", win_w, win_h)
+            button_region = get_region(_HERE, "button", win_w, win_h)
+            score_region = get_region(_HERE, "score", win_w, win_h)
+            if bar_region is None or button_region is None:
+                print("Missing region(s) in regions.json. Run chopping-pick-bar-region and chopping-pick-button-region first.")
+                time.sleep(2)
+                continue
 
         bar_frame = grab_region(
             win_left + bar_region["left"],
@@ -616,7 +667,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 pending = None
             print(f"No safe fire window for {STARVE_EXIT_S:.0f}s — round has hit "
                   f"its ceiling, stopping to bank the tokens.")
-            final_pts = _read_pts(win_left, win_top, win_w, win_h)[0] or last_pts
+            final_pts = _read_pts(win_left, win_top, score_region)[0] or last_pts
             stats["summary_printed"] = True
             print(f"Session result: {chop_idx} clicks, {registered_chops} registered "
                   f"by the game, ~{estimated_points} points expected, "
@@ -637,7 +688,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
         if (chop_idx > 0 and not hold_pts_read
                 and now - fire_hold_click_t >= PTS_READ_AFTER_S):
             hold_pts_read = True
-            pts, score_crop = _read_pts(win_left, win_top, win_w, win_h)
+            pts, score_crop = _read_pts(win_left, win_top, score_region)
             if frames_dir is not None and score_crop is not None:
                 save_frame(frames_dir / f"score_t{int((now - session_start_t) * 1000):07d}_r{pts}.png",
                            score_crop)
@@ -673,7 +724,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                      or pointer_x is None
                      or zone not in ("green", "gold"))):
             last_pts_sample_t = now
-            pts_sample, score_crop = _read_pts(win_left, win_top, win_w, win_h)
+            pts_sample, score_crop = _read_pts(win_left, win_top, score_region)
             if frames_dir is not None and score_crop is not None:
                 if pts_sample is not None and pts_sample != last_pts_sample_val:
                     save_frame(frames_dir / f"pollscore_t{int((now - session_start_t) * 1000):07d}_r{pts_sample}.png",

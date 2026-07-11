@@ -280,3 +280,67 @@ def test_gold_window_ms_slower_leaf_prices_higher():
     slow = gold_window_ms(bar, v_max=250.0)
     fast = gold_window_ms(bar, v_max=700.0)
     assert slow > fast
+
+
+# --- overlay auto-location (find_bar_rect / derive_overlay_regions) ---
+
+def _window_with_bar(bar=(300, 200, 220, 14), caps=True):
+    """Synthetic 960x572 BGRA window: the minigame bar (red|green|red)
+    plus the usual color noise — a green-only XP bar, a red-only HP
+    bar, a small green button blob right of the bar."""
+    win = np.zeros((572, 960, 4), dtype=np.uint8)
+    win[..., 3] = 255
+    x, y, w, h = bar
+    win[y:y+h, x:x+50, 2] = 255                      # red left
+    win[y:y+h, x+50:x+170, 1] = 255                  # green middle
+    win[y:y+h, x+170:x+w, 2] = 255                   # red right
+    if caps:  # decorative green end caps 2px off the playfield
+        win[y-2:y+h+2, x-9:x-3, 1] = 200
+        win[y-2:y+h+2, x+w+3:x+w+9, 1] = 200
+    win[540:548, 100:420, 1] = 255                   # XP bar: green only
+    win[515:524, 100:400, 2] = 255                   # HP bar: red only
+    win[y:y+22, x+w+14:x+w+58, 1] = 220              # Chop button blob
+    return win
+
+
+def test_find_bar_rect_locates_the_playfield_not_the_caps():
+    from minigames.chopping.detector import find_bar_rect
+    win = _window_with_bar()
+    rect = find_bar_rect(win)
+    assert rect is not None
+    left, top, w, h = rect
+    assert abs(left - 300) <= 1 and abs(top - 200) <= 2
+    assert abs(w - 220) <= 2 and 10 <= h <= 20
+
+
+def test_find_bar_rect_ignores_single_color_bars():
+    from minigames.chopping.detector import find_bar_rect
+    win = _window_with_bar()
+    # Remove the real bar: only XP/HP/button noise remains.
+    win[198:216, 280:540] = 0
+    win[..., 3] = 255
+    assert find_bar_rect(win) is None
+
+
+def test_derive_overlay_regions_offsets():
+    from minigames.chopping.detector import derive_overlay_regions
+    regs = derive_overlay_regions((300, 200, 222, 18))
+    assert regs["bar"] == {"left": 300, "top": 200, "width": 222, "height": 18}
+    assert regs["leaf"]["top"] == 200 - regs["leaf"]["height"]
+    assert regs["leaf"]["left"] == 300 and regs["leaf"]["width"] == 222
+    assert regs["button"]["left"] == 300 + 234   # bar right + 12
+    assert regs["score"]["top"] == 200 + 18 + 1
+    assert regs["score"]["left"] == 298
+
+
+def test_leaf_left_edge_prefers_the_widest_run():
+    from minigames.chopping.detector import _leaf_left_edge
+    mask = np.zeros((20, 100), dtype=np.uint8)
+    mask[5:8, 2:4] = 255      # narrow intruder (an end cap's spill)
+    mask[3:18, 60:71] = 255   # the leaf body
+    assert _leaf_left_edge(mask) == 60
+
+
+def test_leaf_left_edge_none_on_empty():
+    from minigames.chopping.detector import _leaf_left_edge
+    assert _leaf_left_edge(np.zeros((20, 100), dtype=np.uint8)) is None

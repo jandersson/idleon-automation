@@ -50,6 +50,17 @@ MINIGAMES = [
                 "values": ["plan", "gate"],
                 "default": "plan",
             },
+            {
+                # Find the overlay visually each session (the bar
+                # anchors above the player, so its position changes
+                # per environment; regions.json only fits the map it
+                # was picked in). 'off' = legacy regions.json. Sets
+                # CHOPPING_AUTOREGIONS.
+                "label": "Auto regions",
+                "env": "CHOPPING_AUTOREGIONS",
+                "values": ["on", "off"],
+                "default": "on",
+            },
         ],
     },
     {

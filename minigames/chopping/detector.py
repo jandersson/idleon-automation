@@ -48,6 +48,28 @@ def _leftmost_column(mask: np.ndarray, min_pixels_per_col: int = 2) -> int | Non
     return int(qualifying[0])
 
 
+def _leaf_left_edge(mask: np.ndarray, min_pixels_per_col: int = 2) -> int | None:
+    """Left edge of the WIDEST qualifying column run — the leaf body.
+
+    The absolute leftmost qualifying column (the old rule) breaks when
+    anything else leaf-green intrudes on the strip: in the 2026-07-11
+    environment the bar's green end cap poked a few 1-2px columns into
+    the strip's left edge and pinned the 'leaf' at x=4 while the real
+    ~10px-wide sprite sat at x=75. The widest run is the sprite; its
+    left edge is the hitbox as before. Gaps of 1px bridge sprite
+    outlines."""
+    cols = (mask > 0).sum(axis=0)
+    qualifying = np.where(cols >= min_pixels_per_col)[0]
+    if len(qualifying) == 0:
+        return None
+    splits = np.where(np.diff(qualifying) > 2)[0]
+    starts = [0, *(splits + 1)]
+    ends = [*splits, len(qualifying) - 1]
+    widths = [qualifying[e] - qualifying[s] for s, e in zip(starts, ends)]
+    k = int(np.argmax(widths))
+    return int(qualifying[starts[k]])
+
+
 def _red_columns(bar_frame: np.ndarray) -> np.ndarray:
     bar_bgr = cv2.cvtColor(bar_frame, cv2.COLOR_BGRA2BGR)
     bar_hsv = cv2.cvtColor(bar_bgr, cv2.COLOR_BGR2HSV)
@@ -288,7 +310,7 @@ def analyze_bar(bar_frame: np.ndarray, leaf_frame: np.ndarray | None = None) -> 
         leaf_source_hsv = cv2.cvtColor(leaf_bgr, cv2.COLOR_BGR2HSV)
 
     leaf_mask = _mask(leaf_source_hsv, *LEAF_HSV)
-    leaf_x = _leftmost_column(leaf_mask)
+    leaf_x = _leaf_left_edge(leaf_mask)
     if leaf_x is None:
         return None, "none"
 
@@ -359,6 +381,135 @@ def find_game_over(
         return False, 0.0
     _, val, _scale = match_multiscale_center(bgr, template)
     return val >= threshold, val
+
+
+# ---- Overlay auto-location (2026-07-11) -----------------------------
+# The minigame overlay is anchored above the PLAYER, so its screen
+# position changes per environment (a new-map run pointed the picked
+# regions at scenery and the bot exited on 'bar dead' in 4s). Same
+# lesson as the Play button in CLAUDE.md: in-world UI needs visual
+# detection, not coordinate caching. The bar is the most findable
+# object on screen — a wide, thin horizontal band where zone green and
+# red coexist — and every other region hangs off it at fixed offsets
+# (measured from the hand-picked regions.json of the original
+# environment, expressed in bar-width units so they scale).
+
+# Band acceptance thresholds, as fractions of the window width where
+# noted. The bar is ~23% of the window wide; green-only bars (XP), the
+# red-only HP bar, portals, buttons and sprites all fail the
+# both-colors + width + aspect tests.
+BAR_MIN_WIDTH_FRAC = 0.12
+BAR_MAX_WIDTH_FRAC = 0.40
+BAR_MIN_H, BAR_MAX_H = 5, 40
+BAR_MIN_FILL = 0.75          # colored cols / span inside the band
+BAR_MIN_GREEN_FRAC = 0.15    # of the span
+BAR_MIN_RED_FRAC = 0.03
+
+
+def find_bar_rect(window_frame: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Locate the minigame bar in a full-window BGRA frame.
+
+    Returns (left, top, width, height) window-relative, or None when no
+    band matches. Signature: a horizontal band of rows dense in zone
+    colors, wide-but-thin, whose columns are mostly contiguous and
+    contain BOTH green and red (gold counts as green for fill).
+    """
+    bgr = cv2.cvtColor(window_frame, cv2.COLOR_BGRA2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    green = _mask(hsv, *GREEN_HSV)
+    gold = _mask(hsv, *GOLD_HSV)
+    red = cv2.bitwise_or(_mask(hsv, *RED_HSV_LOW), _mask(hsv, *RED_HSV_HIGH))
+    combined = cv2.bitwise_or(cv2.bitwise_or(green, gold), red)
+
+    win_h, win_w = combined.shape
+    min_w = int(BAR_MIN_WIDTH_FRAC * win_w)
+    row_counts = (combined > 0).sum(axis=1)
+    dense = row_counts >= min_w
+
+    best: tuple[int, int, int, int] | None = None
+    best_span = 0
+    y = 0
+    while y < win_h:
+        if not dense[y]:
+            y += 1
+            continue
+        y0 = y
+        while y < win_h and dense[y]:
+            y += 1
+        y1 = y  # [y0, y1) is a candidate band
+        band_h = y1 - y0
+        if not (BAR_MIN_H <= band_h <= BAR_MAX_H):
+            continue
+        band = combined[y0:y1]
+        cols = np.where((band > 0).any(axis=0))[0]
+        if len(cols) == 0:
+            continue
+        # Evaluate contiguous column RUNS (gaps <= 1px only: real zones
+        # touch each other directly), not the raw min-max span: sprites
+        # or the Chop button sharing the band's rows would otherwise
+        # stretch the span and sink the fill test, and the bar's own
+        # decorative green END CAPS sit 2-3px off the playfield — the
+        # tight gap rule splits them away so the rect is the playfield
+        # alone (caps above the strip otherwise pollute the leaf mask).
+        splits = np.where(np.diff(cols) > 1)[0]
+        run_bounds = zip(
+            [0, *(splits + 1)], [*splits, len(cols) - 1])
+        for i0, i1 in run_bounds:
+            x0, x1 = int(cols[i0]), int(cols[i1]) + 1
+            span = x1 - x0
+            if not (min_w <= span <= BAR_MAX_WIDTH_FRAC * win_w):
+                continue
+            if (i1 - i0 + 1) / span < BAR_MIN_FILL:
+                continue
+            green_cols = int(((green[y0:y1, x0:x1] > 0).any(axis=0)
+                              | (gold[y0:y1, x0:x1] > 0).any(axis=0)).sum())
+            red_cols = int((red[y0:y1, x0:x1] > 0).any(axis=0).sum())
+            if green_cols < BAR_MIN_GREEN_FRAC * span:
+                continue
+            if red_cols < BAR_MIN_RED_FRAC * span:
+                continue
+            if span > best_span:
+                best = (x0, y0, span, band_h)
+                best_span = span
+    return best
+
+
+# Companion-region offsets in units of bar WIDTH (the most stably
+# measured bar dimension), calibrated from the original environment's
+# hand-picked regions.json (window 960x572: bar (76,121,222,18), leaf
+# (75,102,222,19), button (310,121,49,24), score (74,140,32,13)) and
+# verified against a second environment's capture (2026-07-11: every
+# derived region landed on its overlay element).
+LEAF_H_FRAC = 19 / 222
+BUTTON_DX_FRAC = 234 / 222   # bar left -> button left
+BUTTON_W_FRAC = 49 / 222
+BUTTON_H_FRAC = 24 / 222
+SCORE_DX_FRAC = -2 / 222     # bar left -> score left
+SCORE_W_FRAC = 32 / 222
+SCORE_H_FRAC = 13 / 222
+
+
+def derive_overlay_regions(
+    bar_rect: tuple[int, int, int, int],
+) -> dict[str, dict[str, int]]:
+    """Window-relative regions for the whole overlay from the bar rect:
+    the leaf strip directly above the bar, the Chop button to its
+    right, and the PTS counter under its left end. Same dict shape as
+    common.regions.get_region returns."""
+    left, top, w, h = bar_rect
+    leaf_h = max(1, round(LEAF_H_FRAC * w))
+    return {
+        "bar": {"left": left, "top": top, "width": w, "height": h},
+        "leaf": {"left": left, "top": top - leaf_h, "width": w, "height": leaf_h},
+        "button": {
+            "left": left + round(BUTTON_DX_FRAC * w), "top": top,
+            "width": round(BUTTON_W_FRAC * w), "height": round(BUTTON_H_FRAC * w),
+        },
+        "score": {
+            "left": left + round(SCORE_DX_FRAC * w), "top": top + h + 1,
+            "width": round(SCORE_W_FRAC * w), "height": round(SCORE_H_FRAC * w),
+        },
+    }
 
 
 def bar_pixel_count(bar_frame: np.ndarray) -> int:
