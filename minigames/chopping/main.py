@@ -251,10 +251,14 @@ BOUNCE_EXPERIMENT_PAUSE_S = 12.0
 # voluntary exit and each game starts fresh (maintainer ground truth),
 # so once the speed ramp makes safe fire windows this rare the round
 # has hit its natural ceiling — end the session and bank rather than
-# wait out a marginal window (that's how every bot death so far
-# happened). Late-round gaps of 26-45s between chops are normal;
-# 60s of no safe fire means truly starved.
-STARVE_EXIT_S = 60.0
+# wait out a marginal window.
+# 60 -> 40 (2026-07-11): across the whole planner era the longest
+# drought that ever produced another fire is 31.2s (run 13's tail
+# chops came at 31s and 18s — those revivals are worth waiting for);
+# nothing in (32, 60)s ever revived, and the user manually killed two
+# rounds inside exactly that dead-air window (7s and ~15s before the
+# auto-bank). 40s keeps every observed revival plus margin.
+STARVE_EXIT_S = 40.0
 
 # Cap on the same-sweep gold upgrade: defer a safe green fire only when
 # the gold ahead is reachable within this long. Keeps a crawling leaf
