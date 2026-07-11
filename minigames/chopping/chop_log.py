@@ -124,9 +124,15 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("plan_impact_in_ms", "INTEGER"),
     # Which pass the planned impact targeted: 0 = the leaf's current
     # sweep, 1 = through the upcoming bounce (cross-sweep planning,
-    # 2026-07-07). Counts how often the through-bounce capability
-    # actually fires.
+    # 2026-07-07). NOTE: commits happen <=135ms before impact, so a
+    # committed shot is almost never labeled 1 — a cross-sweep-guided
+    # approach re-labels to 0 once the leaf bounces. See plan_saw_sweep1.
     ("plan_sweep", "INTEGER"),
+    # 1 when ANY pre-commit plan during this chop's approach targeted
+    # the next sweep (2026-07-11): measures whether cross-sweep
+    # planning ever steers approaches, which plan_sweep structurally
+    # can't show.
+    ("plan_saw_sweep1", "INTEGER"),
 ]
 
 

@@ -479,6 +479,11 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
     # Auto-start state (see AUTO_PLAY).
     play_clicks = 0
     last_play_click_t = -PLAY_RETRY_S
+    # Did any pre-commit plan since the last fire target the next
+    # sweep? Logged per chop as plan_saw_sweep1 (cross-sweep planning
+    # re-labels to sweep 0 by commit time, so the committed plan's
+    # sweep alone under-reports).
+    saw_sweep1 = False
     last_poll_log = 0.0
     last_db_commit = 0.0
     bar_dead_since: float | None = None  # wall-clock t when bar first looked dead
@@ -838,6 +843,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                     sigma_ms=PLAN_SIGMA_MS, red_sigmas=red_sigmas,
                 )
             if plan is not None:
+                saw_sweep1 = saw_sweep1 or plan.sweep == 1
                 since_last_fire = (
                     now - fire_hold_click_t if chop_idx > 0
                     else now - session_start_t
@@ -946,6 +952,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                         plan_margin_ms=int(min(plan.margin_ms, 10**6)),
                         plan_impact_in_ms=int(plan.impact_in_s * 1000),
                         plan_sweep=plan.sweep,
+                        plan_saw_sweep1=int(saw_sweep1),
                         code_commit=code_commit,
                         source="bot",
                     )
@@ -966,6 +973,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                     fire_hold_click_t = click_time
                     fire_hold_rerolled = False
                     hold_pts_read = False
+                    saw_sweep1 = False
                     random_delay(20, 60)
                     time.sleep(POLL_INTERVAL)
                     continue
