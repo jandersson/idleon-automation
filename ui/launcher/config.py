@@ -61,6 +61,18 @@ MINIGAMES = [
                 "values": ["on", "off"],
                 "default": "on",
             },
+            {
+                # While waiting for the bar, template-match the 'Play
+                # Game' prompt and click it (capped at 2/session) —
+                # zero idle time before chop 1, which matters since
+                # the speed ramp accumulates with round age. CLICKING
+                # PLAY CONSUMES a shared daily attempt. Sets
+                # CHOPPING_AUTO_PLAY.
+                "label": "Auto play",
+                "env": "CHOPPING_AUTO_PLAY",
+                "values": ["on", "off"],
+                "default": "on",
+            },
         ],
     },
     {

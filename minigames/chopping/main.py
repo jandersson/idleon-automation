@@ -28,6 +28,7 @@ from minigames.chopping.detector import (
     derive_overlay_regions,
     eased_time_to_red_ms,
     find_bar_rect,
+    find_play_button,
     gold_distance_ahead,
     gold_window_ms,
     infer_vmax,
@@ -113,6 +114,21 @@ PLAN_COMMIT_S = 0.08
 AUTO_REGIONS = os.environ.get(
     "CHOPPING_AUTOREGIONS", "on").strip().lower() not in ("0", "off", "false", "no")
 AUTO_LOCATE_EVERY_S = 1.0
+
+# Auto-start (2026-07-11, maintainer request): while waiting for the
+# bar, also template-match the 'Play Game' start prompt
+# (detector.find_play_button) and click it — so `bot first, then just
+# walk to the tree` starts the round with zero idle time (idle rounds
+# accumulate the time ramp, see docs). Clicking Play consumes one of
+# the SHARED daily attempts, so the clicks are capped per session and
+# the launcher exposes a toggle (CHOPPING_AUTO_PLAY). A second click
+# is allowed only after PLAY_RETRY_S without the bar appearing (a
+# missed click); the round ending returns to the prompt only after
+# the bot has exited, so a session can never chain rounds.
+AUTO_PLAY = os.environ.get(
+    "CHOPPING_AUTO_PLAY", "on").strip().lower() not in ("0", "off", "false", "no")
+PLAY_MAX_CLICKS = 2
+PLAY_RETRY_S = 8.0
 
 # Post-chop fire hold. A successful chop re-rolls the zone layout
 # within 86-201ms (observed, 00:46 session) — that re-roll is the
@@ -460,6 +476,9 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
     auto_win_size: tuple[int, int] | None = None
     last_locate_t = 0.0
     locate_waiting_printed = False
+    # Auto-start state (see AUTO_PLAY).
+    play_clicks = 0
+    last_play_click_t = -PLAY_RETRY_S
     last_poll_log = 0.0
     last_db_commit = 0.0
     bar_dead_since: float | None = None  # wall-clock t when bar first looked dead
@@ -528,10 +547,24 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                 rect = find_bar_rect(full)
                 if rect is None:
                     auto_regions = None
+                    # Auto-start: click the Play Game prompt if it's on
+                    # screen (see AUTO_PLAY — capped, consumes a try).
+                    if (AUTO_PLAY and play_clicks < PLAY_MAX_CLICKS
+                            and t_now - last_play_click_t >= PLAY_RETRY_S):
+                        btn = find_play_button(full)
+                        if btn is not None:
+                            play_clicks += 1
+                            last_play_click_t = t_now
+                            print(f"Play Game prompt at {btn} — clicking to "
+                                  f"start the round (click {play_clicks}/"
+                                  f"{PLAY_MAX_CLICKS}; consumes a try)")
+                            click(win_left + btn[0], win_top + btn[1])
+                            continue
                     if not locate_waiting_printed:
                         locate_waiting_printed = True
                         print("Waiting for the minigame bar to appear "
-                              "(open the chopping round in-game)...")
+                              "(open the round in-game, or stand at the "
+                              "tree and the bot clicks Play Game itself)...")
                     continue
                 auto_regions = derive_overlay_regions(rect)
                 auto_win_size = (win_w, win_h)

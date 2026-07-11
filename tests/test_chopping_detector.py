@@ -344,3 +344,27 @@ def test_leaf_left_edge_prefers_the_widest_run():
 def test_leaf_left_edge_none_on_empty():
     from minigames.chopping.detector import _leaf_left_edge
     assert _leaf_left_edge(np.zeros((20, 100), dtype=np.uint8)) is None
+
+
+def test_find_play_button_matches_pasted_template():
+    import cv2
+    import minigames.chopping.detector as D
+    tpl = cv2.imread(str(D.ASSETS / "play_button.png"), cv2.IMREAD_COLOR)
+    assert tpl is not None, "play_button.png template missing"
+    win = np.zeros((572, 960, 4), dtype=np.uint8)
+    win[..., 3] = 255
+    th, tw = tpl.shape[:2]
+    win[150:150+th, 480:480+tw, :3] = tpl
+    D._play_button_template = None  # reset the lazy cache
+    center = D.find_play_button(win)
+    assert center is not None
+    cx, cy = center
+    assert abs(cx - (480 + tw // 2)) <= 2 and abs(cy - (150 + th // 2)) <= 2
+
+
+def test_find_play_button_none_on_blank_frame():
+    import minigames.chopping.detector as D
+    win = np.zeros((572, 960, 4), dtype=np.uint8)
+    win[..., 3] = 255
+    D._play_button_template = None
+    assert D.find_play_button(win) is None

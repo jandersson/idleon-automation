@@ -365,6 +365,40 @@ def zone_layout(bar_frame: np.ndarray, min_pixels_per_col: int = 2) -> str:
     return " ".join(runs)
 
 
+# 'Play Game' start-prompt detection (2026-07-11): the same dynamic
+# overlay pattern as mining (CLAUDE.md — the prompt anchors above the
+# player, so coordinates can't be cached). The template is the shared
+# 'PLAY GAME' sprite (identical across the in-map minigames; mining's
+# template matched chopping's live prompt at 0.992), stored per-bot at
+# assets/play_button.png per the quartet convention.
+PLAY_BUTTON_MATCH_THRESHOLD = 0.80
+PLAY_BUTTON_SCALES = (0.5, 0.6, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5)
+_play_button_template: np.ndarray | None = None  # lazy-loaded
+
+
+def find_play_button(frame: np.ndarray) -> tuple[int, int] | None:
+    """Locate the in-game 'Play Game' button in a full-window frame via
+    multi-scale template matching. Returns (center_x, center_y) in
+    frame coords, or None below PLAY_BUTTON_MATCH_THRESHOLD (or when
+    the template asset is missing)."""
+    global _play_button_template
+    if _play_button_template is None:
+        path = ASSETS / "play_button.png"
+        if not path.exists():
+            return None
+        _play_button_template = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if _play_button_template is None:
+            return None
+    if frame.shape[2] == 4:
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    center, val, _scale = match_multiscale_center(
+        frame, _play_button_template, scales=PLAY_BUTTON_SCALES,
+    )
+    if center is None or val < PLAY_BUTTON_MATCH_THRESHOLD:
+        return None
+    return center
+
+
 def find_game_over(
     frame: np.ndarray, threshold: float = 0.7
 ) -> tuple[bool, float]:
