@@ -30,6 +30,12 @@ dev = [
     "pyflakes>=3.0",
 ]
 
+# Windowed variant of the launcher (no console window) — generates
+# .venv/Scripts/idleon-gui.exe on Windows, the pinnable taskbar target
+# (scripts/make_launcher_shortcut.py builds a Desktop .lnk for it).
+[project.gui-scripts]
+idleon-gui = "ui.launcher:run"
+
 [project.scripts]
 idleon = "ui.launcher:run"
 hoops = "minigames.hoops.main:run"
