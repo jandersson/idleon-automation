@@ -18,6 +18,7 @@ from minigames.catching.controller import (
     should_flap_now,
     hover_target_y,
     floor_rescue_due,
+    coast_rescue_due,
     fit_gravity,
     fit_flap_vy,
     fit_approach_speed,
@@ -142,6 +143,20 @@ def test_floor_rescue_is_predictive_on_fast_descent():
 
 def test_floor_rescue_handles_missing_velocity():
     assert floor_rescue_due(100, None, 185) is False
+
+
+def test_coast_rescue_fires_only_on_measured_descent():
+    # below the coast floor AND descending -> rescue
+    assert coast_rescue_due(120, 150, 110) is True
+    # below the floor but RISING (fresh launch flap in flight) must NOT
+    # re-flap — the ascent-blind rescue over-lifted the apex into the top
+    # rim (run 16's death; #62 sim replay).
+    assert coast_rescue_due(120, -150, 110) is False
+    # unknown velocity (detection-gap frame) never rescues; floor_rescue_due
+    # backstops a genuine sink on position alone.
+    assert coast_rescue_due(120, None, 110) is False
+    # above the floor: nothing to rescue.
+    assert coast_rescue_due(100, 150, 110) is False
 
 
 # --- fit round-trip -------------------------------------------------------

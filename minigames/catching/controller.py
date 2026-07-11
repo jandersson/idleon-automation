@@ -183,6 +183,21 @@ def hover_target_y(hole_center: float, dyn: Dynamics) -> float:
     return hole_center + dyn.rise_height_px
 
 
+def coast_rescue_due(fly_y: float, fly_vy: float | None,
+                     floor_y: float) -> bool:
+    """Mid-coast rescue: flap only if the avatar is BELOW the coast floor AND
+    measurably DESCENDING. The descent gate is load-bearing: the launch flap
+    starts 33-55px below the hole centre — deeper than the coast floor
+    (gb - COAST_RESCUE_PX) — so an ascent-blind rescue re-flaps the fresh
+    launch on every rate-limit tick, pinning vy at flap_vy until the avatar
+    has risen past the floor, and the last flap's arc overshoots the apex
+    ~24px above the hole centre into the TOP rim (#62's sim replay; run 16's
+    live death had the same over-lift signature). A None vy (detection-gap
+    frame) does NOT rescue — floor_rescue_due's position bound still
+    backstops a genuine sink."""
+    return fly_vy is not None and fly_vy > 0 and fly_y > floor_y
+
+
 def floor_rescue_due(fly_y: float, fly_vy: float | None, play_height: float,
                      frac: float = 0.70, lookahead_s: float = 0.05) -> bool:
     """Hard floor backstop: flap if the avatar is below frac*play_height, or a

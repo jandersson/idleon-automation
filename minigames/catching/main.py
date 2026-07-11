@@ -23,6 +23,7 @@ from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
 from minigames.catching.controller import (
     load_dynamics, should_flap_now, hover_target_y, floor_rescue_due,
+    coast_rescue_due,
 )
 
 _HERE = Path(__file__).parent
@@ -592,9 +593,12 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
         elif floor_rescue_due(fly_y, fly_vy, play_region["height"]):
             do_flap, where = True, "floor"
         elif now < coast_until:
+            # Descending-only rescue — see coast_rescue_due for why the
+            # descent gate matters (ascent-blind rescue over-lifts the fresh
+            # launch into the top rim; run 16's death signature).
             floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
                 else (play_region["height"] - 25)
-            do_flap, where = fly_y > floor, "coast"
+            do_flap, where = coast_rescue_due(fly_y, fly_vy, floor), "coast"
         else:
             # Model path flaps AT the bob bottom (no margin) so the apex centres
             # on the hole; the +FLAP_MARGIN delayed the flap ~6px, letting the
