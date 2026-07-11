@@ -122,6 +122,11 @@ _LATE_COLUMNS: list[tuple[str, str]] = [
     ("target_x", "INTEGER"),
     ("plan_margin_ms", "INTEGER"),
     ("plan_impact_in_ms", "INTEGER"),
+    # Which pass the planned impact targeted: 0 = the leaf's current
+    # sweep, 1 = through the upcoming bounce (cross-sweep planning,
+    # 2026-07-07). Counts how often the through-bounce capability
+    # actually fires.
+    ("plan_sweep", "INTEGER"),
 ]
 
 

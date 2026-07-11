@@ -72,23 +72,26 @@ AIM_MODE = os.environ.get("CHOPPING_AIM", "plan").strip().lower() or "plan"
 # eating a 51ms margin while 55-163ms margins absorbed it.
 CLICK_LATENCY_S = 0.055
 
-# Timing-error budget for planned impacts. RSS of: velocity-estimate
-# error over the ~120ms commit horizon (~10ms), position sample age
-# (~10ms), click-latency variance (~10ms), sub-ms spin-wait release.
-PLAN_SIGMA_MS = 16.0
+# Base timing-error budget for planned impacts, MID-BAR at short
+# horizons. Run 6's fire-time residuals: mid-bar stdev ~11-12ms; the
+# two big misses (+38/+41ms) were both edge targets, now priced by the
+# planner's 1/sin(theta) position scale, and horizon growth is priced
+# by HORIZON_ERR_FRAC — so the base must NOT double-count either
+# (16 here with scale+horizon on top rejected mid-run golds that
+# empirically hit 17/17).
+PLAN_SIGMA_MS = 12.0
 # Impacts must be this many sigmas from every red boundary — a LADDER
-# keyed on drought time, because the cost of a death changes: fresh, a
-# death forfeits the round's remaining EV, so demand 4 sigma (the
-# chop-18 death took a 51ms ~3-sigma plan; 4 sigma rejects it). Deep
-# in a drought, a death and the coming starve exit both just end the
-# round — and deaths still bank the points — so a 2.5-3 sigma shot is
-# nearly free +1/+2 EV. Replay on run 5's starve tail: 4 sigma leaves
-# 2% of polls plannable (the bot starves), 3 sigma 35%, 2.5 sigma 37%.
-# Position scaling (planner._sigma_scale) applies at every rung, so
-# turnaround pockets stay protected.
-PLAN_RED_SIGMAS_FRESH = 4.0      # drought < 15s
-PLAN_RED_SIGMAS_DROUGHT = 3.0    # 15-30s without a fire
-PLAN_RED_SIGMAS_STARVING = 2.5   # 30s+ (starve exit at 60s anyway)
+# keyed on drought time, because the cost of a death changes. EV: a
+# 3-sigma one-sided miss is ~0.1%; even valuing a fresh death at the
+# whole round's remaining ~25 points that's ~0.03 points of risk,
+# versus 1-2 points for skipping a plannable gold — so even the fresh
+# rung stays near 3. Deep in a drought a death and the coming starve
+# exit both just end the round (deaths bank), so the rung drops.
+# The chop-18 death prices at 2.2 sigma under the recalibrated model
+# (scale 1.64 at sin 0.61) — rejected at every rung.
+PLAN_RED_SIGMAS_FRESH = 3.0      # drought < 15s
+PLAN_RED_SIGMAS_DROUGHT = 2.5    # 15-30s without a fire
+PLAN_RED_SIGMAS_STARVING = 2.25  # 30s+ (starve exit at 60s anyway)
 # Commit to a shot (stop re-planning, spin-wait, fire) when the
 # scheduled click is at most this far away. One loop iteration is
 # ~15-25ms, so the final plan uses a sample at most ~one frame old.
@@ -821,7 +824,9 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                         wait_tag = (f" after {gold_wait_ms}ms gold wait"
                                     + (" (deadline — took green)"
                                        if zone_label == "green" else ""))
-                    print(f"Planned {zone_label} impact at x={plan.target_x:.0f} "
+                    sweep_tag = " through the bounce" if plan.sweep else ""
+                    print(f"Planned {zone_label} impact at x={plan.target_x:.0f}"
+                          f"{sweep_tag} "
                           f"(from x={pointer_x}, vx={leaf_vx:+.0f} px/s, "
                           f"margin {plan.margin_ms:.0f}ms, "
                           f"horizon {plan.impact_in_s * 1000:.0f}ms) "
@@ -856,6 +861,7 @@ def _run_inner(save_frames: bool = False, stats: dict | None = None):
                         target_x=int(plan.target_x),
                         plan_margin_ms=int(min(plan.margin_ms, 10**6)),
                         plan_impact_in_ms=int(plan.impact_in_s * 1000),
+                        plan_sweep=plan.sweep,
                         code_commit=code_commit,
                         source="bot",
                     )

@@ -34,8 +34,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from minigames.chopping.detector import eased_time_to_x_s
-
 
 @dataclass(frozen=True)
 class Zone:
@@ -67,6 +65,18 @@ class Plan:
     zone_kind: str       # 'g' or 'o' — what the impact scores
     value: int           # 1 (green) or 2 (gold)
     margin_ms: float     # min time-margin from impact to a red boundary
+    sweep: int = 0       # 0 = current sweep, 1 = after the next bounce
+
+
+# Horizon-proportional error term (2026-07-07, cross-sweep planning):
+# a fractional V_max mis-estimate shifts arrival by that fraction of
+# the whole horizon, so distant impacts carry proportionally more
+# timing risk. 0.05 ~= the p75 V_max estimator's observed jitter; at
+# run 6's 40-120ms same-sweep horizons it adds 2-6ms (consistent with
+# the measured 17.4ms total vs the 16ms base), while a 1s next-sweep
+# horizon adds 50ms — distant cross-sweep plans self-reject until the
+# per-poll replanning brings them close.
+HORIZON_ERR_FRAC = 0.05
 
 
 # Floor for the position factor in _sigma_scale: past sin(theta)=0.35
@@ -87,22 +97,6 @@ def _sigma_scale(target_x: float, bar_w: int) -> float:
     return 1.0 / max(s, MIN_TARGET_SIN)
 
 
-def _sweep_times(
-    x: float, direction: float, positions: list[float],
-    v_max: float, bar_w: int,
-) -> list[float] | None:
-    """Seconds until the leaf reaches each position (all ahead of x in
-    `direction`), under the eased model. None when unusable."""
-    out = []
-    for p in positions:
-        d = (p - x) if direction > 0 else (x - p)
-        t = eased_time_to_x_s(x, direction, d, v_max, bar_w)
-        if t is None:
-            return None
-        out.append(t)
-    return out
-
-
 def plan_shot(
     zones: list[Zone],
     x: float,
@@ -112,98 +106,124 @@ def plan_shot(
     earliest_impact_s: float = 0.0,
     sigma_ms: float = 16.0,
     red_sigmas: float = 3.0,
-    max_horizon_s: float = 1.2,
+    max_horizon_s: float = 2.5,
+    horizon_err_frac: float = HORIZON_ERR_FRAC,
 ) -> Plan | None:
-    """Pick the best planned impact on the CURRENT sweep, or None.
+    """Pick the best planned impact on the current sweep OR the next
+    one (through the upcoming bounce), or None.
 
-    For every green/gold zone ahead of the leaf, the candidate impact
-    is the time-domain center of the zone's crossing, shifted later if
-    the caller's earliest_impact_s (chop-cooldown release + click
-    latency) demands it. A candidate is feasible when:
-    - its time-margin to every red boundary is >= red_sigmas * sigma_ms
-      (both the red behind the impact and the red ahead — deaths are
-      the only real cost);
-    - it sits >= 1 sigma inside its own zone (missing into a benign
-      neighbour only wastes a chop);
-    - it lands within max_horizon_s (velocity estimates decay; the
-      caller re-plans every poll anyway).
+    Every green/gold zone yields up to two candidates: its remaining
+    crossing this sweep (sweep=0, if any of it lies ahead) and its full
+    re-cross after the turnaround (sweep=1). Each candidate impact is
+    the time-domain center of its crossing, shifted later if the
+    caller's earliest_impact_s (cooldown release + click latency)
+    demands it. A candidate is feasible when:
+    - its time-margin to every red boundary CROSSING (both sweeps —
+      turnaround red pockets are crossed twice and both times count)
+      is >= red_sigmas * sigma_local;
+    - it sits >= 1 sigma_local inside its own zone (missing into a
+      benign neighbour only wastes a chop);
+    - it lands within max_horizon_s.
 
-    Feasible candidates rank by (value, margin): gold beats green, and
-    among equals the safer impact wins.
+    sigma_local = sigma_ms * _sigma_scale(target) + horizon_err_frac *
+    horizon: edge impacts and distant impacts both demand more margin
+    (see the constants' comments). Feasible candidates rank by
+    (value, margin-in-sigmas): gold beats green; among equals the
+    statistically safest impact wins — which inherently prefers the
+    near sweep at equal geometry.
     """
     if v_max <= 0 or bar_w <= 0 or direction == 0:
         return None
     sigma_s = sigma_ms / 1000.0
+    omega = 2.0 * v_max / bar_w
 
-    # Red boundary positions ahead of x (zone edges where red starts or
-    # ends), for margin computation.
-    red_edges: list[float] = []
+    def mirror(p: float, d: float) -> float:
+        return p if d > 0 else bar_w - p
+
+    def theta(pm: float) -> float:
+        return math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * pm / bar_w)))
+
+    theta0 = theta(mirror(x, direction))
+    t_turn = (math.pi - theta0) / omega
+
+    def t_this_sweep(p: float) -> float | None:
+        """Time to reach p on the current sweep; None if p is behind."""
+        tp = theta(mirror(p, direction))
+        return (tp - theta0) / omega if tp >= theta0 - 1e-9 else None
+
+    def t_next_sweep(p: float) -> float:
+        """Time to reach p on the pass after the upcoming bounce."""
+        return t_turn + theta(mirror(p, -direction)) / omega
+
+    def position_at(t_s: float) -> float:
+        """Leaf position t_s seconds out, through at most one bounce."""
+        if t_s <= t_turn:
+            th1 = theta0 + omega * t_s
+            pm = bar_w / 2.0 * (1.0 - math.cos(min(math.pi, th1)))
+            return pm if direction > 0 else bar_w - pm
+        th2 = min(math.pi, omega * (t_s - t_turn))
+        pm = bar_w / 2.0 * (1.0 - math.cos(th2))
+        return pm if -direction > 0 else bar_w - pm
+
+    # Every red boundary crossing TIME over both sweeps.
+    red_times: list[float] = []
     for z in zones:
-        if z.kind == "r":
-            red_edges.extend([float(z.x0), float(z.x1)])
+        if z.kind != "r":
+            continue
+        for e in (float(z.x0), float(z.x1)):
+            t0 = t_this_sweep(e)
+            if t0 is not None and t0 > 0:
+                red_times.append(t0)
+            red_times.append(t_next_sweep(e))
 
     best: Plan | None = None
+    best_key: tuple = ()
     for z in zones:
         if z.kind not in ("g", "o"):
             continue
-        # Usable span of this zone ahead of the leaf, this sweep.
+        candidates: list[tuple[float, float, int]] = []
+        # Sweep 0: the remaining crossing ahead of the leaf.
         if direction > 0:
-            a, b = max(float(z.x0), x), float(z.x1)
+            a0, b0 = max(float(z.x0), x), float(z.x1)
         else:
-            a, b = min(float(z.x1), x), float(z.x0)
-        if (b - a) * direction <= 0:
-            continue  # entirely behind the leaf
-        times = _sweep_times(x, direction, [a, b], v_max, bar_w)
-        if times is None:
-            continue
-        t_a, t_b = times
-        if t_b <= t_a:
-            continue  # degenerate (e.g. past the turnaround clamp)
-        # Time-domain center, shifted for the cooldown if needed.
-        t_star = max((t_a + t_b) / 2.0, earliest_impact_s)
-        if t_star > max_horizon_s:
-            continue
-        # Predicted impact position: invert the eased model by bisecting
-        # position along the span (monotone in time).
-        target_x = _position_at(x, direction, t_star, v_max, bar_w)
-        if target_x is None:
-            continue
-        # Position-scaled error budget (see _sigma_scale): edge-region
-        # impacts need proportionally larger margins.
-        sigma_local_s = sigma_s * _sigma_scale(target_x, bar_w)
-        # Must stay >= 1 (local) sigma inside the zone.
-        if t_star < t_a + sigma_local_s or t_star > t_b - sigma_local_s:
-            continue
-        # Margin to red: nearest red boundary crossing in time.
-        margin_s = math.inf
-        red_times = _sweep_times(
-            x, direction,
-            [e for e in red_edges if (e - x) * direction > 0],
-            v_max, bar_w,
-        )
-        if red_times:
-            margin_s = min(abs(rt - t_star) for rt in red_times)
-        if margin_s < red_sigmas * sigma_local_s:
-            continue
-        margin_ms = margin_s * 1000 if margin_s != math.inf else 10.0**6
+            a0, b0 = min(float(z.x1), x), float(z.x0)
+        if (b0 - a0) * direction > 0:
+            ta, tb = t_this_sweep(a0), t_this_sweep(b0)
+            if ta is not None and tb is not None and tb > ta:
+                candidates.append((ta, tb, 0))
+        # Sweep 1: the full re-cross after the bounce (entered from the
+        # far side, so the edge order flips).
+        entry, exit_ = (float(z.x1), float(z.x0)) if direction > 0 \
+            else (float(z.x0), float(z.x1))
+        ta1, tb1 = t_next_sweep(entry), t_next_sweep(exit_)
+        if tb1 > ta1:
+            candidates.append((ta1, tb1, 1))
+
         value = 2 if z.kind == "o" else 1
-        cand = Plan(target_x, t_star, z.kind, value, margin_ms)
-        if best is None or (cand.value, cand.margin_ms) > (best.value, best.margin_ms):
-            best = cand
+        for t_a, t_b, sweep in candidates:
+            # Impact placement: the crossing center is the default, but
+            # when red abuts one side only, a shifted impact buys real
+            # margin — try a few fractions of the crossing and keep the
+            # statistically safest feasible one.
+            for frac in (0.5, 0.3, 0.7, 0.15, 0.85):
+                t_star = max(t_a + frac * (t_b - t_a), earliest_impact_s)
+                if t_star > max_horizon_s:
+                    continue
+                target_x = position_at(t_star)
+                sigma_local_s = (sigma_s * _sigma_scale(target_x, bar_w)
+                                 + horizon_err_frac * t_star)
+                # Must stay >= 1 (local) sigma inside the zone.
+                if t_star < t_a + sigma_local_s or t_star > t_b - sigma_local_s:
+                    continue
+                margin_s = min((abs(rt - t_star) for rt in red_times),
+                               default=math.inf)
+                sigmas = margin_s / sigma_local_s
+                if sigmas < red_sigmas:
+                    continue
+                margin_ms = margin_s * 1000 if margin_s != math.inf else 10.0**6
+                # Rank: value, then statistical safety, then sooner.
+                key = (value, sigmas, -t_star)
+                if best is None or key > best_key:
+                    best = Plan(target_x, t_star, z.kind, value, margin_ms, sweep)
+                    best_key = key
     return best
-
-
-def _position_at(
-    x: float, direction: float, t_s: float, v_max: float, bar_w: int,
-) -> float | None:
-    """Leaf position t_s seconds from now under the eased model
-    (same sweep; clamps at the turnaround)."""
-    if v_max <= 0 or bar_w <= 0:
-        return None
-    xn = x if direction > 0 else bar_w - x
-    xn = max(0.0, min(float(bar_w), xn))
-    omega = 2.0 * v_max / bar_w
-    theta0 = math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * xn / bar_w)))
-    theta1 = min(math.pi, theta0 + omega * t_s)
-    pos = bar_w / 2.0 * (1.0 - math.cos(theta1))
-    return pos if direction > 0 else bar_w - pos
