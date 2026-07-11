@@ -98,19 +98,27 @@ HORIZON_ERR_FRAC = 0.05
 # Floor for the position factor in _sigma_scale: past sin(theta)=0.35
 # (the outer ~3% of the bar) the model isn't trusted at any margin.
 MIN_TARGET_SIN = 0.35
+# Position exponent (1.0 -> 1.5, 2026-07-11 run 16): with five deaths
+# logged, thin EDGE fires (target sin<0.7) die at 2/7 = 29% while thin
+# mid-bar fires die at 3/39 = 8% — matching the calibrated curve, so
+# the base risk fit is right and the 1/sin term was too soft at the
+# edges (the model breaks harder near turnarounds than linear speed
+# scaling captures: bounce timing, slow-end detection). Superlinear
+# scaling leaves mid-bar untouched (sin 0.9: 1.17 vs 1.11) and prices
+# sin 0.55 at 2.45x instead of 1.82x — a nominal 3.1-sigma edge fire
+# reads as ~2.3 sigma, which the rungs and EV then treat accordingly.
+EDGE_EXP = 1.5
 
 
 def _sigma_scale(target_x: float, bar_w: int) -> float:
-    """Position multiplier for the timing-error budget: 1/sin(theta) at
-    the target. Near the turnarounds the leaf's local speed drops, so a
-    fixed position error costs proportionally more TIME — measured on
-    the first planner run (2026-07-06 23:44): arrival residuals were
-    ±10-20ms for mid-bar targets but +38/+41ms for both sin(theta)≈0.6
-    targets, and the one death was a sin(theta)=0.61 target whose flat
-    margin had no room for that."""
+    """Position multiplier for the timing-error budget:
+    (1/sin(theta))^EDGE_EXP at the target. Near the turnarounds the
+    leaf's local speed drops, so a fixed position error costs
+    proportionally more TIME — and the death data says the breakdown
+    is superlinear (see EDGE_EXP)."""
     c = 1.0 - 2.0 * target_x / bar_w
     s = math.sqrt(max(0.0, 1.0 - c * c))
-    return 1.0 / max(s, MIN_TARGET_SIN)
+    return (1.0 / max(s, MIN_TARGET_SIN)) ** EDGE_EXP
 
 
 def plan_shot(

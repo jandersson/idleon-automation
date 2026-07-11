@@ -183,9 +183,20 @@ def test_lone_thin_candidate_still_fires():
     # A lone rung-passing candidate fires regardless of EV: the layout
     # is static between chops, so the alternative is the starve exit —
     # which banks the same points a death would, with zero upside.
-    # (Run 14's chop 9: forced thin gold, no green anywhere.)
-    zones = parse_layout("r54 g112 r6 o40 r8")
-    lone = plan_shot(zones, 164.0, 1.0, 450.0, BAR_W - 2,
+    # MID-BAR lone gold (edge lones are now priced out by EDGE_EXP and
+    # left to the drought ladder — run 14/16's death mode).
+    zones = parse_layout("r80 o40 r102")
+    lone = plan_shot(zones, 60.0, 1.0, 350.0, BAR_W,
                      earliest_impact_s=0.055, sigma_ms=12.0,
                      red_sigmas=3.0, death_cost_pts=28.0)
     assert lone is not None and lone.zone_kind == "o"
+
+
+def test_edge_exponent_prices_out_run14_and_run16_death_mode():
+    # Run 14's fatal fire (edge gold at sin~0.64, nominally 3.1 sigma
+    # under linear scaling): with EDGE_EXP it reads under the fresh
+    # rung and is refused — the drought ladder re-offers it later.
+    zones = parse_layout("r54 g112 r6 o40 r8")
+    assert plan_shot(zones, 164.0, 1.0, 450.0, BAR_W - 2,
+                     earliest_impact_s=0.055, sigma_ms=12.0,
+                     red_sigmas=3.0, death_cost_pts=28.0) is None
