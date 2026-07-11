@@ -132,7 +132,57 @@ at a favourable phase 3/4 times, which a seed-phase sweep can't know, and
 the extraction's per-ring timing carries some error. The bias direction is
 safe — a policy that threads in-sim should thread live.
 
-## The open problem: phase-locking (why threading isn't solved yet)
+## The phase-locked planner (#61, built 2026-07-11, opt-in `--planner`)
+
+`controller.plan_flap` supersedes the launch+hover model path (opt-in via
+`--planner` / CATCHING_PLANNER / the launcher's Planner toggle until
+live-validated). Design, all grounded in the #62 measurements:
+
+- **A flap may fire at ANY point of the descent**, so apex height and apex
+  time are jointly controllable across two bobs: flapping deeper brings
+  the next anchor pass EARLIER (lower apex, short fall-back), higher
+  pushes it later. The **SETUP** rule fires the second-to-last flap at the
+  moment the restarted bob's descent will reach the launch anchor
+  (`hole_centre + rise`) exactly at launch-decision time; acceptance is
+  two-sided (an arc accepted 0.12s early = ~22px of extra fall at the
+  anchor).
+- **The LAUNCH is window-exact**: the fired flap's parabola must stay
+  inside the passable hole across the whole overlap window (apex above
+  the hole top, deepest in-window point above the hole bottom) — a static
+  apex-time tolerance lets an early apex fall ~19px through the hole
+  bottom by the window's far edge.
+- **No neutral flap near a crossing**: any flap within ~a full bob of the
+  window start is still in flight during it. In that committed zone only
+  the launch, band-clear dodge flaps, or nothing are legal — a plain
+  anchor-cycle flap parks its apex inside the band mid-window.
+- **Side-dodges**: timing missed → dodge on the side the avatar is
+  already on (no time to cross the band). Deep rings (anchor below the
+  survivable floor) are **pre-positioned**: the over-dodge trigger doubles
+  as a climb driver (each echo-spaced flap nets ~20px), started bobs
+  ahead. All triggers fire on the PREDICTED LANDING (position projected
+  through the actuation latency) — a fixed trigger credit under-corrects
+  slow descents and pokes the apex into the band.
+- **Signal hygiene** (each one was a distinct failure mode in the sim):
+  vy is blacked out for 0.25s after any click (the finite difference
+  spans the stall and reads near-zero garbage); non-launch flaps are
+  echo-suppressed for 0.3s after any click; the emergency floor is
+  relaxed to 0.80 while a ring is worked (its default lookahead preempts
+  every planned flap with its own timing), echo-gated, and positional-only
+  during an under-dodge (the lookahead fires ~15px above the bound —
+  exactly the dodge bob's band clearance); ring geometry is projected
+  through detector dropouts (`RingProjector`), held through the crossing
+  when the detector jumps to the next ring early, and timed with a live
+  scroll-speed estimate (`SpeedTracker`) because of the ramp.
+
+Sim (noisy replay of run 17's stream, 200 runs each): baseline mean 0.58
+threads / median 0 / max 5 / **0** full-stream survivals; planner mean
+**2.13** / median 2 / max 5 / **90/200** full-stream survivals (dodging
+what it can't thread). Live validation should check: the `where` tags on
+DB flap rows (launch/setup/dodge_*), whether launches thread (score
+increments at launch crossings via `catching-analyze-crossings`), and
+that no top-rim over-lift deaths recur.
+
+## The original problem statement (pre-planner, kept for context)
 
 The launch only fires when the avatar *happens* to be at launch height during
 the timing window, which rarely coincides. The root cause is structural:

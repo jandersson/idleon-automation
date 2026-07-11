@@ -44,7 +44,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from minigames.catching.controller import (
     load_dynamics, should_flap_now, hover_target_y, floor_rescue_due,
-    coast_rescue_due, step,
+    coast_rescue_due, step, plan_flap, RingProjector,
+    VY_BLACKOUT_S, ECHO_SUPPRESS_S,
 )
 from minigames.catching import main as M
 
@@ -92,9 +93,13 @@ def _dist_at(t):
 
 
 def run_one(dyn, hoops, seed_phase=0.0, verbose=False, max_t=80.0,
-            ramp=True, rng=None):
-    """Run the policy over a hoop stream; hoops = [{cx0, hc}] with cx0 the
+            ramp=True, rng=None, policy="baseline"):
+    """Run a policy over a hoop stream; hoops = [{cx0, hc}] with cx0 the
     spawn x at t=0. Returns (threaded, dodged, crash_reason).
+
+    policy: 'baseline' — main.py's shipped model path (launch -> floor ->
+    coast -> apex-hover). 'planner' — the #61 phase-locked plan_flap path
+    (launch/setup/dodge with the RingProjector + live speed tracking).
 
     Physics and collision advance on a fine fixed step (the game never
     blinks); DECISIONS happen at poll times. With `rng` set, poll cadence
@@ -118,6 +123,8 @@ def run_one(dyn, hoops, seed_phase=0.0, verbose=False, max_t=80.0,
     prev_sample = None  # (t, y) of the previous decision poll — the live
                         # loop's finite-difference vy (None across gaps
                         # >0.2s, e.g. right after every click stall)
+    proj = RingProjector(FLY_X, dyn.approach_speed) if policy == "planner" \
+        else None
     threaded = dodged = 0
     while t < max_t:
         # --- decision poll -------------------------------------------------
@@ -156,23 +163,71 @@ def run_one(dyn, hoops, seed_phase=0.0, verbose=False, max_t=80.0,
                     vy_est = (y - prev_sample[1]) / dt_s
             prev_sample = (t, y)
 
-            # --- mirrors main.py's model path (launch before floor) --------
-            launch = (ring_seen
-                      and should_flap_now(FLY_X, y, gl, gr, gt, gb, dyn)
-                      and t >= coast_until)
-            if launch:
-                do, where = True, "model"
-            elif floor_rescue_due(y, vy_est, PLAY_H):
-                do, where = True, "floor"
-            elif t < coast_until:
-                floor = (gb - M.COAST_RESCUE_PX) if gb is not None \
-                    else PLAY_H - 25
-                do, where = coast_rescue_due(y, vy_est, floor), "coast"
+            if policy == "planner":
+                # --- #61 phase-locked path (mirrors main.py --planner) -----
+                if ring_seen:
+                    proj.update(t, gl, gr, gt, gb)
+                pg = proj.get(t)
+                pgl, pgr, pgt, pgb = pg if pg is not None else (None,) * 4
+                # vy across the click stall reads near-zero garbage — the
+                # planner must not trust it (VY_BLACKOUT_S).
+                vy_plan = None if t - last_click < VY_BLACKOUT_S else vy_est
+                do_p, mode, floor_frac = plan_flap(
+                    y, vy_plan, pgl, pgr, pgt, pgb, FLY_X, PLAY_H, dyn,
+                    speed=proj.speed())
+                launch = do_p and mode == "launch" and t >= coast_until
+                # The floor path gets the same echo treatment as the plan
+                # flaps: right after a deep (setup) flap the position still
+                # reads below the bound and the stall-spanning vy is
+                # garbage, so an ungated floor check re-flaps the fresh bob.
+                # A genuinely continued sink re-arms via fresh positive vy.
+                floor_ok = (t - last_click >= ECHO_SUPPRESS_S
+                            or (vy_plan is not None and vy_plan > 50))
+                # under-dodge: positional-only floor (the lookahead fires
+                # ~15px above the bound — exactly the bob's band clearance)
+                floor_vy = None if mode == "dodge_under" else vy_plan
+                if launch:
+                    do, where = True, "launch"
+                elif floor_ok and floor_rescue_due(y, floor_vy, PLAY_H,
+                                                   frac=floor_frac or 0.70):
+                    do, where = True, "floor"
+                elif t < coast_until:
+                    floor = (pgb - M.COAST_RESCUE_PX) if pgb is not None \
+                        else PLAY_H - 25
+                    do, where = coast_rescue_due(y, vy_est, floor), "coast"
+                elif do_p:
+                    # echo suppression: a trigger-crossing condition re-reads
+                    # true right after the stall while the fresh bob is still
+                    # near its flap point — don't re-flap it.
+                    do = t - last_click >= ECHO_SUPPRESS_S
+                    where = mode
+                elif pg is None:
+                    # nothing to plan against (pre-first-ring / stale):
+                    # natural cycle on the held/default target
+                    target = hover_target_y(held_dc, dyn) \
+                        if held_dc is not None else PLAY_H * 0.5
+                    do = y > target and t - last_click >= ECHO_SUPPRESS_S
+                    where = "hover"
+                else:
+                    do, where = False, "wait"
             else:
-                target = hover_target_y(dc, dyn) if dc is not None \
-                    else PLAY_H * 0.5
-                # model path: no margin (apex centres on hole)
-                do, where = y > target, "hover"
+                # --- baseline: main.py's shipped model path ----------------
+                launch = (ring_seen
+                          and should_flap_now(FLY_X, y, gl, gr, gt, gb, dyn)
+                          and t >= coast_until)
+                if launch:
+                    do, where = True, "model"
+                elif floor_rescue_due(y, vy_est, PLAY_H):
+                    do, where = True, "floor"
+                elif t < coast_until:
+                    floor = (gb - M.COAST_RESCUE_PX) if gb is not None \
+                        else PLAY_H - 25
+                    do, where = coast_rescue_due(y, vy_est, floor), "coast"
+                else:
+                    target = hover_target_y(dc, dyn) if dc is not None \
+                        else PLAY_H * 0.5
+                    # model path: no margin (apex centres on hole)
+                    do, where = y > target, "hover"
 
             if do and t - last_click >= M.MIN_CLICK_INTERVAL:
                 act_at = t + ACT_LATENCY   # flap lands after actuation latency
@@ -180,8 +235,9 @@ def run_one(dyn, hoops, seed_phase=0.0, verbose=False, max_t=80.0,
                 next_poll = t + POST_FIRE_STALL  # click blocks the loop
                 if launch:
                     coast_until = t + M.COAST_S
-                if verbose and where in ("model", "floor"):
-                    print(f"  t={t:5.2f} y={y:4.0f} "
+                if verbose and where != "hover":
+                    print(f"  t={t:5.2f} y={y:4.0f} vy_est="
+                          f"{vy_est if vy_est is None else round(vy_est)} "
                           f"apex->{y - dyn.rise_height_px:4.0f} "
                           f"{where} hc={nxt['hc'] if nxt else '-'}")
 
@@ -264,31 +320,35 @@ def run():
 
     if args.replay:
         import random
+        from collections import Counter
         n_runs = 200 if not args.clean else 40
         mode = "clean (deterministic)" if args.clean else \
             "noisy (measured dropout/visibility)"
-        print(f"\nreplay of run 17, {n_runs} runs, {mode} "
+        print(f"\nreplay of run 17, {n_runs} runs/policy, {mode} "
               "(reality: 9 threads, 6 dodges, clip on ring 16 hc=73):")
-        results = []
-        for i in range(n_runs):
-            phase = (i % 40) / 40.0
-            rng = None if args.clean else random.Random(1000 + i)
-            th, dg, why = run_one(dyn, replay_hoops(), phase,
-                                  verbose=args.verbose, rng=rng)
-            results.append((th, dg, why))
-        thr = sorted(r[0] for r in results)
-        dgs = sorted(r[1] for r in results)
-        completed = sum(1 for r in results if r[2] == "completed")
-        floors = sum(1 for r in results if r[2].startswith("floor"))
-        print(f"  threads: min={thr[0]} median={statistics.median(thr)} "
-              f"p90={thr[9 * len(thr) // 10]} max={thr[-1]}")
-        print(f"  dodges:  median={statistics.median(dgs)} max={dgs[-1]}")
-        print(f"  full-run survivals={completed}/{n_runs}  "
-              f"floor deaths={floors}")
-        from collections import Counter
-        print(f"  thread counts: {dict(sorted(Counter(thr).items()))}")
-        for th, dg, why in results[:5]:
-            print(f"    e.g. threaded={th} dodged={dg} {why}")
+        for policy in ("baseline", "planner"):
+            results = []
+            for i in range(n_runs):
+                phase = (i % 40) / 40.0
+                rng = None if args.clean else random.Random(1000 + i)
+                th, dg, why = run_one(dyn, replay_hoops(), phase,
+                                      verbose=args.verbose, rng=rng,
+                                      policy=policy)
+                results.append((th, dg, why))
+            thr = sorted(r[0] for r in results)
+            dgs = sorted(r[1] for r in results)
+            completed = sum(1 for r in results if r[2] == "completed")
+            floors = sum(1 for r in results if r[2].startswith("floor"))
+            print(f"  {policy}:")
+            print(f"    threads: min={thr[0]} median={statistics.median(thr)} "
+                  f"mean={sum(thr) / len(thr):.2f} "
+                  f"p90={thr[9 * len(thr) // 10]} max={thr[-1]}")
+            print(f"    dodges: median={statistics.median(dgs)} "
+                  f"max={dgs[-1]}  survivals={completed}/{n_runs}  "
+                  f"floor deaths={floors}")
+            print(f"    thread counts: {dict(sorted(Counter(thr).items()))}")
+            for th, dg, why in results[:3]:
+                print(f"      e.g. threaded={th} dodged={dg} {why}")
         return
 
     centers = [80, 70, 90, 75, 85] * 6

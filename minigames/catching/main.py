@@ -23,7 +23,8 @@ from minigames.catching.catch_log import open_db, log_flap, log_run
 from minigames.catching.score import make_pts_reader
 from minigames.catching.controller import (
     load_dynamics, should_flap_now, hover_target_y, floor_rescue_due,
-    coast_rescue_due,
+    coast_rescue_due, plan_flap, RingProjector,
+    VY_BLACKOUT_S, ECHO_SUPPRESS_S,
 )
 
 _HERE = Path(__file__).parent
@@ -303,12 +304,23 @@ def run():
              "to the hand-tuned timing if the file is missing. The launcher's "
              "toggle sets CATCHING_USE_MODEL.",
     )
+    parser.add_argument(
+        "--planner", action="store_true",
+        help="Use the #61 phase-locked flap planner (controller.plan_flap: "
+             "setup->launch alignment, side-dodges, live speed tracking) "
+             "instead of the --model launch+hover path. Implies --model's "
+             "dynamics requirement; falls back like --model when "
+             "assets/dynamics.json is missing. Opt-in until live-validated "
+             "(sim: 3.7x the baseline's thread mean, 45%% full-stream "
+             "survival vs 0). Env: CATCHING_PLANNER.",
+    )
     args = parser.parse_args()
     # The GUI can't pass --save-frames (it launches with no CLI args), so also
     # honour the CATCHING_SAVE_FRAMES env var its 'Save frames' toggle sets.
     save_frames = args.save_frames or _env_flag("CATCHING_SAVE_FRAMES")
     trace = args.trace or _env_flag("CATCHING_TRACE")
-    use_model = args.model or _env_flag("CATCHING_USE_MODEL")
+    use_planner = args.planner or _env_flag("CATCHING_PLANNER")
+    use_model = args.model or _env_flag("CATCHING_USE_MODEL") or use_planner
     with session_log(LOGS_DIR) as log_path:
         print(f"Session log: {log_path}")
         session_started = datetime.now().isoformat(timespec="seconds")
@@ -329,7 +341,8 @@ def run():
                  "_trace_file": None}
         try:
             _run_inner(session_started, db, code_commit, stats,
-                       save_frames=save_frames, trace=trace, use_model=use_model)
+                       save_frames=save_frames, trace=trace,
+                       use_model=use_model, use_planner=use_planner)
         except KeyboardInterrupt:
             stats["end_reason"] = "keyboard_interrupt"
             raise
@@ -363,7 +376,7 @@ def run():
 
 
 def _run_inner(session_started, db, code_commit, stats, save_frames=False,
-               trace=False, use_model=False):
+               trace=False, use_model=False, use_planner=False):
     print(f"Catching bot starting — tracking window {WINDOW_TITLE!r}. Move mouse to a corner to abort.")
     time.sleep(2)
 
@@ -377,6 +390,11 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
     elif dyn is not None:
         print(f"Predictive flap timer ON: g={dyn.gravity:.0f} "
               f"flap_vy={dyn.flap_vy:.0f} approach={dyn.approach_speed:.0f}")
+    planner = use_planner and dyn is not None
+    proj = None   # RingProjector, created at the first ring detection (#61)
+    if planner:
+        print("Phase-locked planner ON (#61): setup->launch alignment, "
+              "side-dodges, live speed tracking.")
 
     frames_dir = None
     last_frame_save = 0.0
@@ -573,41 +591,94 @@ def _run_inner(session_started, db, code_commit, stats, save_frames=False,
         # The launch-flap decision: the fitted model when active, else the
         # hand-tuned phase-timing heuristic. Both gate on the coast window so a
         # launch isn't re-fired mid-coast.
-        if dyn is not None:
-            launch_due = should_flap_now(
-                fly_x, fly_y, gap_left_x, gap_right_x, gap_top, gap_bottom, dyn)
-            timed_tag = "model"
+        if planner:
+            # --- #61 phase-locked path (kept in lockstep with sim.py's
+            # planner branch — change both together) ----------------------
+            if gap is not None:
+                if proj is None:
+                    proj = RingProjector(fly_x, dyn.approach_speed)
+                proj.update(now, gap_left_x, gap_right_x, gap_top, gap_bottom)
+            pg = proj.get(now) if proj is not None else None
+            pgl, pgr, pgt, pgb = pg if pg is not None else (None,) * 4
+            # vy across the click stall reads near-zero garbage — the
+            # planner must not trust it (VY_BLACKOUT_S).
+            vy_plan = None if now - last_click_time < VY_BLACKOUT_S \
+                else fly_vy
+            do_p, mode, floor_frac = plan_flap(
+                fly_y, vy_plan, pgl, pgr, pgt, pgb, fly_x,
+                play_region["height"], dyn,
+                speed=proj.speed() if proj is not None else None)
+            is_timed = do_p and mode == "launch" and now >= coast_until
+            # Floor gets the echo treatment too: right after a deep (setup)
+            # flap the position still reads below the bound and the
+            # stall-spanning vy is garbage — an ungated check re-flaps the
+            # fresh bob. A genuinely continued sink re-arms via fresh
+            # positive vy. During an under-dodge the floor runs
+            # POSITIONAL-ONLY (its lookahead fires ~15px above the bound —
+            # exactly the dodge bob's band clearance).
+            floor_ok = (now - last_click_time >= ECHO_SUPPRESS_S
+                        or (vy_plan is not None and vy_plan > 50))
+            floor_vy = None if mode == "dodge_under" else vy_plan
+            if is_timed:
+                do_flap, where = True, "launch"
+            elif floor_ok and floor_rescue_due(fly_y, floor_vy,
+                                               play_region["height"],
+                                               frac=floor_frac or 0.70):
+                do_flap, where = True, "floor"
+            elif now < coast_until:
+                floor = (pgb - COAST_RESCUE_PX) if pgb is not None \
+                    else (play_region["height"] - 25)
+                do_flap, where = coast_rescue_due(fly_y, fly_vy, floor), "coast"
+            elif do_p:
+                # echo suppression: trigger-crossing conditions re-read true
+                # right after the stall while the fresh bob is still near
+                # its flap point — don't re-flap it.
+                do_flap = now - last_click_time >= ECHO_SUPPRESS_S
+                where = mode
+            elif pg is None:
+                # nothing to plan against (pre-first-ring / stale ring):
+                # natural cycle on the held/default target
+                do_flap = (fly_y > target_y
+                           and now - last_click_time >= ECHO_SUPPRESS_S)
+                where = "hover"
+            else:
+                do_flap, where = False, "wait"
         else:
-            launch_due = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center)
-            timed_tag = "timed"
-        is_timed = launch_due and now >= coast_until
-        # The phase-timed LAUNCH wins first — it fires in the same low-in-the-
-        # bob zone as the floor rescue, and if floor preempts it (run 16: floor
-        # 22 vs model 2) the launch is starved and never sets the coast, so the
-        # avatar over-lifts into the next crossing and clips the top. The launch
-        # also flaps UP, so it's a floor-safe choice; floor backstops the polls
-        # where no launch is due (still beats coast, so a held coast / detection
-        # gap can't sink the avatar — the 2026-06-17 sink death).
-        if is_timed:
-            do_flap, where = True, timed_tag
-        elif floor_rescue_due(fly_y, fly_vy, play_region["height"]):
-            do_flap, where = True, "floor"
-        elif now < coast_until:
-            # Descending-only rescue — see coast_rescue_due for why the
-            # descent gate matters (ascent-blind rescue over-lifts the fresh
-            # launch into the top rim; run 16's death signature).
-            floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
-                else (play_region["height"] - 25)
-            do_flap, where = coast_rescue_due(fly_y, fly_vy, floor), "coast"
-        else:
-            # Model path flaps AT the bob bottom (no margin) so the apex centres
-            # on the hole; the +FLAP_MARGIN delayed the flap ~6px, letting the
-            # floor rescue preempt the hover on HIGHER green rings and anchor the
-            # apex low (run 17 clipped a green ring's bottom, apex 88 vs centre
-            # 73). The hand-tuned path keeps its margin.
-            hover_margin = 0 if dyn is not None else FLAP_MARGIN
-            do_flap = fly_y > target_y + hover_margin
-            where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
+            if dyn is not None:
+                launch_due = should_flap_now(
+                    fly_x, fly_y, gap_left_x, gap_right_x, gap_top, gap_bottom, dyn)
+                timed_tag = "model"
+            else:
+                launch_due = timed_flap_due(fly_x, fly_y, gap_left_x, detected_center)
+                timed_tag = "timed"
+            is_timed = launch_due and now >= coast_until
+            # The phase-timed LAUNCH wins first — it fires in the same low-in-the-
+            # bob zone as the floor rescue, and if floor preempts it (run 16: floor
+            # 22 vs model 2) the launch is starved and never sets the coast, so the
+            # avatar over-lifts into the next crossing and clips the top. The launch
+            # also flaps UP, so it's a floor-safe choice; floor backstops the polls
+            # where no launch is due (still beats coast, so a held coast / detection
+            # gap can't sink the avatar — the 2026-06-17 sink death).
+            if is_timed:
+                do_flap, where = True, timed_tag
+            elif floor_rescue_due(fly_y, fly_vy, play_region["height"]):
+                do_flap, where = True, "floor"
+            elif now < coast_until:
+                # Descending-only rescue — see coast_rescue_due for why the
+                # descent gate matters (ascent-blind rescue over-lifts the fresh
+                # launch into the top rim; run 16's death signature).
+                floor = (gap_bottom - COAST_RESCUE_PX) if gap_bottom is not None \
+                    else (play_region["height"] - 25)
+                do_flap, where = coast_rescue_due(fly_y, fly_vy, floor), "coast"
+            else:
+                # Model path flaps AT the bob bottom (no margin) so the apex centres
+                # on the hole; the +FLAP_MARGIN delayed the flap ~6px, letting the
+                # floor rescue preempt the hover on HIGHER green rings and anchor the
+                # apex low (run 17 clipped a green ring's bottom, apex 88 vs centre
+                # 73). The hand-tuned path keeps its margin.
+                hover_margin = 0 if dyn is not None else FLAP_MARGIN
+                do_flap = fly_y > target_y + hover_margin
+                where = f"gap=[{gap_top}..{gap_bottom}]" if gap is not None else "hover"
         fired = False  # whether a click actually fired this poll (vs blocked)
         if do_flap and now - last_click_time >= MIN_CLICK_INTERVAL:
             # Fire immediately on the decision (the fly is still falling) —

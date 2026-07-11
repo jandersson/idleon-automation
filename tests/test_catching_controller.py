@@ -19,6 +19,9 @@ from minigames.catching.controller import (
     hover_target_y,
     floor_rescue_due,
     coast_rescue_due,
+    plan_flap,
+    SpeedTracker,
+    RingProjector,
     fit_gravity,
     fit_flap_vy,
     fit_approach_speed,
@@ -27,6 +30,18 @@ from minigames.catching.controller import (
 
 
 DYN = Dynamics(gravity=600.0, flap_vy=-300.0, approach_speed=200.0)
+
+# The live fitted dynamics (2026-06-17 trace) — the planner tests use these
+# so the scenarios match the real geometry: rise ~44px, apex ~0.477s.
+PDYN = Dynamics(gravity=388.0, flap_vy=-185.0, approach_speed=78.0)
+PLAY_H = 185.0
+FLY_X = 256.0
+
+
+def _ring(t_mid, hc, speed=78.0, half_w=8.5, band_half=26.0):
+    """(gl, gr, gt, gb) for a ring whose centre crosses FLY_X in t_mid s."""
+    cx = FLY_X + t_mid * speed
+    return (cx - half_w, cx + half_w, hc - band_half, hc + band_half)
 
 
 # --- physics --------------------------------------------------------------
@@ -157,6 +172,95 @@ def test_coast_rescue_fires_only_on_measured_descent():
     assert coast_rescue_due(120, None, 110) is False
     # above the floor: nothing to rescue.
     assert coast_rescue_due(100, 150, 110) is False
+
+
+# --- phase-locked planner (#61) --------------------------------------------
+
+def test_plan_flap_never_flaps_while_ascending():
+    for t_mid in (0.3, 0.55, 1.0, 3.0):
+        gl, gr, gt, gb = _ring(t_mid, 80)
+        do, mode, _ = plan_flap(120.0, -200.0, gl, gr, gt, gb,
+                                FLY_X, PLAY_H, PDYN, speed=78.0)
+        assert do is False, f"flapped while ascending (t_mid={t_mid}, {mode})"
+
+
+def test_plan_flap_launches_at_anchor_on_time():
+    # Avatar descending at flap speed, positioned so the flap LANDS on the
+    # anchor (hole_centre + rise) exactly one apex-time + latency before
+    # the crossing: the definition of a clean launch.
+    hc = 80.0
+    anchor = hc + PDYN.rise_height_px
+    lat = 0.075
+    fly_y = anchor - (185.0 * lat + 0.5 * PDYN.gravity * lat * lat)
+    t_mid = lat + PDYN.time_to_apex_s
+    gl, gr, gt, gb = _ring(t_mid, hc)
+    do, mode, _ = plan_flap(fly_y, 185.0, gl, gr, gt, gb,
+                            FLY_X, PLAY_H, PDYN, speed=78.0)
+    assert (do, mode) == (True, "launch")
+
+
+def test_plan_flap_dodges_when_height_missed():
+    # Same crossing timing but the avatar is far too high for the apex to
+    # land in the hole — the launch must refuse and, with the window this
+    # close, the planner holds an under-dodge (no flap from mid-sky).
+    hc = 80.0
+    t_mid = 0.075 + PDYN.time_to_apex_s
+    gl, gr, gt, gb = _ring(t_mid, hc)
+    do, mode, _ = plan_flap(80.0, 185.0, gl, gr, gt, gb,
+                            FLY_X, PLAY_H, PDYN, speed=78.0)
+    assert mode == "dodge_under"
+    assert do is False
+
+
+def test_plan_flap_prepositions_over_deep_ring():
+    # A ring whose anchor sits below the survivable floor can't be
+    # threaded — the planner climbs above its band ahead of time, and the
+    # over-dodge trigger doubles as the climb driver from below.
+    gl, gr, gt, gb = _ring(3.0, 120.0)
+    do, mode, _ = plan_flap(130.0, 100.0, gl, gr, gt, gb,
+                            FLY_X, PLAY_H, PDYN, speed=78.0)
+    assert mode == "dodge_over"
+    assert do is True
+
+
+def test_plan_flap_waits_without_ring():
+    do, mode, frac = plan_flap(100.0, 100.0, None, None, None, None,
+                               FLY_X, PLAY_H, PDYN)
+    assert (do, mode, frac) == (False, "wait", None)
+
+
+def test_speed_tracker_recovers_linear_scroll():
+    tr = SpeedTracker()
+    t = 0.0
+    while t <= 1.4:
+        tr.add(t, 500.0 - 90.0 * t)
+        t += 0.05
+    assert tr.speed() == pytest.approx(90.0, rel=0.02)
+    # a rightward jump = the next hoop became the target: window resets
+    tr.add(1.45, 500.0)
+    assert tr.speed() is None
+
+
+def test_ring_projector_projects_and_expires():
+    proj = RingProjector(fly_x=FLY_X, fallback_speed=80.0)
+    proj.update(0.0, 400.0, 417.0, 54.0, 106.0)
+    got = proj.get(0.2)
+    assert got is not None
+    assert got[0] == pytest.approx(400.0 - 80.0 * 0.2)
+    assert got[2:] == (54.0, 106.0)
+    assert proj.get(0.8) is None  # stale
+
+
+def test_ring_projector_holds_ring_through_overlap():
+    # The detector switches to the NEXT ring while the old one still
+    # x-overlaps the avatar; the projector must keep the old ring until it
+    # clears, or the planner flaps through its rim.
+    proj = RingProjector(fly_x=FLY_X, fallback_speed=80.0)
+    proj.update(0.0, 250.0, 267.0, 54.0, 106.0)   # old ring overlapping
+    proj.update(0.05, 310.0, 327.0, 30.0, 82.0)   # detector jumped ahead
+    got = proj.get(0.1)
+    assert got is not None
+    assert got[0] < 260.0  # still the old ring's projection
 
 
 # --- fit round-trip -------------------------------------------------------

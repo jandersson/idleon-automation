@@ -153,6 +153,17 @@ MINIGAMES = [
                 "values": ["on", "off"],
                 "default": "off",
             },
+            {
+                # The #61 phase-locked flap planner (setup->launch alignment,
+                # side-dodges, live speed tracking) — supersedes "Use model"
+                # when on (implies it). Sets CATCHING_PLANNER; opt-in until
+                # live-validated (sim: 3.7x baseline threads, 45% full-stream
+                # survival vs 0).
+                "label": "Planner",
+                "env": "CATCHING_PLANNER",
+                "values": ["on", "off"],
+                "default": "off",
+            },
         ],
     },
     {

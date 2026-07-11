@@ -218,6 +218,311 @@ def floor_rescue_due(fly_y: float, fly_vy: float | None, play_height: float,
     return False
 
 
+# --- Phase-locked flap planner (#61) ---------------------------------------
+#
+# plan_flap upgrades the model path from "hover and hope the launch window
+# coincides" to an explicit per-ring plan. Everything is per-poll and
+# stateless (main.py's loop and sim.py call it identically); the only state
+# the caller carries is a SpeedTracker for the live scroll speed. Grounded
+# in the #62 measurements (docs/catching_timing.md):
+#
+#   - The in-game flap lands ~ACT_LATENCY_S after the fire decision, so
+#     every prediction projects the avatar forward by that lead.
+#   - A flap may fire at ANY point of the descent, which makes apex height
+#     and apex time jointly controllable across two bobs: flapping deeper
+#     brings the next pass of the launch anchor EARLIER (lower apex, short
+#     fall-back), flapping higher pushes it LATER (tall bob). The SETUP rule
+#     picks the flap moment on the current descent that lands the next
+#     descent on the anchor y* = hole_centre + rise exactly at the launch
+#     decision time t* = t_mid - time_to_apex - ACT_LATENCY_S.
+#   - Rings are small ovals: passing entirely above/below the outer band is
+#     a safe DODGE (no score, no death). When the timing is unsalvageable or
+#     the anchor is unreachable (deep rings), the planner holds the bob
+#     clear of the band instead of gambling a mid-bob crossing.
+#   - The scroll speed RAMPS (~63 -> ~105 px/s over a run), so timing uses a
+#     live speed estimate (SpeedTracker), not the fitted constant.
+
+ACT_LATENCY_S = 0.075   # decision -> in-game flap (measured, #62)
+LAUNCH_TOL_S = 0.12     # |apex time - crossing midpoint| to fire the launch
+SETUP_TOL_S = 0.05      # setup fires when the solve crosses within this
+AVATAR_HALF_W = 5.0     # avatar half-width for the crossing-window length
+DODGE_MARGIN_PX = 4.0   # clearance beyond the band edge for a dodge bob
+CEILING_MARGIN_PX = 10.0  # over-dodge apex must stay below the crop top
+# A trigger-crossing flap keeps falling through the actuation latency plus
+# up to a poll of decision delay before the impulse lands (~300 px/s * 0.1s
+# and change) — every depth bound must leave this much room above the
+# lethal floor.
+LATENCY_FALL_PX = 34.0
+FLOOR_BELOW_PLAN_PX = 20.0  # emergency floor sits this far below the plan
+FLOOR_FRAC_CAP = 0.80       # ...but never deeper than this fraction
+# Callers must pass fly_vy=None for this long after any fired click: the
+# finite-difference velocity spans the ~160ms click stall (the flap's turn
+# happens INSIDE the gap), so it reads near-zero garbage — firing a launch
+# on it is how echo double-flaps sneak back in wearing a 'launch' tag.
+VY_BLACKOUT_S = 0.25
+# ...and suppress non-launch plan flaps for this long after a fired click:
+# right after the stall the avatar is still near its (deep) flap point, so
+# trigger-crossing conditions re-read as true and re-flap the fresh bob —
+# the echo. By 0.3s a landed flap has clearly risen clear of the triggers.
+ECHO_SUPPRESS_S = 0.30
+
+
+class SpeedTracker:
+    """Live hoop scroll speed from per-poll gap_left_x samples.
+
+    The scroll speed ramps through a run, so the fitted approach_speed goes
+    stale — feed every detected gap_left_x in and read speed() for the
+    freshest estimate. Samples jumping RIGHT (a new hoop became "next")
+    reset the window. Returns None until enough samples span the window."""
+
+    def __init__(self, window_s: float = 1.4, min_samples: int = 4):
+        self.window_s = window_s
+        self.min_samples = min_samples
+        self._pts: list[tuple[float, float]] = []
+
+    def add(self, t: float, gap_left_x: float) -> None:
+        if self._pts and gap_left_x > self._pts[-1][1] + 8:
+            self._pts.clear()   # next hoop became the target
+        self._pts.append((t, gap_left_x))
+        cutoff = t - self.window_s
+        self._pts = [(pt, px) for pt, px in self._pts if pt >= cutoff]
+
+    def speed(self) -> float | None:
+        """Scroll speed in px/s (positive = leftward), or None."""
+        if len(self._pts) < self.min_samples:
+            return None
+        slope = _linregress_slope([p[0] for p in self._pts],
+                                  [p[1] for p in self._pts])
+        if slope is None or slope > -20:
+            return None
+        return -slope
+
+
+class RingProjector:
+    """Per-poll ring geometry with dropout bridging.
+
+    The detector reports the next ring on only ~67% of polls; the planner
+    needs geometry (and timing!) EVERY poll, and a stale gap_left_x is a
+    timing error of speed*staleness. Feed detections in; get() projects the
+    last detection forward at the tracked scroll speed (vertical extent is
+    static per ring). Returns None once the projection is stale. Also owns
+    the SpeedTracker — one object for the callers to carry."""
+
+    def __init__(self, fly_x: float, fallback_speed: float,
+                 max_stale_s: float = 0.5):
+        self.tracker = SpeedTracker()
+        self.fly_x = fly_x
+        self.fallback_speed = fallback_speed
+        self.max_stale_s = max_stale_s
+        self._last: tuple[float, float, float, float, float] | None = None
+
+    def update(self, t: float, gl: float, gr: float,
+               gt: float, gb: float) -> None:
+        # The detector switches to the NEXT ring once the current ring's
+        # centre passes the fly — while the old ring still x-overlaps the
+        # avatar. Planning against the new ring there can flap through the
+        # old ring's rim, so hold the old projection until it fully clears.
+        if self._last is not None and gl > self._last[1] + 8:
+            old = self.get(t)
+            if old is not None and old[1] + AVATAR_HALF_W >= self.fly_x:
+                return
+        self.tracker.add(t, gl)
+        self._last = (t, gl, gr, gt, gb)
+
+    def speed(self) -> float:
+        return self.tracker.speed() or self.fallback_speed
+
+    def get(self, t: float) -> tuple[float, float, float, float] | None:
+        """Projected (gl, gr, gt, gb) at time t, or None if stale/empty."""
+        if self._last is None:
+            return None
+        t0, gl, gr, gt, gb = self._last
+        if t - t0 > self.max_stale_s:
+            return None
+        d = self.speed() * (t - t0)
+        return (gl - d, gr - d, gt, gb)
+
+
+def _fall_time(dy: float, gravity: float) -> float:
+    """Free-fall time from rest over dy px (>=0)."""
+    return math.sqrt(2.0 * max(0.0, dy) / gravity)
+
+
+def plan_flap(fly_y: float, fly_vy: float | None,
+              gap_left_x: float | None, gap_right_x: float | None,
+              hole_top: float | None, hole_bottom: float | None,
+              fly_x: float, play_height: float, dyn: Dynamics,
+              speed: float | None = None) -> tuple[bool, str, float | None]:
+    """Per-poll phase-locked flap decision for the next ring.
+
+    Returns (flap_now, mode, floor_frac_override):
+      mode: 'launch'  — the apex of a flap fired now lands in the hole at
+                        the crossing; the caller starts the coast.
+            'setup'   — bob-restart flap timed so the NEXT descent reaches
+                        the launch anchor at launch time.
+            'hover'   — natural anchor-cycle flap (ring far, or no better
+                        plan); also the no-ring fallback.
+            'dodge_under' / 'dodge_over' — hold the bob clear of the band
+                        through an unthreadable crossing.
+            'wait'    — no flap this poll.
+      floor_frac_override: pass to floor_rescue_due's frac while an
+      under-dodge needs the bob deeper than the default bound (else None).
+
+    Never fires while ascending (measured fly_vy < 0): re-flapping a rising
+    avatar is the echo/over-lift failure. A None fly_vy plans as if at rest
+    for hover/dodge triggers but never fires a launch (the apex prediction
+    would be unreliable at the moment precision matters most)."""
+    rise = dyn.rise_height_px
+    t_apex = dyn.time_to_apex_s
+    g = dyn.gravity
+
+    ascending = fly_vy is not None and fly_vy < 0
+    vy = max(0.0, fly_vy) if fly_vy is not None else 0.0
+
+    have_ring = (gap_left_x is not None and gap_right_x is not None
+                 and hole_top is not None and hole_bottom is not None)
+    if not have_ring:
+        # No ring in sight: natural cycle on the caller's held/default
+        # target is the caller's job; just never flap while ascending.
+        return (False, "wait", None)
+
+    hc = 0.5 * (hole_top + hole_bottom)
+    v = speed if speed and speed > 0 else dyn.approach_speed
+    if v <= 0:
+        return (False, "wait", None)
+
+    center_x = 0.5 * (gap_left_x + gap_right_x)
+    half_w = 0.5 * (gap_right_x - gap_left_x) + AVATAR_HALF_W
+    t_mid = (center_x - fly_x) / v
+    t_half = half_w / v
+    if t_mid + t_half < 0:
+        return (False, "wait", None)   # ring fully past
+
+    anchor_y = hc + rise                     # flap here -> apex on hc
+    t_star = t_mid - t_apex - ACT_LATENCY_S  # ideal launch-decision time
+    floor_cap = play_height - LATENCY_FALL_PX - 4.0
+    # While a ring is being worked, planned flaps (setup especially) go
+    # legitimately as deep as floor_cap — the emergency floor must sit at
+    # its full depth or its lookahead preempts/echoes every planned flap
+    # with its own timing, un-phasing the plan. The caller additionally
+    # echo-suppresses the floor path (see main.py/sim.py).
+    work_y = min(anchor_y, floor_cap)
+    plan_frac = FLOOR_FRAC_CAP
+
+    # --- LAUNCH: fire now if this flap threads the WHOLE crossing ---------
+    # The avatar rides y(t) = apex + g/2 (t - t_apex)^2 through the overlap
+    # window [t_mid - t_half, t_mid + t_half]. It must stay inside the
+    # passable hole for the entire window: the apex (highest point) above
+    # the hole top, and the deepest in-window point — at the window edge
+    # farthest from the apex — above the hole bottom. A static apex-time
+    # tolerance is NOT equivalent: an apex accepted 0.12s early has fallen
+    # g/2*(0.12+t_half)^2 ~ 19px by the window's far edge, straight through
+    # the hole bottom into the rim (the recalibrated sim's edge-clip
+    # signature).
+    if not ascending and fly_vy is not None:
+        y_land = fly_y + vy * ACT_LATENCY_S + 0.5 * g * ACT_LATENCY_S ** 2
+        apex_y = y_land - rise
+        inner_top = hole_top + RING_INSET_PX
+        inner_bottom = hole_bottom - RING_INSET_PX
+        apex_dt = ACT_LATENCY_S + t_apex
+        worst_dt = max(abs((t_mid - t_half) - apex_dt),
+                       abs((t_mid + t_half) - apex_dt))
+        deepest_y = apex_y + 0.5 * g * worst_dt ** 2
+        if (abs(apex_dt - t_mid) <= LAUNCH_TOL_S
+                and apex_y >= inner_top and deepest_y <= inner_bottom):
+            return (True, "launch", plan_frac)
+
+    # A flap fired within ~a full bob (incl. latency) of the window start
+    # is still in flight DURING the crossing — there is no neutral flap in
+    # that zone. The launch and setup arcs are window-shaped/band-safe by
+    # construction; everything else must be a side-dodge or nothing. A
+    # plain anchor-cycle flap there parks its apex INSIDE the band
+    # mid-window (the deterministic ring-1 death the sim exposed).
+    committed = (t_mid - t_half) <= (ACT_LATENCY_S + 2.0 * t_apex + 0.1)
+
+    # Predicted flap LANDING point: the avatar keeps falling through the
+    # actuation latency, so every trigger fires on where the impulse will
+    # actually land, not on raw position. Unknown vy projects as 0 — the
+    # flap fires late and lands deeper, which is the safe direction for
+    # every trigger here (deeper = away from the band, bounded by the
+    # emergency floor).
+    y_land_t = fly_y + vy * ACT_LATENCY_S + 0.5 * g * ACT_LATENCY_S ** 2
+
+    def _side_dodge():
+        """Dodge on the side the avatar is already on — no time to cross
+        the band. Fire when the predicted LANDING reaches the target so
+        the bob's apex clears the band edge regardless of descent speed
+        (a fixed trigger credit under-corrects slow descents and pokes
+        the apex into the band)."""
+        under_target = hole_bottom + DODGE_MARGIN_PX + rise
+        over_target = hole_top - DODGE_MARGIN_PX
+        under_ok = under_target <= floor_cap + LATENCY_FALL_PX
+        over_ok = (over_target - rise >= CEILING_MARGIN_PX
+                   and fly_y <= over_target + 8.0)
+        if over_ok and not (under_ok and fly_y > hc):
+            return (not ascending and y_land_t >= over_target,
+                    "dodge_over", None)
+        if under_ok:
+            # Landing target below the band; deeper than the anchor, so an
+            # aligned launch arc never hits it first. The caller must run
+            # the emergency floor POSITIONAL-ONLY in this mode (vy=None):
+            # the lookahead fires ~15px above the bound, which is exactly
+            # the bob's band clearance.
+            return (not ascending and y_land_t >= under_target,
+                    "dodge_under", plan_frac)
+        # Deep band (no dodge fits): hold the clamped anchor and hope the
+        # natural apex catches the hole.
+        return (not ascending and y_land_t >= work_y, "hover", plan_frac)
+
+    # --- launch window missed entirely: get clear of the band -------------
+    if t_star <= SETUP_TOL_S:
+        return _side_dodge()
+
+    # --- SETUP: land the next descent on the anchor at launch time --------
+    # Restarting the bob now passes the anchor (descending) at
+    #   T = ACT_LATENCY + t_apex + fall_time(anchor - apex)
+    # T shrinks as the flap is delayed (deeper flap -> lower apex -> shorter
+    # fall-back). Fire when the arc arrives ON TIME: diff < 0 = early —
+    # WAIT (t_star falls ~1:1 with wall time while t_pass barely moves, so
+    # the difference closes on its own); diff > +tol = late no matter what
+    # — a side-dodge if committed, else the anchor cycle. One-sided
+    # acceptance here fired arcs up to 0.12s early = ~22px of extra fall
+    # at the anchor.
+    # Deep ring whose anchor is unreachable (below the survivable floor):
+    # pre-position an over-dodge while there's still time. The trigger
+    # doubles as a climb driver — from below it fires every echo-suppress
+    # tick and each bob nets ~20px of height, so a climb started a couple
+    # of bobs out clears the band top before the window.
+    if anchor_y > floor_cap + 2.0:
+        over_target = hole_top - DODGE_MARGIN_PX
+        if over_target - rise >= CEILING_MARGIN_PX:
+            return (not ascending and y_land_t >= over_target,
+                    "dodge_over", None)
+
+    if not ascending:
+        apex_if_now = y_land_t - rise
+        t_pass = (ACT_LATENCY_S + t_apex
+                  + _fall_time(work_y - apex_if_now, g))
+        if t_star <= t_apex + ACT_LATENCY_S + _fall_time(rise, g) + 0.3:
+            diff = t_pass - t_star
+            if abs(diff) <= SETUP_TOL_S:
+                return (True, "setup", plan_frac)
+            if diff < -SETUP_TOL_S:
+                # about to breach survivable depth? flap rather than sink.
+                if fly_y >= floor_cap:
+                    return (True, "setup", plan_frac)
+                return (False, "wait", plan_frac)
+            # arriving late no matter what: this ring's launch won't align
+            if committed:
+                return _side_dodge()
+            return (fly_y >= work_y, "hover", plan_frac)
+        # Ring farther than one bob: natural anchor cycle (never committed
+        # here — a far ring means a far window).
+        return (fly_y >= work_y, "hover", plan_frac)
+
+    return (False, "wait", plan_frac)
+
+
 # --- Fitting the dynamics from a dense --trace CSV -------------------------
 #
 # These recover (gravity, flap_vy, approach_speed) from a list of per-poll
